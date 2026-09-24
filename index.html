@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>斯婕 &amp; 真真 — Our Little Corner</title>
+<meta name="theme-color" content="#839975">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Our Corner">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600&amp;display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="couple-corner" lang="en-US" aria-label="斯婕 &amp; 真真 — Our Little Corner">
+  <div class="cc-top">
+    <div class="cc-top-title"><span aria-hidden="true">✿</span><span>our little corner</span><span aria-hidden="true">/</span><span lang="zh-CN">斯婕 &amp; 真真</span></div>
+    <div class="cc-top-actions"><span class="cc-sync" data-sync>…</span><button type="button" class="cc-button" data-logout hidden>Log out</button></div>
+  </div>
+  <div class="cc-browser-strip">
+    <span class="cc-nav-buttons"><button type="button" class="cc-strip-btn" data-nav="back" aria-label="Back">←</button><button type="button" class="cc-strip-btn" data-nav="forward" aria-label="Forward">→</button><button type="button" class="cc-strip-btn" data-go="home" aria-label="Home">♡</button></span>
+    <div class="cc-address"><b>Address</b> &nbsp; our.little.corner / <span data-current-folder>home</span></div>
+    <span class="cc-strip-stars" aria-hidden="true">✧ ✿ ✧</span>
+  </div>
+
+  <section class="cc-login" data-login hidden>
+    <div class="cc-window cc-login-window">
+      <div class="cc-bar"><span>♡ PRESS START</span></div>
+      <div class="cc-body">
+        <p class="cc-page-whisper" lang="zh-CN">只有我们两个能进来</p>
+        <form data-login-form>
+          <fieldset class="cc-who"><legend>Who are you?</legend>
+            <label><input type="radio" name="who" value="sijie" checked><span class="cc-badge sijie">斯</span>斯婕</label>
+            <label><input type="radio" name="who" value="zhenzhen"><span class="cc-badge zhenzhen">真</span>真真</label>
+          </fieldset>
+          <label class="cc-field">GitHub token<input name="token" type="password" autocomplete="current-password" required placeholder="github_pat_…" spellcheck="false"></label>
+          <p class="cc-small">Only needed once on each device. It is kept in this browser.</p>
+          <button type="submit" class="cc-button cc-login-go">START ▶</button>
+          <p class="cc-import-error" data-login-error role="alert"></p>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <div class="cc-grid" data-app>
+    <aside class="cc-left">
+      <section class="cc-window cc-profile">
+        <div class="cc-bar"><span>PLAYER CARD</span></div>
+        <div class="cc-body" data-player-card></div>
+      </section>
+      <section class="cc-console" aria-label="Pocket music player">
+        <div class="cc-console-label">POCKET PLAYER</div>
+        <div class="cc-console-screen" data-bgm-screen aria-live="polite"></div>
+        <div class="cc-console-controls">
+          <div class="cc-dpad-grid" role="group" aria-label="Music controls">
+            <button type="button" class="cc-dpad-btn up" data-bgm="vol-up" aria-label="Volume up">▲</button>
+            <button type="button" class="cc-dpad-btn left" data-bgm="prev" aria-label="Previous track">◀</button>
+            <span class="cc-dpad-center" aria-hidden="true"></span>
+            <button type="button" class="cc-dpad-btn right" data-bgm="next" aria-label="Next track">▶</button>
+            <button type="button" class="cc-dpad-btn down" data-bgm="vol-down" aria-label="Volume down">▼</button>
+          </div>
+          <div class="cc-ab"><button type="button" data-bgm="prev" aria-label="B: previous track">B</button><button type="button" data-bgm="toggle" aria-label="A: play or pause">A</button></div>
+        </div>
+        <div class="cc-console-foot"><button type="button" data-bgm="next">SELECT</button> · <button type="button" data-bgm="toggle">START</button></div>
+      </section>
+      <div class="cc-bunny-sticker" aria-hidden="true"></div>
+    </aside>
+
+    <main class="cc-center">
+      <header class="cc-hero">
+        <div class="cc-bar"><span>HOME</span></div>
+        <div class="cc-hero-content">
+          <div class="cc-intro">
+            <div class="cc-label">OUR LITTLE CORNER</div>
+            <h2 lang="zh-CN">斯婕 <em>&amp;</em> 真真</h2>
+            <p lang="zh-CN">日历 · 日记 · 相册</p>
+            <div class="cc-intro-tags" data-hero-stats></div>
+          </div>
+          <figure class="cc-game-scene"><div class="cc-game-art" role="img" aria-label="A white cat among sunflowers"></div><figcaption class="cc-game-caption"><span>SUNFLOWER GARDEN</span><span data-days-together></span></figcaption></figure>
+        </div>
+      </header>
+
+      <nav class="cc-tabs" aria-label="Main navigation">
+        <button class="cc-tab" data-go="home" aria-pressed="true"><span aria-hidden="true" class="cc-tab-ico">⌂</span><span>HOME</span></button>
+        <button class="cc-tab" data-go="diary" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✎</span><span>DIARY</span></button>
+        <button class="cc-tab" data-go="album" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">▧</span><span>ALBUM</span></button>
+        <button class="cc-tab" data-go="todo" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✓</span><span>TODO</span></button>
+        <button class="cc-tab" data-go="wishlist" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">♡</span><span>WISHLIST</span></button>
+      </nav>
+
+      <div class="cc-preview-message" id="cc-planner-message" role="status" aria-live="polite" hidden></div>
+
+      <div data-panel="home" hidden>
+        <div class="cc-home-grid">
+          <div data-home-calendar></div>
+          <div class="cc-home-side">
+            <section class="cc-window" data-win="special"><div class="cc-bar"><span>♡ SPECIAL DAYS</span></div><div class="cc-body"><p class="cc-page-whisper" lang="zh-CN">生日 · 节日 · 纪念日</p><div data-upcoming-days></div><button type="button" class="cc-button cc-side-action" data-edit-days aria-expanded="false">Manage special days</button></div></section>
+            <section class="cc-window cc-memory-window" data-win="memory"><div class="cc-bar"><span>↺ RANDOM MEMORY</span></div><div class="cc-body" data-memory></div></section>
+          </div>
+        </div>
+        <div data-special-editor hidden></div>
+      </div>
+      <div data-panel="diary" hidden></div>
+      <div data-panel="album" hidden></div>
+      <div data-panel="todo" class="cc-planner" hidden></div>
+      <div data-panel="wishlist" class="cc-planner" hidden></div>
+
+      <footer class="cc-foot"><span lang="zh-CN">斯婕 &amp; 真真</span><span data-foot-note></span></footer>
+    </main>
+  </div>
+  <div class="cc-statusbar"><span data-status>READY</span><span lang="zh-CN">斯婕 + 真真 &nbsp;·&nbsp; 2P</span></div>
+
+  <dialog class="cc-lightbox" data-lightbox aria-label="Photo"></dialog>
+</div>
+
+<script src="config.js"></script>
+<script src="calendar-import.js"></script>
+<script src="store.js"></script>
+<script src="bgm.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>

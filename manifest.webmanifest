@@ -1,0 +1,13 @@
+{
+  "name": "斯婕 & 真真 — Our Little Corner",
+  "short_name": "Our Corner",
+  "start_url": "./index.html#home",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fffef5",
+  "theme_color": "#839975",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
