@@ -1,0 +1,7 @@
+/* Theme knobs: each colour family keeps its original lightness; themes shift hue (dh) and scale saturation (s). */
+#couple-corner, #couple-corner .cc-lightbox {
+  --g-dh: 0deg; --g-s: 1;   /* main (green) */
+  --a-dh: 0deg; --a-s: 1;   /* accent (peach / orange / brown) */
+  --l-dh: 0deg; --l-s: 1;   /* lilac */
+  --p-dh: 0deg; --p-s: 1;   /* paper / neutrals */
+}

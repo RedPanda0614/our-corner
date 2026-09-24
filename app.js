@@ -33,7 +33,27 @@
   const newId = CCStore.uid;
 
   // ---------- state ----------
-  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [] };
+  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], meta: {} };
+  // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
+  const THEMES = [
+    { id: 'matcha', name: 'MATCHA', zh: '抹茶橘子', v: { g: [0, 1.7], a: [0, 1.4], l: [0, 1.3], p: [0, 1.2] } },
+    { id: 'strawberry', name: 'STRAWBERRY', zh: '草莓牛奶', v: { g: [240, 1.9], a: [140, 1.3], l: [60, 1.5], p: [290, 3] } },
+    { id: 'soda', name: 'SODA POP', zh: '汽水蓝', v: { g: [105, 2.2], a: [22, 1.8], l: [-40, 1.5], p: [140, 2.5] } },
+    { id: 'grape', name: 'GRAPE Y2K', zh: '紫葡萄', v: { g: [172, 2], a: [62, 1.6], l: [45, 1.6], p: [220, 2.5] } },
+    { id: 'tomato', name: 'TOMATO', zh: '番茄小馆', v: { g: [-95, 2.2], a: [22, 1.8], l: [70, 1.3], p: [-12, 2.5] } },
+    { id: 'milktea', name: 'MILK TEA', zh: '焦糖奶茶', v: { g: [-65, 1.7], a: [-12, 1.3], l: [85, 1.1], p: [-25, 2.2] } },
+    { id: 'classic', name: 'SOFT', zh: '原版淡色', v: { g: [0, 1], a: [0, 1], l: [0, 1], p: [0, 1] } }
+  ];
+  const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
+  const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
+  const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
+  const kindColor = k => (data.meta.kindColors || {})[k] || DEFAULT_KIND_COLORS[k];
+  function applyTheme() {
+    const t = THEMES.find(x => x.id === (ui.previewTheme || data.meta.theme)) || THEMES[0];
+    for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
+    KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
+    const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
+  }
   const ui = {
     page: PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home',
     collapsed: new Set(ls.get('collapsed', [])),
@@ -53,10 +73,13 @@
       edit: { title: '', date: '', endDate: '', note: '' },
       todo: { title: '', kind: 'activity', status: 'dreaming', date: '', start: '', end: '', note: '' },
       wish: { title: '', who: 'both', note: '' },
-      special: { title: '', kind: 'anniversary', date: '', repeat: true }
+      special: { title: '', kind: 'anniversary', date: '', repeat: true },
+      dayedit: { title: '', kind: 'anniversary', date: '', repeat: true },
+      entryedit: { text: '', date: '', tags: '' }
     }
   };
-  const diaryDraft = { text: '', date: today, pending: [] };
+  const diaryDraft = { text: '', date: today, tags: '', pending: [] };
+  const diaryFilter = { q: '', tag: '' };
   const commentDrafts = {};
   const calendarImport = { open: false, file: null, name: '', from: today, to: shiftDay(today, 365), preview: null, error: '', busy: false };
 
@@ -173,7 +196,7 @@
         : e.collection === 'dates' ? '<button class="cc-button" type="button" data-edit-days>Manage</button>'
         : `<button class="cc-button" type="button" data-open-todo="${e.collection === 'trips' ? 'trips' : 'activities'}">Open todo</button>`;
       return `<div class="cc-plan-row"><div><div class="cc-plan-tag"><i class="cc-dot k-${e.kind}"></i>${esc(e.source || kindLabel(e.kind))}${e.by ? ' · ' + esc(e.by) : ''}</div><div>${e.done ? '✓ ' : ''}${esc(e.title)}</div>${e.timeLabel ? `<p>${esc(e.timeLabel)}</p>` : ''}${e.endDate && e.endDate !== e.date && !e.timeLabel ? `<p>${esc(niceDate(e.date))} → ${esc(niceDate(e.endDate))}</p>` : ''}${e.location ? `<p>${esc(e.location)}</p>` : ''}${e.note ? `<p>${esc(e.note)}</p>` : ''}</div><div class="cc-plan-actions">${actions}</div></div>`;
-    }).join('') || `<p class="cc-empty-plan">Nothing planned. <button type="button" class="cc-link" data-add-on="${planner.selected}">+ Add a plan</button></p>`;
+    }).join('') || '<p class="cc-empty-plan">Nothing planned.</p>';
     return `<div class="cc-agenda"><div class="cc-agenda-title">${niceDate(planner.selected, { weekday: 'long', month: 'long', day: 'numeric' })}${planner.selected === today ? ' · today' : ''}</div>${rows}</div>`;
   }
   function renderImport() {
@@ -189,7 +212,7 @@
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       ${body}
-      <p class="cc-legend"><span><i class="cc-dot k-plan"></i>Plan</span><span><i class="cc-dot k-trip"></i>Trip</span><span><i class="cc-dot k-task"></i>Little thing</span><span><i class="cc-dot k-birthday"></i>Special day</span></p>
+      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       ${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>${form}${renderImport()}`);
   }
@@ -198,10 +221,16 @@
   function renderSpecialDays() {
     const names = [['all', 'All'], ['birthday', 'Birthdays'], ['holiday', 'Holidays'], ['anniversary', 'Anniversaries']];
     const items = data.dates.filter(d => planner.filter === 'all' || d.kind === planner.filter).map(d => ({ ...d, next: repeatDate(d) })).sort((a, b) => Number(a.next < today) - Number(b.next < today) || a.next.localeCompare(b.next));
-    const cards = items.map(it => `<article class="cc-plan-card"><div class="cc-plan-tag">${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-open-date="${it.next}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No special days yet.</p>';
+    const cards = items.map(it => {
+      if (planner.editingDay === it.id) {
+        const f = formField('dayedit', 'title', 'Name of the day', 'text', true) + selectField('dayedit', 'kind', 'Category', names.slice(1)) + formField('dayedit', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.dayedit.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
+        return `<article class="cc-plan-card k-${it.kind} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
+      }
+      return `<article class="cc-plan-card k-${it.kind} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${it.next}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
+    }).join('') || '<p class="cc-empty-plan">No special days yet.</p>';
     const fields = formField('special', 'title', 'Name of the day', 'text', true) + selectField('special', 'kind', 'Category', names.slice(1)) + formField('special', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.special.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
     const upcoming = data.dates.map(it => ({ ...it, next: repeatDate(it) })).filter(it => it.next >= today).sort((a, b) => a.next.localeCompare(b.next)).slice(0, 3);
-    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag">${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
+    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
     const editor = $('[data-special-editor]'); editor.hidden = !planner.specialOpen;
     $$('[data-edit-days]').forEach(b => b.setAttribute('aria-expanded', String(planner.specialOpen)));
     const side = $('.cc-side-action'); if (side) side.textContent = planner.specialOpen ? 'Close special days' : 'Manage special days';
@@ -228,14 +257,14 @@
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
       return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${date}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
-    }).join('') || `<p class="cc-empty-plan">Nothing here yet. <button type="button" class="cc-link" data-show-form="todo">+ Add one</button></p>`;
+    }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
     $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div><button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button></div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo') : ''}<div class="cc-todo-grid">${cards}</div>`);
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
-    const cards = [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0)).map(i => `<article class="cc-plan-card ${i.got ? 'cc-done' : ''}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || `<p class="cc-empty-plan">No wishes yet. <button type="button" class="cc-link" data-show-form="wish">+ Add one</button></p>`;
+    const cards = [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0)).map(i => `<article class="cc-plan-card ${i.got ? 'cc-done' : ''}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
     const fields = formField('wish', 'title', 'Something we would love', 'text', true) + selectField('wish', 'who', 'Who is it for?', [['both', 'Both of us'], ['sijie', '斯婕'], ['zhenzhen', '真真']]) + notesField('wish');
     $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `<div class="cc-add-row"><p class="cc-small">Things we want, gift ideas.</p><button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button></div>${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid">${cards}</div>`);
   }
@@ -245,15 +274,37 @@
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
     return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${p.thumb ? `<img src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`).join('')}</div>` : '';
   }
+  function parseTags(text) {
+    const seen = new Set();
+    return String(text || '').split(/[,，#\s]+/).map(t => t.trim().slice(0, 20)).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 8);
+  }
+  function entryMatches(e) {
+    if (diaryFilter.tag && !(e.tags || []).some(t => t.toLowerCase() === diaryFilter.tag.toLowerCase())) return false;
+    const q = diaryFilter.q.trim().toLowerCase(); if (!q) return true;
+    const hay = [e.text, e.author, e.date, ...(e.tags || []), ...(e.comments || []).map(c => c.text)].join(' ').toLowerCase();
+    return q.split(/\s+/).every(w => hay.includes(w));
+  }
+  const mini = key => { const img = (data.meta.avatars || {})[key]; return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${img}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${p.thumb}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button></div></form>`;
-    const feed = diarySorted().map(e => {
-      const mine = e.author === meName();
+    const composer = `<form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button></div></form>`;
+    const tagCounts = new Map();
+    data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
+    const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
+    const filtering = diaryFilter.q.trim() || diaryFilter.tag;
+    const list = diarySorted().filter(entryMatches);
+    const search = `<form class="cc-diary-search" data-diary-search role="search"><input name="q" type="search" placeholder="Search the diary…" value="${esc(diaryFilter.q)}" aria-label="Search the diary"><button type="submit" class="cc-button">Search</button>${filtering ? '<button type="button" class="cc-button" data-clear-filter>Clear</button>' : ''}</form>${tagsRow ? `<div class="cc-tag-row">${tagsRow}</div>` : ''}${filtering ? `<p class="cc-small cc-result-count">${list.length} of ${data.diary.length} entries</p>` : ''}`;
+    const feed = list.map(e => {
+      const mine = e.author === meName(), key = nameToKey(e.author);
+      if (ui.editingEntry === e.id) {
+        const d = planner.drafts.entryedit;
+        return `<article class="cc-feed" id="entry-${esc(e.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(d.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(d.date)}"></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(d.tags)}"></label></div><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button><button type="button" class="cc-button" data-entry-cancel>Cancel</button></div></form></article>`;
+      }
+      const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b> ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span>${esc(e.author || '')} · ${esc(niceDate(e.date || today))}</span>${mine ? `<span class="cc-plan-actions">${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
-    }).join('') || '<p class="cc-empty-plan">No entries yet. Write the first one above.</p>';
-    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', composer + feed);
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(niceDate(e.date || today))}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+    }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
+    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', composer + search + feed);
   }
 
   // ---------- album ----------
@@ -271,8 +322,9 @@
     const ids = [];
     for (const p of list) {
       const id = newId();
-      await store.putFull(id, p.full);
-      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra });
+      // Not awaited: Firestore applies writes locally at once and syncs in the background (also offline).
+      run(store.putFull(id, p.full), 'A photo could not be saved.');
+      run(store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra }), 'A photo could not be saved.');
       ids.push(id);
     }
     return ids;
@@ -299,10 +351,15 @@
     $$('.cc-tab').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.go === ui.page)));
     $('[data-current-folder]').textContent = ui.page;
     const local = store.mode === 'local';
-    const badge = key => `<span class="cc-badge ${key}">${PEOPLE[key].slice(0, 1)}</span>`;
-    $('[data-player-card]').innerHTML = local
+    const avatars = data.meta.avatars || {};
+    const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
+    const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}</div>`;
+    $('[data-player-card]').innerHTML = (local
       ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PEOPLE[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
-      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}${ui.me === k ? ' · you' : ''}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`;
+      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}${ui.me === k ? ' · you' : ''}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
+    const current = ui.previewTheme || data.meta.theme || THEMES[0].id;
+    $('[data-skins]').innerHTML = THEMES.map(t => `<button type="button" class="cc-skin" data-theme="${t.id}" aria-pressed="${current === t.id}" style="--g-dh:${t.v.g[0]}deg;--g-s:${t.v.g[1]};--a-dh:${t.v.a[0]}deg;--a-s:${t.v.a[1]};--l-dh:${t.v.l[0]}deg;--l-s:${t.v.l[1]};--p-dh:${t.v.p[0]}deg;--p-s:${t.v.p[1]}"><span class="cc-skin-dots"><i class="s1"></i><i class="s2"></i><i class="s3"></i></span><span lang="zh-CN">${t.zh}</span></button>`).join('');
+    applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
     $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
     const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -319,14 +376,12 @@
   let frame = 0;
   function render() {
     cancelAnimationFrame(frame); frame = 0;
-    const a = document.activeElement, keep = a && root.contains(a) ? {
-      form: a.closest('form')?.getAttribute('data-planner-form') || a.closest('form')?.getAttribute('data-comment-form') || (a.closest('[data-diary-form]') ? 'diary' : null),
-      name: a.name, start: a.selectionStart, end: a.selectionEnd
-    } : null;
+    const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search'].find(n => fa.hasAttribute(n));
+    const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     renderChrome(); renderCalendar(); renderSpecialDays(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderMessage(); decorateStaticWindows();
-    if (keep?.form && keep.name) {
-      const f = $(`[data-planner-form="${keep.form}"]`) || $(`[data-comment-form="${keep.form}"]`) || (keep.form === 'diary' ? $('[data-diary-form]') : null);
-      const el = f?.elements[keep.name];
+    if (keep?.name) {
+      const el = $(keep.sel)?.elements[keep.name];
       if (el && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
   }
@@ -338,13 +393,19 @@
 
   // ---------- form submit ----------
   async function submitPlanner(form) {
-    const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form)), title = String(d.title || '').trim();
+    const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form));
+    if (name === 'entryedit') {
+      if (!d.date || !validDay(d.date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
+      run(store.update('diary', ui.editingEntry, { text: String(d.text || '').trim(), date: d.date, tags: parseTags(d.tags) })); ui.editingEntry = null; flash('Saved.'); render(); return;
+    }
+    const title = String(d.title || '').trim();
     if (!title) { form.elements.title.setCustomValidity('Please add a name.'); form.elements.title.reportValidity(); return; }
     if (['event', 'special', 'edit'].includes(name) && !d.date) { form.elements.date.setCustomValidity('Please choose a date.'); form.elements.date.reportValidity(); return; }
     for (const f of ['date', 'start', 'end', 'endDate']) if (d[f] && !validDay(d[f])) { form.elements[f].setCustomValidity('Please enter a valid date.'); form.elements[f].reportValidity(); return; }
     if (d.endDate && d.endDate < d.date) { form.elements.endDate.setCustomValidity('The end date must be on or after the start.'); form.elements.endDate.reportValidity(); return; }
     if (name === 'todo' && d.kind === 'trip' && d.end && (!d.start || d.end < d.start)) { form.elements.end.setCustomValidity('Pick a departure date first, then a return on or after it.'); form.elements.end.reportValidity(); return; }
     const base = { id: newId(), title, by: meName(), createdAt: Date.now() }, note = String(d.note || '').trim();
+    if (name === 'dayedit') { run(store.update('dates', planner.editingDay, { title, kind: d.kind, date: d.date, repeat: d.repeat === 'on' })); planner.editingDay = null; flash('Saved.'); render(); return; }
     if (name === 'event') { run(store.set('events', { ...base, date: d.date, endDate: d.endDate || '', note })); select(d.date); planner.drafts.event = { title: '', date: d.date, endDate: '', note: '' }; planner.forms.event = false; flash('Added to the calendar.'); }
     if (name === 'edit') { run(store.update('events', planner.editing, { title, date: d.date, endDate: d.endDate || '', note })); planner.editing = null; select(d.date); flash('Saved.'); }
     if (name === 'todo') {
@@ -365,8 +426,8 @@
     try {
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, photoIds, comments: [], createdAt: Date.now() });
-      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.pending = [];
+      run(store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() }), 'Could not post. Please try again.');
+      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
       flash('Posted.');
     } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
     ui.busy = false; render();
@@ -377,7 +438,8 @@
     const el = e.target; el.setCustomValidity?.('');
     const pf = el.closest('[data-planner-form]');
     if (pf) planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value;
-    if (el.closest('[data-diary-form]') && (el.name === 'text' || el.name === 'date')) diaryDraft[el.name] = el.value;
+    if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) diaryDraft[el.name] = el.value;
+    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
     const cf = el.closest('[data-comment-form]'); if (cf) commentDrafts[cf.dataset.commentForm] = el.value;
   });
   root.addEventListener('change', async e => {
@@ -389,6 +451,7 @@
     if (el.matches('[data-wish-id]')) run(store.update('wishes', el.dataset.wishId, { got: el.checked }));
     if (el.name === 'kind' && el.closest('[data-planner-form="special"]')) { planner.drafts.special.kind = el.value; planner.drafts.special.repeat = el.value !== 'holiday'; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="todo"]')) { planner.drafts.todo.kind = el.value; render(); }
+    if (el.name === 'kind' && el.closest('[data-planner-form="dayedit"]')) { planner.drafts.dayedit.kind = el.value; planner.drafts.dayedit.repeat = el.value !== 'holiday' || planner.drafts.dayedit.repeat; render(); }
     if (el.matches('[data-diary-photos]')) {
       const files = [...el.files].slice(0, 9 - diaryDraft.pending.length);
       if (el.files.length > files.length) flash('Up to 9 photos per entry.');
@@ -396,10 +459,16 @@
       for (const f of files) { try { diaryDraft.pending.push(await makePhoto(f)); } catch (err) { flash(err.message); } }
       ui.busy = false; render();
     }
+    if (el.matches('[data-avatar-file]') && el.files[0]) {
+      ui.busy = 'avatar'; render();
+      try { const img = await CCStore.resizeImage(el.files[0], 160, 0.8, true); run(store.setMeta({ avatars: { ...(data.meta.avatars || {}), [ui.me]: img } })); flash('Picture updated.'); }
+      catch (err) { flash(err.message); }
+      ui.busy = false; render();
+    }
     if (el.matches('[data-album-photos]')) {
       const files = [...el.files].slice(0, 20);
       ui.busy = true; render();
-      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today }); flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
+      try { const list = []; for (const f of files) list.push(await makePhoto(f)); savePhotos(list, { date: today }); flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
       ui.busy = false; render();
     }
@@ -408,6 +477,7 @@
     const f = e.target; e.preventDefault();
     if (f.matches('[data-planner-form]')) submitPlanner(f);
     else if (f.matches('[data-diary-form]')) submitDiary(f);
+    else if (f.matches('[data-diary-search]')) { diaryFilter.q = f.elements.q.value; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
       commentDrafts[id] = ''; run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
@@ -427,6 +497,16 @@
     if (ds.nav) { history[ds.nav](); return; }
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
+    if (ds.theme) { run(store.setMeta({ theme: ds.theme })); data.meta = { ...data.meta, theme: ds.theme }; render(); return; }
+    if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
+    if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.setMeta({ kindColors: kc })); render(); return; }
+    if (el.hasAttribute('data-avatar-reset')) { const av = { ...(data.meta.avatars || {}) }; delete av[ui.me]; run(store.setMeta({ avatars: av })); return; }
+    if (ds.editDay) { const it = data.dates.find(x => x.id === ds.editDay); if (it) { planner.editingDay = it.id; planner.drafts.dayedit = { title: it.title, kind: it.kind, date: it.date, repeat: !!it.repeat }; render(); } return; }
+    if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
+    if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; if (ui.page !== 'diary') go('diary'); else render(); return; }
+    if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; render(); return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', date: en.date || today, tags: (en.tags || []).join(', ') }; render(); } return; }
+    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
     if (el.hasAttribute('data-logout')) { store.signOut(); return; }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
@@ -519,10 +599,6 @@
 
   // ---------- seed (first run only) ----------
   async function seedIfNeeded() {
-    if (store.mode === 'local' && window.CC_LOCAL_DATA) {
-      await store.seedLocal(window.CC_LOCAL_DATA);
-      return;
-    }
     const seed = window.CC_SEED; if (!seed) return;
     try {
       if (await store.isSeeded()) return;
@@ -542,7 +618,7 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items; scheduleRender(); };
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
@@ -563,7 +639,7 @@
       try { await store.start(onChange, onStatus); await seedIfNeeded(); }
       catch (e) {
         console.error(e);
-        if (e.code === 'auth') { $('[data-login-error]').textContent = e.message; store.clearAuth(); showApp(false); }
+        if (e.code === 'auth') { $('[data-login-error]').textContent = e.message; localStorage.removeItem('olc:github'); showApp(false); }
         ui.sync = navigator.onLine === false ? 'offline' : 'error'; render();
       }
     });
