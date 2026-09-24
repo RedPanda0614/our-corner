@@ -128,7 +128,12 @@
 <script src="bgm.js"></script>
 <script src="app.js"></script>
 <script>
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+  // When a new version takes over, reload once so the page uses the new files.
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !window.__olcReloaded) { window.__olcReloaded = true; location.reload(); } });
+}
 </script>
 </body>
 </html>
