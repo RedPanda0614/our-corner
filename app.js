@@ -35,15 +35,28 @@
   // ---------- state ----------
   const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], meta: {} };
   // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
+  // c = contrast (1 normal), dark = invert lightness.
+  const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
   const THEMES = [
-    { id: 'matcha', name: 'MATCHA', zh: '抹茶橘子', v: { g: [0, 1.7], a: [0, 1.4], l: [0, 1.3], p: [0, 1.2] } },
-    { id: 'strawberry', name: 'STRAWBERRY', zh: '草莓牛奶', v: { g: [240, 1.9], a: [140, 1.3], l: [60, 1.5], p: [290, 3] } },
-    { id: 'soda', name: 'SODA POP', zh: '汽水蓝', v: { g: [105, 2.2], a: [22, 1.8], l: [-40, 1.5], p: [140, 2.5] } },
-    { id: 'grape', name: 'GRAPE Y2K', zh: '紫葡萄', v: { g: [172, 2], a: [62, 1.6], l: [45, 1.6], p: [220, 2.5] } },
-    { id: 'tomato', name: 'TOMATO', zh: '番茄小馆', v: { g: [-95, 2.2], a: [22, 1.8], l: [70, 1.3], p: [-12, 2.5] } },
-    { id: 'milktea', name: 'MILK TEA', zh: '焦糖奶茶', v: { g: [-65, 1.7], a: [-12, 1.3], l: [85, 1.1], p: [-25, 2.2] } },
-    { id: 'classic', name: 'SOFT', zh: '原版淡色', v: { g: [0, 1], a: [0, 1], l: [0, 1], p: [0, 1] } }
+    T('matcha', '抹茶橘子', 'light', [0, 1.7], [0, 1.4], [0, 1.3], [0, 1.2]),
+    T('strawberry', '草莓牛奶', 'light', [240, 1.9], [140, 1.3], [60, 1.5], [290, 3]),
+    T('soda', '汽水蓝', 'light', [105, 2.2], [22, 1.8], [-40, 1.5], [140, 2.5]),
+    T('grape', '紫葡萄', 'light', [172, 2], [62, 1.6], [45, 1.6], [220, 2.5]),
+    T('tomato', '番茄小馆', 'light', [-95, 2.2], [22, 1.8], [70, 1.3], [-12, 2.5]),
+    T('milktea', '焦糖奶茶', 'light', [-65, 1.7], [-12, 1.3], [85, 1.1], [-25, 2.2]),
+    T('arcade', '街机高对比', 'light-high', [115, 3], [-2, 2.4], [40, 2], [150, 1.5], 1.35),
+    T('lemon', '柠檬苏打', 'light-high', [-40, 2.6], [175, 2], [-80, 1.8], [-5, 3], 1.25),
+    T('classic', '原版淡色', 'light-low', [0, 1], [0, 1], [0, 1], [0, 1], 0.85),
+    T('fog', '雾面灰绿', 'light-low', [20, 0.6], [0, 0.6], [0, 0.6], [0, 0.5], 0.75),
+    T('nightmatcha', '夜抹茶', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
+    T('midnight', '午夜葡萄', 'dark', [172, 1.9], [62, 1.6], [45, 1.5], [220, 2], 0.95, true),
+    T('deepsea', '深海汽水', 'dark', [105, 2], [22, 1.8], [-40, 1.4], [140, 2], 0.95, true),
+    T('cherry', '黑樱桃', 'dark', [240, 1.9], [140, 1.3], [60, 1.5], [290, 2], 0.95, true),
+    T('neon', '霓虹像素', 'dark-high', [172, 3], [110, 3], [60, 2.5], [220, 2], 1.25, true),
+    T('cocoa', '可可夜', 'dark-low', [-65, 1], [-12, 0.8], [85, 0.8], [-25, 0.6], 0.75, true)
   ];
+  const THEME_GROUPS = [['light', 'LIGHT'], ['light-high', 'LIGHT · 高对比'], ['light-low', 'LIGHT · 低对比'], ['dark', 'DARK'], ['dark-high', 'DARK · 高对比'], ['dark-low', 'DARK · 低对比']];
+  const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
   const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
@@ -51,6 +64,10 @@
   function applyTheme() {
     const t = THEMES.find(x => x.id === (ui.previewTheme || data.meta.theme)) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
+    root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
+    root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
+    const hero = data.meta.hero && ui.heroImages[data.meta.hero];
+    if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
   }
@@ -62,7 +79,7 @@
     me: store.mode === 'local' ? ls.get('me', 'sijie') : null,
     message: null, undo: null, messageTimer: null,
     confirm: null, // key of a two-step delete button
-    memory: 0, highlight: null, busy: false
+    memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false
   };
   const initialSelected = today;
   const planner = {
@@ -107,12 +124,13 @@
     return `<button type="button" class="cc-min" data-min="${esc(key)}" aria-expanded="${!closed}" aria-label="${closed ? 'Expand' : 'Minimize'} window">${closed ? '□' : '_'}</button>`;
   }
   function panelShell(key, title, whisper, body, extraClass = '') {
+    if (key === 'special-editor') return `<section class="cc-window ${extraClass}" data-win="${esc(key)}"><div class="cc-bar"><span>${esc(title)}</span><button type="button" class="cc-min" data-edit-days aria-label="Close">×</button></div><div class="cc-body">${whisper ? `<p lang="zh-CN" class="cc-page-whisper">${esc(whisper)}</p>` : ''}${body}</div></section>`;
     const closed = ui.collapsed.has(key);
     return `<section class="cc-window ${extraClass} ${closed ? 'cc-collapsed' : ''}" data-win="${esc(key)}"><div class="cc-bar"><span>${esc(title)}</span>${minButton(key)}</div><div class="cc-body">${whisper ? `<p lang="zh-CN" class="cc-page-whisper">${esc(whisper)}</p>` : ''}${body}</div></section>`;
   }
   function decorateStaticWindows() {
     $$('section[data-win]').forEach(win => {
-      if (win.closest('[data-panel]') && !win.closest('.cc-home-side')) return;
+      if (win.closest('dialog') || (win.closest('[data-panel]') && !win.closest('.cc-home-side'))) return;
       const key = win.dataset.win, bar = win.querySelector(':scope > .cc-bar');
       bar.querySelector(':scope > .cc-min')?.remove();
       bar.insertAdjacentHTML('beforeend', minButton(key));
@@ -229,12 +247,11 @@
       return `<article class="cc-plan-card k-${it.kind} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${it.next}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">No special days yet.</p>';
     const fields = formField('special', 'title', 'Name of the day', 'text', true) + selectField('special', 'kind', 'Category', names.slice(1)) + formField('special', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.special.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
-    const upcoming = data.dates.map(it => ({ ...it, next: repeatDate(it) })).filter(it => it.next >= today).sort((a, b) => a.next.localeCompare(b.next)).slice(0, 3);
+    const upcoming = data.dates.map(it => ({ ...it, next: repeatDate(it) })).filter(it => it.next >= today).sort((a, b) => a.next.localeCompare(b.next)).slice(0, 4);
     $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
-    const editor = $('[data-special-editor]'); editor.hidden = !planner.specialOpen;
-    $$('[data-edit-days]').forEach(b => b.setAttribute('aria-expanded', String(planner.specialOpen)));
-    const side = $('.cc-side-action'); if (side) side.textContent = planner.specialOpen ? 'Close special days' : 'Manage special days';
-    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div><button type="button" class="cc-button" data-edit-days>Close</button></div><div class="cc-todo-grid">${cards}</div>${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
+    const editor = $('[data-special-dialog]');
+    if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
+    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid">${cards}</div>${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
   }
   function diarySorted() { return [...data.diary].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); }
   function renderMemory() {
@@ -345,6 +362,64 @@
   }
   function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
 
+  // ---------- special days modal ----------
+  function openSpecial(open) {
+    planner.specialOpen = open; if (!open) planner.editingDay = null;
+    render();
+    const dlg = $('[data-special-dialog]');
+    if (open && !dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+    if (!open && dlg.open) dlg.close();
+  }
+
+  // ---------- tear-off "days together" calendar ----------
+  const WEEK_ZH = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  function tearSheets(anniv) {
+    const d = utcDay(today);
+    const todaySheet = { head: niceDate(today, { month: 'short', year: 'numeric' }).toUpperCase(), num: d.getUTCDate(), unit: WEEK_ZH[d.getUTCDay()], foot: 'TODAY' };
+    if (!anniv) return [{ head: 'TOGETHER', num: '?', unit: 'DAYS · 天', foot: '', set: true }, todaySheet];
+    const n = daysBetween(anniv.date, today) + 1, next100 = Math.ceil((n + 1) / 100) * 100;
+    const nextAnniv = repeatDate({ ...anniv, repeat: true }), years = +nextAnniv.slice(0, 4) - +anniv.date.slice(0, 4);
+    return [
+      { head: 'TOGETHER', num: n, unit: 'DAYS · 在一起', foot: 'since ' + anniv.date.replace(/-/g, '.') },
+      todaySheet,
+      { head: 'NEXT', num: next100 - n, unit: `天后 · 第 ${next100} 天`, foot: niceDate(shiftDay(today, next100 - n), { month: 'short', day: 'numeric', year: 'numeric' }) },
+      { head: `${years} YEAR${years === 1 ? '' : 'S'}`, num: daysBetween(today, nextAnniv), unit: '天后 · 周年', foot: niceDate(nextAnniv, { month: 'short', day: 'numeric', year: 'numeric' }) }
+    ];
+  }
+  function renderTearpad(anniv) {
+    const sheets = tearSheets(anniv), sh = sheets[ui.tearView % sheets.length];
+    $('[data-tearpad]').innerHTML = `<div class="cc-tear-rings" aria-hidden="true"><i></i><i></i><i></i></div><div class="cc-tear-stack" aria-hidden="true"></div>
+      <button type="button" class="cc-tear-sheet" data-tear aria-label="Tear off this page"><span class="cc-tear-head">${esc(sh.head)}</span><b class="cc-tear-num">${esc(sh.num)}</b><span class="cc-tear-unit" lang="zh-CN">${esc(sh.unit)}</span><span class="cc-tear-foot">${esc(sh.foot)}</span><span class="cc-tear-perf" aria-hidden="true"></span></button>
+      ${sh.set ? '<button type="button" class="cc-button cc-tear-set" data-set-anniversary>Set our anniversary</button>' : `<p class="cc-tear-hint">tap to tear · ${ui.tearView % sheets.length + 1}/${sheets.length}</p>`}`;
+  }
+  function tear() {
+    const sheet = $('.cc-tear-sheet'); if (!sheet) return;
+    const ghost = sheet.cloneNode(true); ghost.classList.add('cc-tearing'); ghost.removeAttribute('data-tear'); ghost.setAttribute('aria-hidden', 'true'); ghost.tabIndex = -1;
+    ghost.style.setProperty('--tilt', (Math.random() > .5 ? 1 : -1) * (8 + Math.random() * 10) + 'deg');
+    $('[data-tearpad]').appendChild(ghost);
+    ui.tearView++;
+    const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+    const keep = ghost; renderTearpad(anniv); $('[data-tearpad]').appendChild(keep);
+    setTimeout(() => keep.remove(), 700);
+    $('.cc-tear-sheet')?.focus({ preventScroll: true });
+  }
+
+  // ---------- hero picture ----------
+  async function loadHero(id) {
+    if (!id || ui.heroImages[id] || ui.heroLoading === id) return;
+    ui.heroLoading = id;
+    const url = await store.getFull(id).catch(() => null);
+    ui.heroLoading = null;
+    if (url) { ui.heroImages[id] = url; applyTheme(); }
+  }
+  function renderHeroCaption() {
+    const cap = data.meta.heroCaption || 'SUNFLOWER GARDEN', custom = !!data.meta.hero;
+    loadHero(data.meta.hero);
+    $('[data-hero-caption]').innerHTML = ui.editCaption
+      ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
+      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${ui.busy === 'hero' ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
+  }
+
   // ---------- chrome: player card, hero, sync ----------
   function renderChrome() {
     $$('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== ui.page);
@@ -356,14 +431,16 @@
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
       ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PEOPLE[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
-      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}${ui.me === k ? ' · you' : ''}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
+      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
     const current = ui.previewTheme || data.meta.theme || THEMES[0].id;
-    $('[data-skins]').innerHTML = THEMES.map(t => `<button type="button" class="cc-skin" data-theme="${t.id}" aria-pressed="${current === t.id}" style="--g-dh:${t.v.g[0]}deg;--g-s:${t.v.g[1]};--a-dh:${t.v.a[0]}deg;--a-s:${t.v.a[1]};--l-dh:${t.v.l[0]}deg;--l-s:${t.v.l[1]};--p-dh:${t.v.p[0]}deg;--p-s:${t.v.p[1]}"><span class="cc-skin-dots"><i class="s1"></i><i class="s2"></i><i class="s3"></i></span><span lang="zh-CN">${t.zh}</span></button>`).join('');
+    const cur = THEMES.find(t => t.id === current) || THEMES[0];
+    $('[data-skins]').innerHTML = `<p class="cc-skin-current" lang="zh-CN">${esc(cur.zh)}</p>` + THEME_GROUPS.map(([g, label]) => `<p class="cc-skin-group">${label}</p><div class="cc-skin-grid">${THEMES.filter(t => t.group === g).map(t => `<button type="button" class="cc-skin" data-theme="${t.id}" aria-pressed="${current === t.id}" title="${esc(t.zh)}" aria-label="${esc(t.zh)}" style="${themeVars(t)}"><i class="s1"></i><i class="s2"></i><i class="s3"></i></button>`).join('')}</div>`).join('');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
     $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
     const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
-    $('[data-days-together]').textContent = anniv ? `DAY ${daysBetween(anniv.date, today) + 1} ♡` : '';
+    renderTearpad(anniv);
+    renderHeroCaption();
     const syncText = { local: 'LOCAL ONLY', connecting: 'CONNECTING…', synced: '● SYNCED', saving: 'SAVING…', offline: 'OFFLINE', error: 'SYNC ERROR', signedout: 'LOG IN' }[ui.sync] || '';
     const chip = $('[data-sync]'); chip.textContent = syncText; chip.dataset.state = ui.sync;
     chip.title = local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
@@ -465,6 +542,15 @@
       catch (err) { flash(err.message); }
       ui.busy = false; render();
     }
+    if (el.matches('[data-hero-file]') && el.files[0]) {
+      ui.busy = 'hero'; render();
+      try {
+        const img = await CCStore.resizeImage(el.files[0], 1400, 0.85);
+        const id = 'hero-' + newId(); ui.heroImages[id] = img;
+        await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
+      } catch (err) { console.error(err); flash('Could not upload this picture.'); }
+      ui.busy = false; render();
+    }
     if (el.matches('[data-album-photos]')) {
       const files = [...el.files].slice(0, 20);
       ui.busy = true; render();
@@ -478,6 +564,7 @@
     if (f.matches('[data-planner-form]')) submitPlanner(f);
     else if (f.matches('[data-diary-form]')) submitDiary(f);
     else if (f.matches('[data-diary-search]')) { diaryFilter.q = f.elements.q.value; render(); }
+    else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
       commentDrafts[id] = ''; run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
@@ -529,11 +616,16 @@
     if (ds.hero === 'week') { planner.view = 'week'; ls.set('calView', 'week'); select(today); go('home'); return; }
     if (ds.editEvent) { const ev = data.events.find(x => x.id === ds.editEvent); if (ev) { planner.editing = ev.id; planner.drafts.edit = { title: ev.title, date: ev.date, endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : '', note: ev.note || '' }; render(); } return; }
     if (el.hasAttribute('data-edit-cancel')) { planner.editing = null; render(); return; }
-    if (ds.openDate) { select(ds.openDate); planner.specialOpen = false; if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start' }); return; }
+    if (ds.openDate) { select(ds.openDate); openSpecial(false); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start' }); return; }
     if (ds.openTodo) { planner.todoFilter = ds.openTodo; go('todo'); return; }
     if (ds.todoFilter) { planner.todoFilter = ds.todoFilter; render(); return; }
     if (ds.showForm) { planner.forms[ds.showForm] = !planner.forms[ds.showForm]; render(); return; }
-    if (el.hasAttribute('data-edit-days')) { planner.specialOpen = !planner.specialOpen; render(); if (planner.specialOpen) $('[data-special-editor]').scrollIntoView({ block: 'start' }); return; }
+    if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }
+    if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
+    if (el.hasAttribute('data-tear')) { tear(); return; }
+    if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
+    if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; render(); $('[data-caption-form] input')?.focus(); return; }
+    if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; render(); return; }
     if (ds.remove) {
       const col = ds.remove, item = data[col]?.find(x => x.id === ds.id); if (!item) return;
@@ -565,6 +657,8 @@
   $('[data-lightbox]').addEventListener('keydown', e => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); $(`[data-lightbox-step="${e.key === 'ArrowRight' ? 1 : -1}"]`)?.click(); } });
   $('[data-lightbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closePhoto(); });
   $('[data-lightbox]').addEventListener('close', () => { lightbox.id = null; });
+  $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
+  $('[data-special-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openSpecial(false); });
 
   // ---------- calendar import ----------
   function importKeys(from, to) {

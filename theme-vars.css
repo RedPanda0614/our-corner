@@ -1,7 +1,12 @@
-/* Theme knobs: each colour family keeps its original lightness; themes shift hue (dh) and scale saturation (s). */
-#couple-corner, #couple-corner .cc-lightbox {
+/* Theme knobs. Each colour family keeps its original hue offset / saturation ratio;
+   themes shift hue (dh), scale saturation (s), and remap lightness (L' = lo + L * lk; dark themes use lk < 0). */
+#couple-corner {
   --g-dh: 0deg; --g-s: 1;   /* main (green) */
   --a-dh: 0deg; --a-s: 1;   /* accent (peach / orange / brown) */
   --l-dh: 0deg; --l-s: 1;   /* lilac */
   --p-dh: 0deg; --p-s: 1;   /* paper / neutrals */
+  --lo: 0%; --lk: 1;
+  --cc-white: hsl(calc(53deg + var(--p-dh)) calc(100% * var(--p-s)) calc(var(--lo) + 98% * var(--lk)));
+  --cc-black: hsl(calc(97deg + var(--g-dh)) calc(15% * var(--g-s)) calc(var(--lo) + 12% * var(--lk)));
 }
+#couple-corner[data-dark=true] { color-scheme: dark; }

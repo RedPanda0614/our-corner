@@ -54,6 +54,8 @@
         <div class="cc-bar"><span>PLAYER CARD</span></div>
         <div class="cc-body" data-player-card></div>
       </section>
+      <section class="cc-tearpad" data-tearpad aria-label="How long we have been together"></section>
+      <section class="cc-window cc-special-side" data-win="special"><div class="cc-bar"><span>♡ SPECIAL DAYS</span></div><div class="cc-body"><div data-upcoming-days></div><button type="button" class="cc-button cc-side-action" data-edit-days>Manage</button></div></section>
       <section class="cc-window cc-skin-window" data-win="skins">
         <div class="cc-bar"><span>✿ SKIN</span></div>
         <div class="cc-body"><div class="cc-skins" data-skins role="group" aria-label="Colour theme"></div></div>
@@ -85,16 +87,16 @@
             <h2 lang="zh-CN">斯婕 <em>&amp;</em> 真真</h2>
             <div class="cc-intro-tags" data-hero-stats></div>
           </div>
-          <figure class="cc-game-scene"><div class="cc-game-art" role="img" aria-label="A white cat among sunflowers"></div><figcaption class="cc-game-caption"><span>SUNFLOWER GARDEN</span><span data-days-together></span></figcaption></figure>
+          <figure class="cc-game-scene"><div class="cc-game-art" role="img" aria-label="A white cat among sunflowers"></div><figcaption class="cc-game-caption" data-hero-caption></figcaption></figure>
         </div>
       </header>
 
       <nav class="cc-tabs" aria-label="Main navigation">
         <button class="cc-tab" data-go="home" aria-pressed="true"><span aria-hidden="true" class="cc-tab-ico">⌂</span><span>HOME</span></button>
         <button class="cc-tab" data-go="diary" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✎</span><span>DIARY</span></button>
-        <button class="cc-tab" data-go="album" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">▧</span><span>ALBUM</span></button>
         <button class="cc-tab" data-go="todo" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✓</span><span>TODO</span></button>
         <button class="cc-tab" data-go="wishlist" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">♡</span><span>WISHLIST</span></button>
+        <button class="cc-tab" data-go="album" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">▧</span><span>ALBUM</span></button>
       </nav>
 
       <div class="cc-preview-message" id="cc-planner-message" role="status" aria-live="polite" hidden></div>
@@ -103,11 +105,9 @@
         <div class="cc-home-grid">
           <div data-home-calendar></div>
           <div class="cc-home-side">
-            <section class="cc-window" data-win="special"><div class="cc-bar"><span>♡ SPECIAL DAYS</span></div><div class="cc-body"><p class="cc-page-whisper" lang="zh-CN">生日 · 节日 · 纪念日</p><div data-upcoming-days></div><button type="button" class="cc-button cc-side-action" data-edit-days aria-expanded="false">Manage special days</button></div></section>
             <section class="cc-window cc-memory-window" data-win="memory"><div class="cc-bar"><span>↺ RANDOM MEMORY</span></div><div class="cc-body" data-memory></div></section>
           </div>
         </div>
-        <div data-special-editor hidden></div>
       </div>
       <div data-panel="diary" hidden></div>
       <div data-panel="album" hidden></div>
@@ -120,6 +120,7 @@
   <div class="cc-statusbar"><span data-status>READY</span><span lang="zh-CN">斯婕 + 真真 &nbsp;·&nbsp; 2P</span></div>
 
   <dialog class="cc-lightbox" data-lightbox aria-label="Photo"></dialog>
+  <dialog class="cc-modal" data-special-dialog aria-label="Special days"></dialog>
 </div>
 
 <script src="config.js"></script>
