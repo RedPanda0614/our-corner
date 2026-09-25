@@ -56,16 +56,24 @@
       </section>
       <section class="cc-tearpad" data-tearpad aria-label="How long we have been together"></section>
       <section class="cc-window cc-special-side" data-win="special"><div class="cc-bar"><span>♡ SPECIAL DAYS</span></div><div class="cc-body"><div data-upcoming-days></div><button type="button" class="cc-button cc-side-action" data-edit-days>Manage</button></div></section>
-      <section class="cc-ipod" aria-label="Music player">
-        <div class="cc-ipod-bubble" data-bgm-screen aria-live="polite"></div>
-        <div class="cc-ipod-body">
-          <img class="cc-ipod-img" src="assets/ipod.png" alt="">
+      <section class="cc-dock" data-dock aria-label="Music player dock">
+        <svg class="cc-cable" viewBox="0 0 180 60" width="180" height="60" aria-hidden="true" shape-rendering="crispEdges">
+          <path class="cc-cable-edge" d="M-8 30 C -8 4, 31 -4, 31 16" fill="none"/><path class="cc-cable-line" d="M-8 30 C -8 4, 31 -4, 31 16" fill="none"/>
+          <rect class="cc-plug" x="26" y="14" width="10" height="20"/>
+          <rect class="cc-plug-ring" x="26" y="30" width="10" height="3"/>
+          <rect class="cc-plug-tip" x="28.5" y="34" width="5" height="13"/>
+        </svg>
+        <span class="cc-dock-led" aria-hidden="true"></span>
+        <div class="cc-ipod-body" data-ipod>
+          <div class="cc-ipod-bubble" data-bgm-screen aria-live="polite"></div>
+          <img class="cc-ipod-img" src="assets/ipod.png" alt="" draggable="false">
           <button type="button" class="cc-ipod-btn up" data-bgm="vol-up" aria-label="Volume up"></button>
           <button type="button" class="cc-ipod-btn down" data-bgm="vol-down" aria-label="Volume down"></button>
           <button type="button" class="cc-ipod-btn prev" data-bgm="prev" aria-label="Previous song"></button>
           <button type="button" class="cc-ipod-btn next" data-bgm="next" aria-label="Next song"></button>
           <button type="button" class="cc-ipod-btn play" data-bgm="toggle" aria-label="Play or pause"></button>
         </div>
+        <p class="cc-dock-hint" data-dock-hint>drag me · 拖出来玩</p>
       </section>
       <section class="cc-window cc-skin-window" data-win="skins">
         <div class="cc-bar"><span>✿ SKIN</span></div>

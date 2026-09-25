@@ -692,6 +692,61 @@
   }
 
   // ---------- bgm screen ----------
+  // ---------- draggable iPod with a charging dock ----------
+  (() => {
+    const ipod = $('[data-ipod]'), dock = $('[data-dock]'); if (!ipod || !dock) return;
+    const saved = ls.get('ipod', { docked: true, x: 0, y: 0 });
+    const JACK = { x: 0.075, y: 0.02 };              // jack position on the iPod image (fraction of size)
+    const plugTip = () => { const r = dock.querySelector('.cc-cable').getBoundingClientRect(); return { x: r.left + 31, y: r.top + 46 }; };
+    const jackOf = (x, y) => ({ x: x + ipod.offsetWidth * JACK.x, y: y + ipod.offsetHeight * JACK.y });
+    const clamp = (x, y) => ({ x: Math.max(4, Math.min(innerWidth - ipod.offsetWidth - 4, x)), y: Math.max(40, Math.min(innerHeight - ipod.offsetHeight - 4, y)) });
+    function place() {
+      dock.dataset.docked = String(saved.docked);
+      ipod.classList.toggle('cc-floating', !saved.docked);
+      if (saved.docked) { ipod.style.left = ''; ipod.style.top = ''; }
+      else { const c = clamp(saved.x, saved.y); ipod.style.left = c.x + 'px'; ipod.style.top = c.y + 'px'; }
+      $('[data-dock-hint]').textContent = saved.docked ? 'drag me · 拖出来玩' : 'drop it back to charge · 放回来充电';
+    }
+    let drag = null;
+    ipod.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      const r = ipod.getBoundingClientRect();
+      drag = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false, id: e.pointerId };
+    });
+    ipod.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 6) return;
+        drag.moved = true; ipod.setPointerCapture(e.pointerId);
+        saved.docked = false; saved.x = drag.ox; saved.y = drag.oy; place(); ipod.classList.add('cc-dragging');
+      }
+      const c = clamp(drag.ox + dx, drag.oy + dy); saved.x = c.x; saved.y = c.y;
+      ipod.style.left = c.x + 'px'; ipod.style.top = c.y + 'px';
+      const j = jackOf(c.x, c.y), t = plugTip();
+      dock.classList.toggle('cc-dock-near', Math.hypot(j.x - t.x, j.y - t.y) < 70);
+      e.preventDefault();
+    });
+    function end(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      const was = drag; drag = null;
+      if (!was.moved) return;
+      ui.justDragged = true; setTimeout(() => { ui.justDragged = false; }, 0);
+      ipod.classList.remove('cc-dragging');
+      if (dock.classList.contains('cc-dock-near')) {
+        dock.classList.remove('cc-dock-near');
+        // snap: slide the jack onto the plug, then drop back into the dock
+        const t = plugTip(), tx = t.x - ipod.offsetWidth * JACK.x, ty = t.y - 3 - ipod.offsetHeight * JACK.y;
+        ipod.classList.add('cc-snapping'); ipod.style.left = tx + 'px'; ipod.style.top = ty + 'px';
+        setTimeout(() => { ipod.classList.remove('cc-snapping'); saved.docked = true; ls.set('ipod', saved); place(); dock.classList.add('cc-dock-click'); setTimeout(() => dock.classList.remove('cc-dock-click'), 400); }, 180);
+      } else ls.set('ipod', saved);
+    }
+    ipod.addEventListener('pointerup', end); ipod.addEventListener('pointercancel', end);
+    ipod.addEventListener('click', e => { if (ui.justDragged) { e.stopPropagation(); e.preventDefault(); ui.justDragged = false; } }, true);
+    addEventListener('resize', () => { if (!saved.docked) place(); });
+    place();
+  })();
+
   let lastVol = null, volTimer = 0;
   CCBgm.onChange(info => {
     const bubble = $('[data-bgm-screen]'); if (!bubble) return;

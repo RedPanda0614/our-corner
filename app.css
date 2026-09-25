@@ -357,3 +357,51 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-ipod-body { width: min(180px, 100%); }
 #couple-corner .cc-ipod-img { width: 100%; }
 @media (max-width: 820px) { #couple-corner .cc-left { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+
+/* ===== v5: iPod dock + drag, mobile sidebar on top ===== */
+#couple-corner .cc-dock { position: relative; width: 180px; height: 190px; margin: 4px auto 14px; }
+#couple-corner .cc-cable { position: absolute; left: 0; top: 0; overflow: visible; z-index: 1; }
+#couple-corner .cc-cable-edge { stroke: hsl(0 0% 45%); stroke-width: 6; }
+#couple-corner .cc-cable-line { stroke: hsl(0 0% 97%); stroke-width: 3; }
+#couple-corner .cc-plug { fill: var(--cc-white); stroke: hsl(0 0% 55%); stroke-width: 1; }
+#couple-corner .cc-plug-ring { fill: hsl(0 0% 78%); }
+#couple-corner .cc-plug-tip { fill: hsl(0 0% 72%); stroke: hsl(0 0% 50%); stroke-width: 1; }
+#couple-corner .cc-dock-led { position: absolute; left: 44px; top: 20px; width: 6px; height: 6px; background: hsl(120 60% 45%); box-shadow: 0 0 0 1px hsl(0 0% 20% / .4); }
+#couple-corner .cc-dock[data-docked=false] .cc-dock-led { background: hsl(35 90% 55%); animation: cc-blink 1s steps(2) infinite; }
+@keyframes cc-blink { 50% { opacity: .2; } }
+#couple-corner .cc-dock::after { content: ''; position: absolute; left: 20px; top: 44px; width: 124px; height: 118px; border: 2px dashed transparent; pointer-events: none; }
+#couple-corner .cc-dock[data-docked=false]::after { border-color: hsl(0 0% 50% / .45); }
+#couple-corner .cc-dock.cc-dock-near::after { border-color: hsl(120 60% 40%); background: hsl(120 60% 45% / .12); }
+#couple-corner .cc-dock.cc-dock-click { animation: cc-click .35s steps(3); }
+@keyframes cc-click { 50% { transform: translateY(2px); } }
+#couple-corner .cc-dock .cc-ipod-body { position: absolute; left: 20px; top: 44px; width: 124px; z-index: 2; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+#couple-corner .cc-ipod-body.cc-floating { position: fixed; z-index: 60; }
+#couple-corner .cc-ipod-body.cc-dragging { cursor: grabbing; filter: drop-shadow(4px 6px 0 hsl(0 0% 0% / .25)); }
+#couple-corner .cc-ipod-body.cc-snapping { transition: left .18s steps(4), top .18s steps(4); }
+#couple-corner .cc-dock .cc-ipod-img { width: 124px; }
+#couple-corner .cc-dock .cc-ipod-bubble { top: auto; bottom: calc(100% + 9px); left: 36%; transform: none; }
+#couple-corner .cc-dock .cc-ipod-bubble::after { left: 12px; }
+#couple-corner .cc-dock .cc-ipod-bubble[data-playing=true] { animation-name: cc-float2; }
+@keyframes cc-float2 { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+#couple-corner .cc-dock-hint { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font: 10px/1.3 var(--cc-pixel); opacity: .7; margin: 0 !important; }
+
+/* phones: sidebar first, two aligned columns */
+@media (max-width: 820px) {
+  #couple-corner .cc-grid { display: flex; flex-direction: column; gap: 12px; }
+  #couple-corner .cc-left { order: 0 !important; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px; align-items: stretch; }
+  #couple-corner .cc-center { order: 1 !important; }
+  #couple-corner .cc-left > * { margin: 0 !important; min-width: 0; }
+  #couple-corner .cc-left .cc-profile, #couple-corner .cc-left .cc-special-side { display: flex; flex-direction: column; }
+  #couple-corner .cc-left .cc-profile .cc-body, #couple-corner .cc-left .cc-special-side .cc-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  #couple-corner .cc-left .cc-tearpad { align-self: stretch; display: flex; flex-direction: column; }
+  #couple-corner .cc-left .cc-tear-sheet { flex: 1; justify-content: center; }
+  #couple-corner .cc-left .cc-dock { justify-self: center; }
+  #couple-corner .cc-left .cc-skin-window { grid-column: 1 / -1; }
+  #couple-corner .cc-bunny-sticker { display: none; }
+  #couple-corner .cc-badge { width: 44px; height: 44px; }
+  #couple-corner .cc-tear-num { font-size: 44px; }
+}
+@media (max-width: 380px) {
+  #couple-corner .cc-left { gap: 8px; }
+  #couple-corner .cc-dock { transform: scale(.9); transform-origin: top center; }
+}
