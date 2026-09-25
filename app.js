@@ -11,6 +11,7 @@
   }
   const PAGES = ['home', 'diary', 'album', 'todo', 'wishlist'];
   const PEOPLE = { sijie: '斯婕', zhenzhen: '真真' };
+  const PLAYER_NICKNAMES = { sijie: '宝宝一 · bibo', zhenzhen: '宝宝二 · bobi' };
   const nameToKey = name => Object.keys(PEOPLE).find(k => PEOPLE[k] === name) || 'sijie';
 
   // ---------- small helpers ----------
@@ -22,6 +23,7 @@
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
   const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const currentDay = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   const utcDay = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
   const dayISO = d => d.toISOString().slice(0, 10);
   const validDay = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso) && Number.isFinite(+utcDay(iso)) && dayISO(utcDay(iso)) === iso;
@@ -82,13 +84,13 @@
     view: ls.get('calView', 'month'), month: today.slice(0, 7), year: +today.slice(0, 4), selected: initialSelected,
     filter: 'all', todoFilter: 'all', forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
     drafts: {
-      event: { title: '', date: today, endDate: '', note: '' },
+      event: { title: '', kind: 'plan', date: today, endDate: '', note: '', repeat: true },
       edit: { title: '', date: '', endDate: '', note: '' },
       todo: { title: '', kind: 'activity', status: 'dreaming', date: '', start: '', end: '', note: '' },
       wish: { title: '', who: 'both', note: '' },
       special: { title: '', kind: 'anniversary', date: '', repeat: true },
       dayedit: { title: '', kind: 'anniversary', date: '', repeat: true },
-      entryedit: { text: '', date: '', tags: '' }
+      entryedit: { text: '', tags: '', photoIds: [], pending: [] }
     }
   };
   const diaryDraft = { text: '', date: today, tags: '', pending: [] };
@@ -147,7 +149,7 @@
   // ---------- calendar ----------
   function dayEvents(iso) {
     return [
-      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: 'plan', collection: 'events' })),
+      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: e.kind || 'plan', collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
       ...data.tasks.filter(e => e.date === iso).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
       ...data.dates.filter(e => e.repeat ? iso.slice(5) === e.date.slice(5) && iso >= e.date : iso === e.date).map(e => ({ ...e, collection: 'dates' }))
@@ -221,7 +223,15 @@
   function renderCalendar() {
     const views = [['week', 'Week'], ['month', 'Month'], ['year', 'Year']];
     const body = planner.view === 'week' ? weekList() : planner.view === 'year' ? yearGrid() : monthGrid();
-    const form = planner.forms.event ? formShell('event', 'Add a shared plan', formField('event', 'title', 'What shall we do?', 'text', true) + formField('event', 'date', 'Date', 'date', true) + formField('event', 'endDate', 'End date (optional)', 'date') + notesField('event'), '+ Add to calendar', '<button type="button" class="cc-button" data-show-form="event">Cancel</button>') : '';
+    const selectedKind = planner.drafts.event.kind || 'plan';
+    const isSpecial = ['birthday', 'holiday', 'anniversary'].includes(selectedKind);
+    const eventFields = selectField('event', 'kind', 'Category', KINDS)
+      + formField('event', 'title', selectedKind === 'trip' ? 'Destination' : 'What shall we do?', 'text', true)
+      + formField('event', 'date', 'Date', 'date', true)
+      + (!isSpecial && selectedKind !== 'task' ? formField('event', 'endDate', 'End date (optional)', 'date') : '')
+      + (isSpecial ? `<label class="cc-inline-check"><input name="repeat" type="checkbox" ${planner.drafts.event.repeat ? 'checked' : ''}><span>Repeat every year</span></label>` : '')
+      + notesField('event');
+    const form = planner.forms.event ? formShell('event', 'Add to calendar', eventFields, '+ Add to calendar', '<button type="button" class="cc-button" data-show-form="event">Cancel</button>') : '';
     $('[data-home-calendar]').innerHTML = panelShell('calendar', '▦ CALENDAR', '共同日历',
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
@@ -249,7 +259,9 @@
     if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
     editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid">${cards}</div>${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
   }
-  function diarySorted() { return [...data.diary].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); }
+  const entryDisplayDate = entry => entry.updatedAt ? currentDayFor(entry.updatedAt) : (entry.date || today);
+  const currentDayFor = timestamp => { const d = new Date(timestamp); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
   function renderMemory() {
     const pool = data.diary.filter(e => (e.text || '').trim() || (e.photoIds || []).length);
     const body = $('[data-memory]');
@@ -257,7 +269,7 @@
     const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
     const photo = data.photos.find(p => p.id === (e.photoIds || [])[0]);
     const text = (e.text || '').trim();
-    body.innerHTML = `<div class="cc-memory-label"><span>${esc(niceDate(e.date || today))} · ${esc(e.author || '')}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
+    body.innerHTML = `<div class="cc-memory-label"><span>${esc(niceDate(entryDisplayDate(e)))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
 
   // ---------- todo + wishlist ----------
@@ -273,7 +285,7 @@
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
-    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div><button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button></div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo') : ''}<div class="cc-todo-grid">${cards}</div>`);
+    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div><button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button></div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid">${cards}</div>`);
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
@@ -294,10 +306,17 @@
   function entryMatches(e) {
     if (diaryFilter.tag && !(e.tags || []).some(t => t.toLowerCase() === diaryFilter.tag.toLowerCase())) return false;
     const q = diaryFilter.q.trim().toLowerCase(); if (!q) return true;
-    const hay = [e.text, e.author, e.date, ...(e.tags || []), ...(e.comments || []).map(c => c.text)].join(' ').toLowerCase();
+    const hay = [e.text, e.author, entryDisplayDate(e), ...(e.tags || []), ...(e.comments || []).map(c => c.text)].join(' ').toLowerCase();
     return q.split(/\s+/).every(w => hay.includes(w));
   }
   const mini = key => { const img = (data.meta.avatars || {})[key]; return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${img}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
+  function diaryEditForm(entry) {
+    const draft = planner.drafts.entryedit;
+    const existing = draft.photoIds.map(id => data.photos.find(photo => photo.id === id)).filter(Boolean);
+    const kept = existing.map(photo => `<span class="cc-pending">${photo.thumb ? `<img src="${esc(photo.thumb)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}<button type="button" data-entry-photo-remove="${esc(photo.id)}" aria-label="Remove photo">×</button></span>`).join('');
+    const added = draft.pending.map((photo, index) => `<span class="cc-pending"><img src="${esc(photo.thumb)}" alt=""><button type="button" data-entry-pending-remove="${index}" aria-label="Remove new photo">×</button></span>`).join('');
+    return `<article class="cc-feed" id="entry-${esc(entry.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(draft.text)}</textarea></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(draft.tags)}"></label><label class="cc-field cc-field-wide">Photos (${existing.length + draft.pending.length}/9)<span class="cc-button cc-file-btn">＋ Add photos<input type="file" accept="image/*" multiple data-entry-edit-photos ${ui.busy ? 'disabled' : ''}></span></label></div>${kept || added ? `<div class="cc-pending-row">${kept}${added}</div>` : ''}<p class="cc-small">Date updates when you save.</p><div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Save edits'}</button><button type="button" class="cc-button" data-entry-cancel ${ui.busy ? 'disabled' : ''}>Cancel</button></div></form></article>`;
+  }
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${p.thumb}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
     const composer = `<form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button></div></form>`;
@@ -310,12 +329,11 @@
     const feed = list.map(e => {
       const mine = e.author === meName(), key = nameToKey(e.author);
       if (ui.editingEntry === e.id) {
-        const d = planner.drafts.entryedit;
-        return `<article class="cc-feed" id="entry-${esc(e.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(d.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(d.date)}"></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(d.tags)}"></label></div><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button><button type="button" class="cc-button" data-entry-cancel>Cancel</button></div></form></article>`;
+        return diaryEditForm(e);
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b> ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(niceDate(e.date || today))}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(niceDate(entryDisplayDate(e)))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
     $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', composer + search + feed);
   }
@@ -335,9 +353,8 @@
     const ids = [];
     for (const p of list) {
       const id = newId();
-      // Not awaited: Firestore applies writes locally at once and syncs in the background (also offline).
-      run(store.putFull(id, p.full), 'A photo could not be saved.');
-      run(store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra }), 'A photo could not be saved.');
+      await store.putFull(id, p.full);
+      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra });
       ids.push(id);
     }
     return ids;
@@ -465,20 +482,20 @@
   function tearSheets(anniv) {
     const d = utcDay(today);
     const todaySheet = { head: niceDate(today, { month: 'short', year: 'numeric' }).toUpperCase(), num: d.getUTCDate(), unit: WEEK_ZH[d.getUTCDay()], foot: 'TODAY' };
-    if (!anniv) return [{ head: 'TOGETHER', num: '?', unit: 'DAYS · 天', foot: '', set: true }, todaySheet];
+    if (!anniv) return [{ head: 'TOGETHER', num: '?', unit: 'DAYS TOGETHER · 在一起', foot: '', set: true }, todaySheet];
     const n = daysBetween(anniv.date, today) + 1, next100 = Math.ceil((n + 1) / 100) * 100;
     const nextAnniv = repeatDate({ ...anniv, repeat: true }), years = +nextAnniv.slice(0, 4) - +anniv.date.slice(0, 4);
     return [
-      { head: 'TOGETHER', num: n, unit: 'DAYS · 在一起', foot: 'since ' + anniv.date.replace(/-/g, '.') },
+      { head: 'TOGETHER', num: n, unit: 'DAYS TOGETHER · 在一起', foot: 'since ' + anniv.date.replace(/-/g, '.') },
       todaySheet,
-      { head: 'NEXT', num: next100 - n, unit: `天后 · 第 ${next100} 天`, foot: niceDate(shiftDay(today, next100 - n), { month: 'short', day: 'numeric', year: 'numeric' }) },
-      { head: `${years} YEAR${years === 1 ? '' : 'S'}`, num: daysBetween(today, nextAnniv), unit: '天后 · 周年', foot: niceDate(nextAnniv, { month: 'short', day: 'numeric', year: 'numeric' }) }
+      { head: 'NEXT', num: next100 - n, unit: `DAYS LEFT · 距第 ${next100} 天`, foot: niceDate(shiftDay(today, next100 - n), { month: 'short', day: 'numeric', year: 'numeric' }) },
+      { head: `${years} YEAR${years === 1 ? '' : 'S'}`, num: daysBetween(today, nextAnniv), unit: 'DAYS LEFT · 距周年', foot: niceDate(nextAnniv, { month: 'short', day: 'numeric', year: 'numeric' }) }
     ];
   }
   function renderTearpad(anniv) {
     const sheets = tearSheets(anniv), sh = sheets[ui.tearView % sheets.length];
     $('[data-tearpad]').innerHTML = `<div class="cc-tear-rings" aria-hidden="true"><i></i><i></i><i></i></div><div class="cc-tear-stack" aria-hidden="true"></div>
-      <button type="button" class="cc-tear-sheet" data-tear aria-label="Tear off this page"><span class="cc-tear-head">${esc(sh.head)}</span><b class="cc-tear-num">${esc(sh.num)}</b><span class="cc-tear-unit" lang="zh-CN">${esc(sh.unit)}</span><span class="cc-tear-foot">${esc(sh.foot)}</span><span class="cc-tear-perf" aria-hidden="true"></span></button>
+      <button type="button" class="cc-tear-sheet" data-tear aria-label="Tear off this page"><span class="cc-tear-head">${esc(sh.head)}</span><b class="cc-tear-num">${esc(sh.num)}</b><span class="cc-tear-unit">${esc(sh.unit)}</span><span class="cc-tear-foot">${esc(sh.foot)}</span><span class="cc-tear-perf" aria-hidden="true"></span></button>
       ${sh.set ? '<button type="button" class="cc-button cc-tear-set" data-set-anniversary>Set our anniversary</button>' : `<p class="cc-tear-hint">tap to tear · ${ui.tearView % sheets.length + 1}/${sheets.length}</p>`}`;
   }
   function tear() {
@@ -519,8 +536,8 @@
     const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
-      ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PEOPLE[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
-      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
+      ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PLAYER_NICKNAMES[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
+      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PLAYER_NICKNAMES[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div>`) + picture;
     const mode = currentMode();
     for (const k of ['dark', 'high']) {
       $(`[data-mode-toggle="${k}"]`).setAttribute('aria-pressed', String(mode[k]));
@@ -566,8 +583,25 @@
   async function submitPlanner(form) {
     const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form));
     if (name === 'entryedit') {
-      if (!d.date || !validDay(d.date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
-      run(store.update('diary', ui.editingEntry, { text: String(d.text || '').trim(), date: d.date, tags: parseTags(d.tags) })); ui.editingEntry = null; flash('Saved.'); render(); return;
+      const entry = data.diary.find(item => item.id === ui.editingEntry);
+      if (!entry || entry.author !== meName()) return;
+      const draft = planner.drafts.entryedit;
+      const text = String(d.text || '').trim();
+      const kept = draft.photoIds.filter(id => (entry.photoIds || []).includes(id));
+      if (!text && !kept.length && !draft.pending.length) {
+        form.elements.text.setCustomValidity('Write something or keep a photo.'); form.elements.text.reportValidity(); return;
+      }
+      ui.busy = 'entryedit'; render();
+      try {
+        const editedDate = currentDay();
+        const added = await savePhotos(draft.pending, { entryId: entry.id, date: editedDate });
+        await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
+        for (const id of (entry.photoIds || []).filter(id => !kept.includes(id))) await store.remove('photos', id);
+        ui.editingEntry = null;
+        planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
+        flash('Saved.');
+      } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
+      ui.busy = false; render(); return;
     }
     const title = String(d.title || '').trim();
     if (!title) { form.elements.title.setCustomValidity('Please add a name.'); form.elements.title.reportValidity(); return; }
@@ -577,7 +611,16 @@
     if (name === 'todo' && d.kind === 'trip' && d.end && (!d.start || d.end < d.start)) { form.elements.end.setCustomValidity('Pick a departure date first, then a return on or after it.'); form.elements.end.reportValidity(); return; }
     const base = { id: newId(), title, by: meName(), createdAt: Date.now() }, note = String(d.note || '').trim();
     if (name === 'dayedit') { run(store.update('dates', planner.editingDay, { title, kind: d.kind, date: d.date, repeat: d.repeat === 'on' })); planner.editingDay = null; flash('Saved.'); render(); return; }
-    if (name === 'event') { run(store.set('events', { ...base, date: d.date, endDate: d.endDate || '', note })); select(d.date); planner.drafts.event = { title: '', date: d.date, endDate: '', note: '' }; planner.forms.event = false; flash('Added to the calendar.'); }
+    if (name === 'event') {
+      const kind = KINDS.some(([key]) => key === d.kind) ? d.kind : 'plan';
+      if (kind === 'trip') run(store.set('trips', { ...base, start: d.date, end: d.endDate || '', status: 'planning', note }));
+      else if (kind === 'task') run(store.set('tasks', { ...base, date: d.date, done: false, note }));
+      else if (['birthday', 'holiday', 'anniversary'].includes(kind)) run(store.set('dates', { ...base, kind, date: d.date, repeat: d.repeat === 'on', note }));
+      else run(store.set('events', { ...base, kind: 'plan', date: d.date, endDate: d.endDate || '', note }));
+      select(d.date);
+      planner.drafts.event = { title: '', kind, date: d.date, endDate: '', note: '', repeat: true };
+      planner.forms.event = false; flash('Added to the calendar.');
+    }
     if (name === 'edit') { run(store.update('events', planner.editing, { title, date: d.date, endDate: d.endDate || '', note })); planner.editing = null; select(d.date); flash('Saved.'); }
     if (name === 'todo') {
       if (d.kind === 'trip') run(store.set('trips', { ...base, status: d.status, start: d.start || '', end: d.end || '', note }));
@@ -597,7 +640,7 @@
     try {
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      run(store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() }), 'Could not post. Please try again.');
+      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
       flash('Posted.');
     } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
@@ -621,8 +664,17 @@
     if (el.matches('[data-trip-status]')) run(store.update('trips', el.dataset.tripStatus, { status: el.value }));
     if (el.matches('[data-wish-id]')) run(store.update('wishes', el.dataset.wishId, { got: el.checked }));
     if (el.name === 'kind' && el.closest('[data-planner-form="special"]')) { planner.drafts.special.kind = el.value; planner.drafts.special.repeat = el.value !== 'holiday'; render(); }
+    if (el.name === 'kind' && el.closest('[data-planner-form="event"]')) { planner.drafts.event.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="todo"]')) { planner.drafts.todo.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="dayedit"]')) { planner.drafts.dayedit.kind = el.value; planner.drafts.dayedit.repeat = el.value !== 'holiday' || planner.drafts.dayedit.repeat; render(); }
+    if (el.matches('[data-entry-edit-photos]')) {
+      const draft = planner.drafts.entryedit;
+      const files = [...el.files].slice(0, 9 - draft.photoIds.length - draft.pending.length);
+      if (el.files.length > files.length) flash('Up to 9 photos per entry.');
+      ui.busy = 'entryedit'; render();
+      for (const file of files) { try { draft.pending.push(await makePhoto(file)); } catch (err) { flash(err.message); } }
+      ui.busy = false; render();
+    }
     if (el.matches('[data-diary-photos]')) {
       const files = [...el.files].slice(0, 9 - diaryDraft.pending.length);
       if (el.files.length > files.length) flash('Up to 9 photos per entry.');
@@ -648,7 +700,7 @@
     if (el.matches('[data-album-photos]')) {
       const files = [...el.files].slice(0, 20);
       ui.busy = true; render();
-      try { const list = []; for (const f of files) list.push(await makePhoto(f)); savePhotos(list, { date: today }); flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
+      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today }); flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
       ui.busy = false; render();
     }
@@ -692,8 +744,10 @@
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', date: en.date || today, tags: (en.tags || []).join(', ') }; render(); } return; }
-    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; render(); return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: [...(en.photoIds || [])], pending: [] }; render(); } return; }
+    if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
+    if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
+    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
     if (el.hasAttribute('data-logout')) { store.signOut(); return; }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }

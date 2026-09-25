@@ -132,6 +132,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-pending-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 #couple-corner .cc-pending { position: relative; width: 64px; height: 64px; border: 1px solid hsl(calc(77deg + var(--g-dh)) calc(22% * var(--g-s)) calc(var(--lo) + 77.5% * var(--lk))); background: hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk))); padding: 2px; }
 #couple-corner .cc-pending img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#couple-corner .cc-pending .cc-img-wait { display: grid; height: 100%; place-items: center; }
 #couple-corner .cc-pending button, #couple-corner .cc-x { border: 1px solid hsl(calc(24deg + var(--a-dh)) calc(41% * var(--a-s)) calc(var(--lo) + 52.0% * var(--lk))); background: hsl(calc(25deg + var(--a-dh)) calc(74% * var(--a-s)) calc(var(--lo) + 83.1% * var(--lk))); color: hsl(calc(19deg + var(--a-dh)) calc(63% * var(--a-s)) calc(var(--lo) + 29.4% * var(--lk))); width: 20px; height: 20px; padding: 0; line-height: 1; }
 #couple-corner .cc-pending button { position: absolute; top: -7px; right: -7px; }
 #couple-corner .cc-x { width: 18px; height: 18px; font-size: 11px; margin-left: 4px; }
@@ -259,6 +260,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-tear-head { align-self: stretch; padding: 12px 4px 4px; background: hsl(calc(8deg + var(--a-dh)) calc(70% * var(--a-s)) calc(var(--lo) + 58% * var(--lk))); color: var(--cc-white); font: 12px/1.2 var(--cc-pixel); letter-spacing: 2px; }
 #couple-corner .cc-tear-num { font: 44px/1.15 var(--cc-pixel); margin-top: 6px; color: hsl(calc(8deg + var(--a-dh)) calc(65% * var(--a-s)) calc(var(--lo) + 48% * var(--lk))); text-shadow: 2px 2px 0 hsl(calc(29deg + var(--a-dh)) calc(83% * var(--a-s)) calc(var(--lo) + 86% * var(--lk))); }
 #couple-corner .cc-tear-unit { font: 12px/1.4 var(--cc-zh), monospace; }
+#couple-corner .cc-tear-unit { max-width: 100%; padding: 0 4px; text-align: center; overflow-wrap: anywhere; }
 #couple-corner .cc-tear-foot { font: 10px/1.4 var(--cc-pixel); opacity: .75; margin-top: 3px; min-height: 14px; }
 #couple-corner .cc-tear-perf { position: absolute; left: 0; right: 0; bottom: -6px; height: 6px; background: radial-gradient(circle at 4px 0, transparent 3px, var(--cc-white) 3.5px) 0 0 / 8px 6px repeat-x; }
 #couple-corner .cc-tear-hint { text-align: center; font: 10px/1.4 var(--cc-pixel); opacity: .7; margin: 14px 0 0 !important; }
