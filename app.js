@@ -11,7 +11,8 @@
   }
   const PAGES = ['home', 'diary', 'album', 'todo', 'wishlist'];
   const PEOPLE = { sijie: '斯婕', zhenzhen: '真真' };
-  const PLAYER_NICKNAMES = { sijie: '宝宝一 · bibo', zhenzhen: '宝宝二 · bobi' };
+  const PLAYER_NICKNAMES = { sijie: 'bibo', zhenzhen: 'bobi' };
+  const PLAYER_BUBBLES = { sijie: '宝宝一', zhenzhen: '宝宝二' };
   const nameToKey = name => Object.keys(PEOPLE).find(k => PEOPLE[k] === name) || 'sijie';
 
   // ---------- small helpers ----------
@@ -534,10 +535,11 @@
     const local = store.mode === 'local';
     const avatars = data.meta.avatars || {};
     const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
+    const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span></span>`;
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
-      ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PLAYER_NICKNAMES[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
-      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PLAYER_NICKNAMES[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div>`) + picture;
+      ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${playerAvatar(k)}<small>${PLAYER_NICKNAMES[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
+      : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${playerAvatar(k)}<small>${PLAYER_NICKNAMES[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div>`) + picture;
     const mode = currentMode();
     for (const k of ['dark', 'high']) {
       $(`[data-mode-toggle="${k}"]`).setAttribute('aria-pressed', String(mode[k]));
