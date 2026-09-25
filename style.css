@@ -273,3 +273,11 @@
   --cc-hero-art: url("assets/hero.jpg");
   --cc-bunny: url("assets/bunny.png");
 }
+
+#couple-corner .cc-hero h2.cc-savepoint-title {font:42px/1.15 var(--cc-pixel);letter-spacing:.3px;margin:5px 0 10px}
+#couple-corner .cc-hero h2.cc-savepoint-title em {font-size:.78em}
+#couple-corner .cc-intro .cc-savepoint-subtitle {display:inline-block;padding:3px 7px;border:1px dashed var(--cc-line);background:var(--cc-paper);font:11px/1.5 var(--cc-pixel);letter-spacing:.4px}
+@media(max-width:1000px) {#couple-corner .cc-hero h2.cc-savepoint-title {font-size:32px}}
+@media(max-width:600px) {#couple-corner .cc-hero h2.cc-savepoint-title {font-size:30px}}
+@media(max-width:450px) {#couple-corner .cc-hero h2.cc-savepoint-title {font-size:38px}}
+@media(max-width:360px) {#couple-corner .cc-hero h2.cc-savepoint-title {font-size:32px}}
