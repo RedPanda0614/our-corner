@@ -228,7 +228,7 @@
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
-      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>${form}${renderImport()}</div></div>`);
+      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button><button type="button" class="cc-button" data-export-ics>Export .ics</button></div>${form}${renderImport()}</div></div>`);
   }
 
   // ---------- special days + memory ----------
@@ -732,6 +732,7 @@
       run(store.remove(col, item.id)); flash('Removed.', () => store.set(col, item)); return;
     }
     // import
+    if (el.hasAttribute('data-export-ics')) { exportIcs(); return; }
     if (el.hasAttribute('data-import-open')) { calendarImport.open = !calendarImport.open; render(); return; }
     if (el.hasAttribute('data-import-close')) { calendarImport.open = false; render(); return; }
     if (el.hasAttribute('data-import-preview')) { previewImport(); return; }
@@ -792,6 +793,36 @@
     calendarImport.preview = null; calendarImport.open = false;
     flash(`${entries.length} events imported.`, async () => { for (const x of entries) await store.remove('events', x.id); });
     render();
+  }
+
+  // ---------- calendar export (.ics for Apple / Google Calendar) ----------
+  function exportIcs() {
+    const escT = t => String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const ymd = iso => iso.replace(/-/g, '');
+    const utc = ms => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const fold = line => { const out = []; let cur = ''; for (const ch of line) { if (new TextEncoder().encode(cur + ch).length > 74) { out.push(cur); cur = ' ' + ch; } else cur += ch; } out.push(cur); return out.join('\r\n'); };
+    const stamp = utc(Date.now()), lines = [];
+    const ev = (id, title, fields, note, location) => {
+      lines.push('BEGIN:VEVENT', `UID:${id}@our-little-corner`, `DTSTAMP:${stamp}`, `SUMMARY:${escT(title)}`, ...fields);
+      if (note) lines.push(`DESCRIPTION:${escT(note)}`);
+      if (location) lines.push(`LOCATION:${escT(location)}`);
+      lines.push('END:VEVENT');
+    };
+    const allDay = (start, endInclusive) => [`DTSTART;VALUE=DATE:${ymd(start)}`, `DTEND;VALUE=DATE:${ymd(shiftDay(endInclusive || start, 1))}`];
+    let n = 0;
+    for (const e of data.events) {
+      const timed = e.startMs && e.endMs && e.allDay === false;
+      ev('ev-' + e.id, e.title, timed ? [`DTSTART:${utc(e.startMs)}`, `DTEND:${utc(e.endMs)}`] : allDay(e.date, e.endDate || e.date), e.note, e.location); n++;
+    }
+    for (const t of data.trips) if (t.start) { ev('trip-' + t.id, '✈ ' + t.title, allDay(t.start, t.end || t.start), [statusLabel(t.status), t.note].filter(Boolean).join(' · ')); n++; }
+    for (const t of data.tasks) if (t.date) { ev('task-' + t.id, (t.done ? '✓ ' : '') + t.title, allDay(t.date), t.note); n++; }
+    for (const d of data.dates) { ev('day-' + d.id, '♡ ' + d.title, [...allDay(d.date), ...(d.repeat ? ['RRULE:FREQ=YEARLY'] : [])], kindLabel(d.kind)); n++; }
+    if (!n) { flash('Nothing to export yet.'); return; }
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Our Little Corner//Calendar//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:斯婕 & 真真', ...lines, 'END:VCALENDAR'].map(fold).join('\r\n') + '\r\n';
+    const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = `our-little-corner-${today}.ics`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    flash(`Exported ${n} item${n === 1 ? '' : 's'}. Open the file to add them to Apple or Google Calendar.`);
   }
 
   // ---------- seed (first run only) ----------
