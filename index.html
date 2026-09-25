@@ -56,24 +56,20 @@
       </section>
       <section class="cc-tearpad" data-tearpad aria-label="How long we have been together"></section>
       <section class="cc-window cc-special-side" data-win="special"><div class="cc-bar"><span>♡ SPECIAL DAYS</span></div><div class="cc-body"><div data-upcoming-days></div><button type="button" class="cc-button cc-side-action" data-edit-days>Manage</button></div></section>
+      <section class="cc-ipod" aria-label="Music player">
+        <div class="cc-ipod-bubble" data-bgm-screen aria-live="polite"></div>
+        <div class="cc-ipod-body">
+          <img class="cc-ipod-img" src="assets/ipod.png" alt="">
+          <button type="button" class="cc-ipod-btn up" data-bgm="vol-up" aria-label="Volume up"></button>
+          <button type="button" class="cc-ipod-btn down" data-bgm="vol-down" aria-label="Volume down"></button>
+          <button type="button" class="cc-ipod-btn prev" data-bgm="prev" aria-label="Previous song"></button>
+          <button type="button" class="cc-ipod-btn next" data-bgm="next" aria-label="Next song"></button>
+          <button type="button" class="cc-ipod-btn play" data-bgm="toggle" aria-label="Play or pause"></button>
+        </div>
+      </section>
       <section class="cc-window cc-skin-window" data-win="skins">
         <div class="cc-bar"><span>✿ SKIN</span></div>
         <div class="cc-body"><div class="cc-skins" data-skins role="group" aria-label="Colour theme"></div></div>
-      </section>
-      <section class="cc-console" aria-label="Pocket music player">
-        <div class="cc-console-label">POCKET PLAYER</div>
-        <div class="cc-console-screen" data-bgm-screen aria-live="polite"></div>
-        <div class="cc-console-controls">
-          <div class="cc-dpad-grid" role="group" aria-label="Music controls">
-            <button type="button" class="cc-dpad-btn up" data-bgm="vol-up" aria-label="Volume up">▲</button>
-            <button type="button" class="cc-dpad-btn left" data-bgm="prev" aria-label="Previous track">◀</button>
-            <span class="cc-dpad-center" aria-hidden="true"></span>
-            <button type="button" class="cc-dpad-btn right" data-bgm="next" aria-label="Next track">▶</button>
-            <button type="button" class="cc-dpad-btn down" data-bgm="vol-down" aria-label="Volume down">▼</button>
-          </div>
-          <div class="cc-ab"><button type="button" data-bgm="prev" aria-label="B: previous track">B</button><button type="button" data-bgm="toggle" aria-label="A: play or pause">A</button></div>
-        </div>
-        <div class="cc-console-foot"><button type="button" data-bgm="next">SELECT</button> · <button type="button" data-bgm="toggle">START</button></div>
       </section>
       <div class="cc-bunny-sticker" aria-hidden="true"></div>
     </aside>
@@ -102,12 +98,8 @@
       <div class="cc-preview-message" id="cc-planner-message" role="status" aria-live="polite" hidden></div>
 
       <div data-panel="home" hidden>
-        <div class="cc-home-grid">
-          <div data-home-calendar></div>
-          <div class="cc-home-side">
-            <section class="cc-window cc-memory-window" data-win="memory"><div class="cc-bar"><span>↺ RANDOM MEMORY</span></div><div class="cc-body" data-memory></div></section>
-          </div>
-        </div>
+        <section class="cc-window cc-memory-window cc-memory-strip" data-win="memory"><div class="cc-bar"><span>↺ RANDOM MEMORY</span></div><div class="cc-body" data-memory></div></section>
+        <div data-home-calendar></div>
       </div>
       <div data-panel="diary" hidden></div>
       <div data-panel="album" hidden></div>

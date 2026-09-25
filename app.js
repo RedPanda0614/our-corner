@@ -39,23 +39,11 @@
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
   const THEMES = [
     T('matcha', '抹茶橘子', 'light', [0, 1.7], [0, 1.4], [0, 1.3], [0, 1.2]),
-    T('strawberry', '草莓牛奶', 'light', [240, 1.9], [140, 1.3], [60, 1.5], [290, 3]),
-    T('soda', '汽水蓝', 'light', [105, 2.2], [22, 1.8], [-40, 1.5], [140, 2.5]),
-    T('grape', '紫葡萄', 'light', [172, 2], [62, 1.6], [45, 1.6], [220, 2.5]),
-    T('tomato', '番茄小馆', 'light', [-95, 2.2], [22, 1.8], [70, 1.3], [-12, 2.5]),
-    T('milktea', '焦糖奶茶', 'light', [-65, 1.7], [-12, 1.3], [85, 1.1], [-25, 2.2]),
-    T('arcade', '街机高对比', 'light-high', [115, 3], [-2, 2.4], [40, 2], [150, 1.5], 1.35),
-    T('lemon', '柠檬苏打', 'light-high', [-40, 2.6], [175, 2], [-80, 1.8], [-5, 3], 1.25),
-    T('classic', '原版淡色', 'light-low', [0, 1], [0, 1], [0, 1], [0, 1], 0.85),
-    T('fog', '雾面灰绿', 'light-low', [20, 0.6], [0, 0.6], [0, 0.6], [0, 0.5], 0.75),
-    T('nightmatcha', '夜抹茶', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
-    T('midnight', '午夜葡萄', 'dark', [172, 1.9], [62, 1.6], [45, 1.5], [220, 2], 0.95, true),
-    T('deepsea', '深海汽水', 'dark', [105, 2], [22, 1.8], [-40, 1.4], [140, 2], 0.95, true),
-    T('cherry', '黑樱桃', 'dark', [240, 1.9], [140, 1.3], [60, 1.5], [290, 2], 0.95, true),
-    T('neon', '霓虹像素', 'dark-high', [172, 3], [110, 3], [60, 2.5], [220, 2], 1.25, true),
-    T('cocoa', '可可夜', 'dark-low', [-65, 1], [-12, 0.8], [85, 0.8], [-25, 0.6], 0.75, true)
+    T('classic', '原版淡色', 'light', [0, 1], [0, 1], [0, 1], [0, 1], 0.9),
+    T('nightmatcha', '抹茶橘子 · 夜', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
+    T('classicdark', '原版淡色 · 夜', 'dark', [0, 0.9], [0, 0.9], [0, 0.9], [0, 0.8], 0.85, true)
   ];
-  const THEME_GROUPS = [['light', 'LIGHT'], ['light-high', 'LIGHT · 高对比'], ['light-low', 'LIGHT · 低对比'], ['dark', 'DARK'], ['dark-high', 'DARK · 高对比'], ['dark-low', 'DARK · 低对比']];
+  const THEME_GROUPS = [['light', 'LIGHT'], ['dark', 'DARK']];
   const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
@@ -130,7 +118,7 @@
   }
   function decorateStaticWindows() {
     $$('section[data-win]').forEach(win => {
-      if (win.closest('dialog') || (win.closest('[data-panel]') && !win.closest('.cc-home-side'))) return;
+      if (win.closest('dialog')) return;
       const key = win.dataset.win, bar = win.querySelector(':scope > .cc-bar');
       bar.querySelector(':scope > .cc-min')?.remove();
       bar.insertAdjacentHTML('beforeend', minButton(key));
@@ -434,7 +422,7 @@
       : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
     const current = ui.previewTheme || data.meta.theme || THEMES[0].id;
     const cur = THEMES.find(t => t.id === current) || THEMES[0];
-    $('[data-skins]').innerHTML = `<p class="cc-skin-current" lang="zh-CN">${esc(cur.zh)}</p>` + THEME_GROUPS.map(([g, label]) => `<p class="cc-skin-group">${label}</p><div class="cc-skin-grid">${THEMES.filter(t => t.group === g).map(t => `<button type="button" class="cc-skin" data-theme="${t.id}" aria-pressed="${current === t.id}" title="${esc(t.zh)}" aria-label="${esc(t.zh)}" style="${themeVars(t)}"><i class="s1"></i><i class="s2"></i><i class="s3"></i></button>`).join('')}</div>`).join('');
+    $('[data-skins]').innerHTML = THEME_GROUPS.map(([g, label]) => `<p class="cc-skin-group">${label}</p><div class="cc-skin-list">${THEMES.filter(t => t.group === g).map(t => `<button type="button" class="cc-skin-row" data-theme="${t.id}" aria-pressed="${current === t.id}" style="${themeVars(t)}"><span class="cc-skin-dots"><i class="s1"></i><i class="s2"></i><i class="s3"></i></span><span lang="zh-CN">${esc(t.zh.replace(' · 夜', ''))}</span></button>`).join('')}</div>`).join('');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
     $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
@@ -704,10 +692,15 @@
   }
 
   // ---------- bgm screen ----------
+  let lastVol = null, volTimer = 0;
   CCBgm.onChange(info => {
-    const screen = $('[data-bgm-screen]'); if (!screen) return;
-    screen.innerHTML = `<span>${info.playing ? '♫' : '♪'}</span><br>${esc(info.name)}<br><small>${info.playing ? 'PLAYING' : 'PAUSED'} · VOL ${Math.round(info.volume * 10)}</small>`;
-    screen.dataset.playing = info.playing;
+    const bubble = $('[data-bgm-screen]'); if (!bubble) return;
+    const volChanged = lastVol !== null && lastVol !== info.volume; lastVol = info.volume;
+    if (volChanged) { clearTimeout(volTimer); volTimer = setTimeout(() => { bubble.dataset.vol = 'false'; }, 1400); }
+    const bars = '▮'.repeat(Math.round(info.volume * 10)) + '▯'.repeat(10 - Math.round(info.volume * 10));
+    bubble.dataset.vol = String(volChanged);
+    bubble.dataset.playing = info.playing;
+    bubble.innerHTML = `<span class="cc-bubble-song">${info.playing ? '♫' : '❚❚'} ${esc(info.name)}</span><span class="cc-bubble-vol">VOL ${bars}</span>`;
   });
 
   // ---------- boot ----------
