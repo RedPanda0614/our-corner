@@ -29,7 +29,7 @@
 #couple-corner .cc-address {padding:3px 9px;border:1px inset hsl(calc(86deg + var(--g-dh)) calc(21% * var(--g-s)) calc(var(--lo) + 78.2% * var(--lk)));background:hsl(calc(53deg + var(--p-dh)) calc(100% * var(--p-s)) calc(var(--lo) + 98.4% * var(--lk)));flex:1;min-width:0;color:hsl(calc(98deg + var(--g-dh)) calc(14% * var(--g-s)) calc(var(--lo) + 40.8% * var(--lk)));overflow-wrap:anywhere}
 #couple-corner .cc-address b {font-weight:400;color:hsl(calc(26deg + var(--a-dh)) calc(31% * var(--a-s)) calc(var(--lo) + 46.3% * var(--lk)))}
 #couple-corner .cc-strip-stars {color:hsl(calc(29deg + var(--a-dh)) calc(45% * var(--a-s)) calc(var(--lo) + 49.2% * var(--lk)));letter-spacing:4px;white-space:nowrap}
-#couple-corner .cc-grid {display:grid;grid-template-columns:146px minmax(0,1fr);gap:16px;align-items:start;padding:17px 16px 0}
+#couple-corner .cc-grid {display:grid;grid-template-columns:180px minmax(0,1fr);gap:16px;align-items:start;padding:17px 16px 0}
 #couple-corner .cc-center,#couple-corner .cc-left,#couple-corner .cc-home-side,#couple-corner .cc-planner {min-width:0}
 #couple-corner .cc-window {background:var(--cc-paper);border:2px solid var(--cc-line);padding:3px;box-shadow:3px 3px 0 hsl(calc(95deg + var(--g-dh)) calc(18% * var(--g-s)) calc(var(--lo) + 68.0% * var(--lk)) / 0.33);margin-bottom:14px}
 #couple-corner .cc-bar {background:var(--cc-mint);box-shadow:inset 0 1px hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk)) / 0.60);border-bottom:1px solid hsl(calc(90deg + var(--g-dh)) calc(18% * var(--g-s)) calc(var(--lo) + 65.9% * var(--lk)));display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 7px;font:15px/1.2 var(--cc-pixel);letter-spacing:.3px;color:hsl(calc(103deg + var(--g-dh)) calc(17% * var(--g-s)) calc(var(--lo) + 29.6% * var(--lk)));min-height:29px}
@@ -191,7 +191,7 @@
 #couple-corner .cc-import-confirm {margin-top:12px;background:hsl(calc(32deg + var(--a-dh)) calc(85% * var(--a-s)) calc(var(--lo) + 83.9% * var(--lk)))}
 #couple-corner button:disabled {opacity:.55;cursor:default;transform:none}
 @media(max-width:1000px) {
-  #couple-corner .cc-grid {grid-template-columns:128px minmax(0,1fr);gap:12px;padding:13px 12px 0}
+  #couple-corner .cc-grid {grid-template-columns:155px minmax(0,1fr);gap:12px;padding:13px 12px 0}
   #couple-corner .cc-hero-content {padding:12px;gap:10px}
   #couple-corner .cc-hero h2 {font-size:24px;letter-spacing:0}
   #couple-corner .cc-side-title {font-size:12px}
