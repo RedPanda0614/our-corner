@@ -299,7 +299,7 @@ body { padding: 0; min-height: 100vh; }
 
 /* ===== v4: wider sidebar, memory strip, iPod, simpler skins ===== */
 #couple-corner .cc-grid { grid-template-columns: 180px minmax(0, 1fr); gap: 16px; }
-@media (max-width: 1000px) { #couple-corner .cc-grid { grid-template-columns: 155px minmax(0, 1fr); gap: 12px; } #couple-corner .cc-dock { transform: scale(.86); transform-origin: top left; margin-bottom: -12px; } }
+@media (max-width: 1000px) { #couple-corner .cc-grid { grid-template-columns: 155px minmax(0, 1fr); gap: 12px; } }
 @media (max-width: 820px) { #couple-corner .cc-grid { grid-template-columns: minmax(0, 1fr); } }
 #couple-corner .cc-profile .cc-body { padding: 12px 10px; }
 #couple-corner .cc-badge { width: 54px; height: 54px; }
@@ -359,7 +359,7 @@ body { padding: 0; min-height: 100vh; }
 @media (max-width: 820px) { #couple-corner .cc-left { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
 
 /* ===== v5: iPod dock + drag, mobile sidebar on top ===== */
-#couple-corner .cc-dock { position: relative; width: 180px; height: 190px; margin: 4px auto 14px; }
+#couple-corner .cc-dock { position: relative; width: 100%; max-width: 180px; height: calc(190px * var(--dock-scale, 1)); margin: 4px auto 14px; }
 #couple-corner .cc-cable { position: absolute; left: 0; top: 0; overflow: visible; z-index: 1; }
 #couple-corner .cc-cable-edge { stroke: hsl(0 0% 45%); stroke-width: 6; }
 #couple-corner .cc-cable-line { stroke: hsl(0 0% 97%); stroke-width: 3; }
@@ -369,12 +369,13 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-dock-led { position: absolute; left: 44px; top: 20px; width: 6px; height: 6px; background: hsl(120 60% 45%); box-shadow: 0 0 0 1px hsl(0 0% 20% / .4); }
 #couple-corner .cc-dock[data-docked=false] .cc-dock-led { background: hsl(35 90% 55%); animation: cc-blink 1s steps(2) infinite; }
 @keyframes cc-blink { 50% { opacity: .2; } }
-#couple-corner .cc-dock::after { content: ''; position: absolute; left: 20px; top: 44px; width: 124px; height: 118px; border: 2px dashed transparent; pointer-events: none; }
-#couple-corner .cc-dock[data-docked=false]::after { border-color: hsl(0 0% 50% / .45); }
-#couple-corner .cc-dock.cc-dock-near::after { border-color: hsl(120 60% 40%); background: hsl(120 60% 45% / .12); }
+#couple-corner .cc-dock .cc-dock-frame::after { content: ''; position: absolute; left: 20px; top: 44px; width: 124px; height: 118px; border: 2px dashed transparent; pointer-events: none; }
+#couple-corner .cc-dock[data-docked=false] .cc-dock-frame::after { border-color: hsl(0 0% 50% / .45); }
+#couple-corner .cc-dock.cc-dock-near .cc-dock-frame::after { border-color: hsl(120 60% 40%); background: hsl(120 60% 45% / .12); }
 #couple-corner .cc-dock.cc-dock-click { animation: cc-click .35s steps(3); }
 @keyframes cc-click { 50% { transform: translateY(2px); } }
-#couple-corner .cc-dock .cc-ipod-body { position: absolute; left: 20px; top: 44px; width: 124px; z-index: 2; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+#couple-corner .cc-dock .cc-ipod-body { position: absolute; left: 20px; top: 44px; width: 124px; z-index: 2; }
+#couple-corner .cc-ipod-body { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 #couple-corner .cc-ipod-body.cc-floating { position: fixed; z-index: 60; }
 #couple-corner .cc-ipod-body.cc-dragging { cursor: grabbing; filter: drop-shadow(4px 6px 0 hsl(0 0% 0% / .25)); }
 #couple-corner .cc-ipod-body.cc-snapping { transition: left .18s steps(4), top .18s steps(4); }
@@ -448,3 +449,81 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-legend { font-size: 10px; }
 @media (pointer: coarse) { #couple-corner .cc-day { min-height: 40px; } }
 #couple-corner .cc-bell { margin-right: 8px; }
+
+/* ===== v7: user popover, mode switches, scrollable special days, mobile order ===== */
+#couple-corner .cc-user { position: relative; }
+#couple-corner .cc-user-btn { width: 30px; height: 30px; padding: 0; border: 2px solid hsl(0 0% 100% / .7); background: none; display: flex; }
+#couple-corner .cc-user-icon { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; font: 15px/1 var(--cc-zh), monospace; color: #fff; background: hsl(calc(97deg + var(--g-dh)) calc(22% * var(--g-s)) calc(var(--lo) + 58% * var(--lk))); }
+#couple-corner .cc-user-icon.zhenzhen { background: hsl(calc(22deg + var(--a-dh)) calc(70% * var(--a-s)) calc(var(--lo) + 69% * var(--lk))); }
+#couple-corner .cc-user-icon img { width: 100%; height: 100%; object-fit: cover; }
+#couple-corner .cc-user-pop { position: absolute; right: -4px; top: calc(100% + 8px); width: 210px; z-index: 70; margin: 0; display: none; color: initial; font: 12px/1.8 Verdana, var(--cc-zh), sans-serif; letter-spacing: 0; }
+#couple-corner .cc-user-pop::before { content: ''; position: absolute; right: 12px; top: -8px; border: 8px solid transparent; border-top: 0; border-bottom-color: var(--cc-line); }
+#couple-corner .cc-user:hover .cc-user-pop, #couple-corner .cc-user:focus-within .cc-user-pop, #couple-corner .cc-user.cc-open .cc-user-pop { display: block; }
+#couple-corner .cc-user::after { content: ''; position: absolute; left: -10px; right: -10px; top: 100%; height: 10px; } /* hover bridge */
+#couple-corner .cc-user-pop .cc-body { text-align: center; }
+#couple-corner .cc-logout { width: 100%; margin-top: 8px; }
+
+#couple-corner .cc-switches { display: flex; gap: 6px; flex-shrink: 0; }
+#couple-corner .cc-switch { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px 1px 3px; min-height: 26px; background: var(--cc-white); border: 1px solid hsl(0 0% 50% / .45); box-shadow: 1px 1px 0 hsl(0 0% 0% / .2); font: 11px/1 var(--cc-pixel); color: inherit; }
+#couple-corner .cc-switch:hover { background: hsl(calc(32deg + var(--a-dh)) calc(85% * var(--a-s)) calc(var(--lo) + 88% * var(--lk))); }
+#couple-corner .cc-stick .st-base { fill: hsl(0 0% 18%); }
+#couple-corner .cc-stick .st-base-top { fill: hsl(0 0% 32%); }
+#couple-corner .cc-stick .st-rod { fill: hsl(0 0% 62%); }
+#couple-corner .cc-stick.dark .st-ball { fill: hsl(355 75% 55%); }
+#couple-corner .cc-stick.high .st-ball { fill: hsl(45 90% 55%); }
+#couple-corner .cc-stick .st-shine { fill: hsl(0 0% 100% / .8); }
+#couple-corner .cc-stick .st-lever { transform-origin: 12px 17px; transform: rotate(-22deg); transition: transform .15s steps(3); }
+#couple-corner .cc-switch[aria-pressed=true] .st-lever { transform: rotate(22deg); }
+#couple-corner .cc-switch span { min-width: 44px; text-align: left; }
+
+/* special days: scrollable little window */
+#couple-corner .cc-special-side { display: flex; flex-direction: column; }
+#couple-corner .cc-special-side .cc-body { display: flex; flex-direction: column; min-height: 0; }
+#couple-corner .cc-special-side [data-upcoming-days] { max-height: 190px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+#couple-corner .cc-special-side .cc-side-action { flex-shrink: 0; }
+#couple-corner .cc-left > .cc-dock { margin-top: 0; }
+
+@media (max-width: 820px) {
+  #couple-corner .cc-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+  #couple-corner .cc-left, #couple-corner .cc-center { display: contents; }
+  #couple-corner .cc-center > * { grid-column: 1 / -1; min-width: 0; }
+  #couple-corner .cc-hero { order: 1; margin-bottom: 0; }
+  #couple-corner .cc-tearpad { order: 2; }
+  #couple-corner .cc-dock { order: 3; }
+  #couple-corner .cc-special-side { order: 4; }
+  #couple-corner .cc-tabs { order: 5; margin: 4px 0 6px; }
+  #couple-corner .cc-inbox-pill-row { order: 6; }
+  #couple-corner .cc-preview-message { order: 7; }
+  #couple-corner .cc-center > [data-panel] { order: 8; }
+  #couple-corner .cc-foot { order: 9; }
+  #couple-corner .cc-bunny-sticker { display: none; }
+  #couple-corner .cc-left > * { margin: 0 !important; min-width: 0; }
+  /* row 2: three equal-height tiles */
+  #couple-corner .cc-tearpad { display: flex; flex-direction: column; padding-top: 7px; }
+  #couple-corner .cc-tear-sheet { flex: 1; justify-content: center; padding-bottom: 6px; }
+  #couple-corner .cc-tear-rings { padding: 0 8px; }
+  #couple-corner .cc-tear-head { padding: 9px 2px 3px; font-size: 9px; letter-spacing: 1px; }
+  #couple-corner .cc-tear-num { font-size: 32px; margin-top: 2px; }
+  #couple-corner .cc-tear-unit, #couple-corner .cc-tear-foot { font-size: 9px; }
+  #couple-corner .cc-tear-hint { display: none; }
+  #couple-corner .cc-tear-set { font-size: 9px; padding: 2px; margin-top: 10px; min-height: 26px; }
+  #couple-corner .cc-dock { width: 100%; height: calc(190px * var(--dock-scale, 1)); align-self: center; }
+  #couple-corner .cc-special-side .cc-bar { font-size: 11px; padding: 3px 5px; min-height: 24px; }
+  #couple-corner .cc-special-side .cc-bar .cc-min { display: none; }
+  #couple-corner .cc-special-side .cc-body { flex: 1 1 0; contain: size; padding: 6px; }
+  #couple-corner .cc-special-side [data-upcoming-days] { max-height: none; flex: 1; min-height: 0; }
+  #couple-corner .cc-special-side .cc-upcoming-entry { padding: 5px 0; }
+  #couple-corner .cc-special-side .cc-upcoming-entry strong { font-size: 11px; margin: 2px 0; }
+  #couple-corner .cc-special-side .cc-plan-tag { font-size: 9px; }
+  #couple-corner .cc-special-side .cc-side-action { margin-top: 4px; min-height: 28px; font-size: 10px; padding: 2px; }
+  #couple-corner .cc-switch span { display: none; }
+  #couple-corner .cc-switch { padding: 1px 3px; }
+  #couple-corner .cc-browser-strip { gap: 6px; }
+}
+
+#couple-corner .cc-dock-frame { position: absolute; left: 0; top: 0; width: 180px; height: 190px; transform: scale(var(--dock-scale, 1)); transform-origin: top left; }
+#couple-corner .cc-ipod-body.cc-floating .cc-ipod-img { width: 124px; }
+#couple-corner .cc-ipod-body.cc-floating { width: 124px; }
+#couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble { top: auto; bottom: calc(100% + 9px); left: 36%; transform: none; }
+#couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble::after { left: 12px; }
+#couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble[data-playing=true] { animation-name: cc-float2; }

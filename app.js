@@ -43,18 +43,22 @@
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
   const THEMES = [
     T('matcha', '抹茶橘子', 'light', [0, 1.7], [0, 1.4], [0, 1.3], [0, 1.2]),
-    T('classic', '原版淡色', 'light', [0, 1], [0, 1], [0, 1], [0, 1], 0.9),
-    T('nightmatcha', '抹茶橘子 · 夜', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
-    T('classicdark', '原版淡色 · 夜', 'dark', [0, 0.9], [0, 0.9], [0, 0.9], [0, 0.8], 0.85, true)
+    T('matchahigh', '抹茶橘子 · 高对比', 'light', [0, 1.9], [0, 1.6], [0, 1.4], [0, 1.1], 1.2),
+    T('nightmatcha', '夜抹茶', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
+    T('nighthigh', '夜抹茶 · 高对比', 'dark', [0, 2], [0, 1.9], [0, 1.5], [0, 1.1], 1.25, true)
   ];
-  const THEME_GROUPS = [['light', 'LIGHT'], ['dark', 'DARK']];
+  function currentMode() {
+    const m = data.meta.mode; if (m) return { dark: !!m.dark, high: !!m.high };
+    return { dark: /night|dark/.test(data.meta.theme || ''), high: false };   // older saved skins
+  }
+  const themeFor = m => (m.dark ? (m.high ? 'nighthigh' : 'nightmatcha') : (m.high ? 'matchahigh' : 'matcha'));
   const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
   const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
   const kindColor = k => (data.meta.kindColors || {})[k] || DEFAULT_KIND_COLORS[k];
   function applyTheme() {
-    const t = THEMES.find(x => x.id === (ui.previewTheme || data.meta.theme)) || THEMES[0];
+    const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
@@ -517,9 +521,14 @@
     $('[data-player-card]').innerHTML = (local
       ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${badge(k)}<small>${PEOPLE[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
       : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${badge(k)}<small>${PEOPLE[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">PLAYER 01 + 02</div>`) + picture;
-    const current = ui.previewTheme || data.meta.theme || THEMES[0].id;
-    const cur = THEMES.find(t => t.id === current) || THEMES[0];
-    $('[data-skins]').innerHTML = THEME_GROUPS.map(([g, label]) => `<p class="cc-skin-group">${label}</p><div class="cc-skin-list">${THEMES.filter(t => t.group === g).map(t => `<button type="button" class="cc-skin-row" data-theme="${t.id}" aria-pressed="${current === t.id}" style="${themeVars(t)}"><span class="cc-skin-dots"><i class="s1"></i><i class="s2"></i><i class="s3"></i></span><span lang="zh-CN">${esc(t.zh.replace(' · 夜', ''))}</span></button>`).join('')}</div>`).join('');
+    const mode = currentMode();
+    for (const k of ['dark', 'high']) {
+      $(`[data-mode-toggle="${k}"]`).setAttribute('aria-pressed', String(mode[k]));
+      $(`[data-mode-label="${k}"]`).textContent = k === 'dark' ? (mode.dark ? 'DARK' : 'LIGHT') : (mode.high ? 'HIGH' : 'NORMAL');
+    }
+    const icon = avatars[ui.me];
+    $('[data-user-icon]').innerHTML = ui.me ? (icon ? `<img src="${icon}" alt="">` : esc(PEOPLE[ui.me].slice(0, 1))) : '?';
+    $('[data-user-icon]').className = 'cc-user-icon ' + (ui.me || '');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
     $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
@@ -662,6 +671,7 @@
     }
   });
 
+  document.addEventListener('click', e => { const u = $('[data-user]'); if (u && !u.contains(e.target)) { u.classList.remove('cc-open'); $('[data-user-toggle]')?.setAttribute('aria-expanded', 'false'); } });
   root.addEventListener('click', e => {
     const el = e.target.closest('button'); if (!el || el.disabled) return;
     const ds = el.dataset;
@@ -673,7 +683,8 @@
     if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
     if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
-    if (ds.theme) { run(store.setMeta({ theme: ds.theme })); data.meta = { ...data.meta, theme: ds.theme }; render(); return; }
+    if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
+    if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
     if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.setMeta({ kindColors: kc })); render(); return; }
     if (el.hasAttribute('data-avatar-reset')) { const av = { ...(data.meta.avatars || {}) }; delete av[ui.me]; run(store.setMeta({ avatars: av })); return; }
@@ -798,15 +809,18 @@
   // ---------- bgm screen ----------
   // ---------- draggable iPod with a charging dock ----------
   (() => {
-    const ipod = $('[data-ipod]'), dock = $('[data-dock]'); if (!ipod || !dock) return;
+    const ipod = $('[data-ipod]'), dock = $('[data-dock]'), frame = $('[data-dock-frame]'); if (!ipod || !dock) return;
     const saved = ls.get('ipod', { docked: true, x: 0, y: 0 });
     const JACK = { x: 0.075, y: 0.02 };              // jack position on the iPod image (fraction of size)
-    const plugTip = () => { const r = dock.querySelector('.cc-cable').getBoundingClientRect(); return { x: r.left + 31, y: r.top + 46 }; };
+    const plugTip = () => { const r = dock.querySelector('.cc-plug-tip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom }; };
     const jackOf = (x, y) => ({ x: x + ipod.offsetWidth * JACK.x, y: y + ipod.offsetHeight * JACK.y });
     const clamp = (x, y) => ({ x: Math.max(4, Math.min(innerWidth - ipod.offsetWidth - 4, x)), y: Math.max(40, Math.min(innerHeight - ipod.offsetHeight - 4, y)) });
     function place() {
       dock.dataset.docked = String(saved.docked);
       ipod.classList.toggle('cc-floating', !saved.docked);
+      // a floating iPod lives outside the (possibly scaled) dock so position:fixed works
+      if (saved.docked && ipod.parentElement !== frame) frame.insertBefore(ipod, $('[data-dock-hint]'));
+      if (!saved.docked && ipod.parentElement !== root) root.appendChild(ipod);
       if (saved.docked) { ipod.style.left = ''; ipod.style.top = ''; }
       else { const c = clamp(saved.x, saved.y); ipod.style.left = c.x + 'px'; ipod.style.top = c.y + 'px'; }
       $('[data-dock-hint]').textContent = saved.docked ? 'drag me · 拖出来玩' : 'drop it back to charge · 放回来充电';
@@ -847,7 +861,9 @@
     }
     ipod.addEventListener('pointerup', end); ipod.addEventListener('pointercancel', end);
     ipod.addEventListener('click', e => { if (ui.justDragged) { e.stopPropagation(); e.preventDefault(); ui.justDragged = false; } }, true);
-    addEventListener('resize', () => { if (!saved.docked) place(); });
+    const fit = () => { const w = dock.clientWidth; dock.style.setProperty('--dock-scale', Math.min(1, w / 180).toFixed(3)); };
+    addEventListener('resize', () => { fit(); if (!saved.docked) place(); });
+    fit(); new ResizeObserver(fit).observe(dock);
     place();
   })();
 
