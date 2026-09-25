@@ -125,7 +125,7 @@
   function panelShell(key, title, whisper, body, extraClass = '') {
     if (key === 'special-editor') return `<section class="cc-window ${extraClass}" data-win="${esc(key)}"><div class="cc-bar"><span>${esc(title)}</span><button type="button" class="cc-min" data-edit-days aria-label="Close">×</button></div><div class="cc-body">${whisper ? `<p lang="zh-CN" class="cc-page-whisper">${esc(whisper)}</p>` : ''}${body}</div></section>`;
     const closed = ui.collapsed.has(key);
-    return `<section class="cc-window ${extraClass} ${closed ? 'cc-collapsed' : ''}" data-win="${esc(key)}"><div class="cc-bar"><span>${esc(title)}</span>${minButton(key)}</div><div class="cc-body">${whisper ? `<p lang="zh-CN" class="cc-page-whisper">${esc(whisper)}</p>` : ''}${body}</div></section>`;
+    return `<section class="cc-window ${extraClass} ${closed ? 'cc-collapsed' : ''}" data-win="${esc(key)}"><div class="cc-bar"><span>${esc(title)}</span>${minButton(key)}</div><div class="cc-body" ${closed ? 'hidden' : ''}>${whisper ? `<p lang="zh-CN" class="cc-page-whisper">${esc(whisper)}</p>` : ''}${body}</div></section>`;
   }
   function decorateStaticWindows() {
     $$('section[data-win]').forEach(win => {
@@ -133,7 +133,9 @@
       const key = win.dataset.win, bar = win.querySelector(':scope > .cc-bar');
       bar.querySelector(':scope > .cc-min')?.remove();
       bar.insertAdjacentHTML('beforeend', minButton(key));
-      win.classList.toggle('cc-collapsed', ui.collapsed.has(key));
+      const closed = ui.collapsed.has(key);
+      win.classList.toggle('cc-collapsed', closed);
+      win.querySelector(':scope > .cc-body').hidden = closed;
     });
   }
 

@@ -1,8 +1,9 @@
 // Offline shell. Bump VERSION after each deploy so phones pick up the new files.
 const PREFIX = 'olc:' + self.registration.scope + ':';
-const VERSION = PREFIX + 'v12';
+const VERSION = PREFIX + 'v13';
 const SHELL = ['./', 'index.html', 'theme-vars.css', 'style.css', 'app.css', 'config.js', 'calendar-import.js', 'store.js', 'bgm.js', 'app.js',
-  'manifest.webmanifest', 'assets/hero.jpg', 'assets/bunny.png', 'assets/fusion-pixel-sc.woff2', 'assets/icon-192.png', 'assets/ipod.png'];
+  'manifest.webmanifest', 'retro-window.css', 'assets/hero.jpg', 'assets/bunny.png', 'assets/fusion-pixel-sc.woff2', 'assets/icon-192.png', 'assets/ipod.png',
+  'assets/clover-sky.png', 'assets/cd-y2k.png', 'assets/shooting-star-y2k.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith(PREFIX) && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
