@@ -5,6 +5,10 @@
   const $$ = sel => [...root.querySelectorAll(sel)];
   const cfg = window.CC_CONFIG || {};
   const store = CCStore.create(cfg);
+  { // stamp every edit so the other person gets a message about it
+    const rawUpdate = store.update;
+    store.update = (col, id, patch) => rawUpdate(col, id, { ...patch, updatedAt: Date.now(), updatedBy: PEOPLE[ui.me] || '', updatedWhat: Object.keys(patch).join(',') });
+  }
   const PAGES = ['home', 'diary', 'album', 'todo', 'wishlist'];
   const PEOPLE = { sijie: '斯婕', zhenzhen: '真真' };
   const nameToKey = name => Object.keys(PEOPLE).find(k => PEOPLE[k] === name) || 'sijie';
@@ -217,10 +221,10 @@
     $('[data-home-calendar]').innerHTML = panelShell('calendar', '▦ CALENDAR', '共同日历',
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
-      ${body}
+      <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
-      ${agendaHtml()}
-      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>${form}${renderImport()}`);
+      </div><div class="cc-cal-side">${agendaHtml()}
+      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>${form}${renderImport()}</div></div>`);
   }
 
   // ---------- special days + memory ----------
@@ -261,7 +265,7 @@
       const trip = i.kind === 'trip', date = trip ? i.start : i.date;
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
-      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${date}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
+      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${date}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
@@ -269,7 +273,7 @@
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
-    const cards = [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0)).map(i => `<article class="cc-plan-card ${i.got ? 'cc-done' : ''}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
+    const cards = [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0)).map(i => `<article class="cc-plan-card ${i.got ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
     const fields = formField('wish', 'title', 'Something we would love', 'text', true) + selectField('wish', 'who', 'Who is it for?', [['both', 'Both of us'], ['sijie', '斯婕'], ['zhenzhen', '真真']]) + notesField('wish');
     $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `<div class="cc-add-row"><p class="cc-small">Things we want, gift ideas.</p><button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button></div>${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid">${cards}</div>`);
   }
@@ -349,6 +353,99 @@
     if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) img.src = full; }
   }
   function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
+
+  // ---------- messages (like WeChat moments notifications) ----------
+  const TAB_NAMES = { home: 'Home', diary: 'Diary', todo: 'Todo', wishlist: 'Wishlist', album: 'Album' };
+  const inboxKey = () => 'inbox:' + (ui.me || 'x');
+  function inboxState() {
+    const st = ls.get(inboxKey(), null);
+    if (st) return st;
+    const fresh = { since: Date.now(), read: [] }; ls.set(inboxKey(), fresh); return fresh;
+  }
+  const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+  function allMessages() {
+    const me = meName(), out = [];
+    const add = (tab, key, who, at, text, target) => { if (who && who !== me && at) out.push({ tab, key, who, at, text, target }); };
+    const edited = x => x.updatedBy && x.updatedAt && x.updatedAt - (x.createdAt || 0) > 2000;
+    const imports = new Map();
+    for (const e of data.events) {
+      if (e.importKey && e.by) { const k = e.by + e.createdAt; const g = imports.get(k) || { e, n: 0 }; g.n++; imports.set(k, g); }
+      else add('home', 'ev:' + e.id, e.by, e.createdAt, `added a plan · ${clip(e.title)}`, { type: 'date', date: e.date });
+      if (edited(e)) add('home', `ev-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a plan · ${clip(e.title)}`, { type: 'date', date: e.date });
+    }
+    for (const { e, n } of imports.values()) add('home', 'imp:' + e.by + e.createdAt, e.by, e.createdAt, `imported ${n} calendar event${n === 1 ? '' : 's'}`, { type: 'date', date: e.date });
+    for (const d of data.dates) {
+      add('home', 'dt:' + d.id, d.by, d.createdAt, `saved a special day · ${clip(d.title)}`, { type: 'date', date: repeatDate(d) });
+      if (edited(d)) add('home', `dt-u:${d.id}:${d.updatedAt}`, d.updatedBy, d.updatedAt, `edited a special day · ${clip(d.title)}`, { type: 'date', date: repeatDate(d) });
+    }
+    for (const t of data.tasks) {
+      add('todo', 'tk:' + t.id, t.by, t.createdAt, `added a little thing · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
+      if (edited(t) && /done/.test(t.updatedWhat || '')) add('todo', `tk-u:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `${t.done ? 'finished ✓' : 'reopened'} · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
+    }
+    for (const t of data.trips) {
+      add('todo', 'tr:' + t.id, t.by, t.createdAt, `added a trip · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
+      if (edited(t) && /status/.test(t.updatedWhat || '')) add('todo', `tr-u:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `marked ${clip(t.title)} as ${statusLabel(t.status)}`, { type: 'item', tab: 'todo', id: t.id });
+    }
+    for (const w of data.wishes) {
+      add('wishlist', 'ws:' + w.id, w.by, w.createdAt, `wished for · ${clip(w.title)}`, { type: 'item', tab: 'wishlist', id: w.id });
+      if (edited(w) && /got/.test(w.updatedWhat || '') && w.got) add('wishlist', `ws-u:${w.id}:${w.updatedAt}`, w.updatedBy, w.updatedAt, `got it ♡ · ${clip(w.title)}`, { type: 'item', tab: 'wishlist', id: w.id });
+    }
+    for (const e of data.diary) {
+      const n = (e.photoIds || []).length;
+      add('diary', 'dy:' + e.id, e.author, e.createdAt, `posted in the diary · ${clip(e.text) || (n ? n + ' photo' + (n === 1 ? '' : 's') : '')}`, { type: 'entry', id: e.id });
+      if (edited(e) && /text|tags|date/.test(e.updatedWhat || '')) add('diary', `dy-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a diary entry · ${clip(e.text)}`, { type: 'entry', id: e.id });
+      for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
+    }
+    for (const p of data.photos) if (!p.entryId) add('album', 'ph:' + p.id, p.author, p.createdAt, 'added a photo to the album', { type: 'photo', id: p.id, thumb: p.thumb });
+    return out.sort((a, b) => b.at - a.at);
+  }
+  function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
+  function markRead(keys) { const st = inboxState(); st.read = [...new Set([...st.read, ...keys])].slice(-400); ls.set(inboxKey(), st); }
+  function ago(ms) {
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    const d = new Date(ms); return s < 7 * 86400 ? Math.floor(s / 86400) + 'd ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function renderBadges() {
+    const unread = unreadMessages(), by = {};
+    unread.forEach(m => by[m.tab] = (by[m.tab] || 0) + 1);
+    $$('[data-tab-count]').forEach(b => { const n = by[b.dataset.tabCount] || 0; b.hidden = !n; b.textContent = n > 99 ? '99+' : n; });
+    const bell = $('[data-bell-count]'); bell.hidden = !unread.length; bell.textContent = unread.length > 99 ? '99+' : unread.length;
+    const here = unread.filter(m => m.tab === ui.page);
+    $('[data-inbox-pill]').innerHTML = here.length ? `<button type="button" class="cc-inbox-pill" data-open-inbox="${ui.page}">${mini(nameToKey(here[0].who))}<span>${here.length} new message${here.length === 1 ? '' : 's'}</span><span aria-hidden="true">›</span></button>` : '';
+    if (ui.inboxOpen) renderInbox();
+  }
+  function renderInbox() {
+    const dlg = $('[data-inbox]'), filter = ui.inboxFilter || 'all';
+    const list = allMessages().filter(m => filter === 'all' || m.tab === filter).slice(0, 50);
+    const fresh = ui.inboxFresh || new Set();
+    const tabs = [['all', 'All'], ...Object.entries(TAB_NAMES)];
+    dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✉ MESSAGES</span><button type="button" class="cc-min" data-close-inbox aria-label="Close">×</button></div><div class="cc-body">
+      <div class="cc-filter-row">${tabs.map(([v, l]) => `<button type="button" class="cc-button" data-inbox-filter="${v}" aria-pressed="${filter === v}">${l}</button>`).join('')}</div>
+      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${ago(m.at)}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
+    </div></section>`;
+  }
+  function openInbox(filter) {
+    const unread = unreadMessages();
+    ui.inboxFresh = new Set(unread.map(m => m.key)); ui.inboxFilter = filter || 'all'; ui.inboxOpen = true;
+    markRead(unread.filter(m => ui.inboxFilter === 'all' || m.tab === ui.inboxFilter).map(m => m.key));
+    renderInbox(); renderBadges();
+    const dlg = $('[data-inbox]'); if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+  }
+  function closeInbox() { ui.inboxOpen = false; const dlg = $('[data-inbox]'); if (dlg.open) dlg.close(); }
+  function goToMessage(key) {
+    const m = allMessages().find(x => x.key === key); if (!m) return;
+    markRead([key]); closeInbox();
+    const t = m.target;
+    if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    else if (t.type === 'photo') { go('album'); openPhoto(t.id); }
+    else {
+      ui.highlight = t.id; if (t.tab === 'todo') planner.todoFilter = 'all';
+      go(t.type === 'entry' ? 'diary' : t.tab);
+      document.getElementById((t.type === 'entry' ? 'entry-' : 'item-') + t.id)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(() => { ui.highlight = null; scheduleRender(); }, 3000);
+    }
+  }
 
   // ---------- special days modal ----------
   function openSpecial(open) {
@@ -444,7 +541,7 @@
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderMessage(); decorateStaticWindows();
+    renderChrome(); renderCalendar(); renderSpecialDays(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
@@ -571,6 +668,10 @@
     if (ds.go) { go(ds.go); if (ds.go === 'home') window.scrollTo({ top: 0 }); return; }
     if (ds.nav) { history[ds.nav](); return; }
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
+    if (ds.openInbox) { openInbox(ds.openInbox); return; }
+    if (el.hasAttribute('data-close-inbox')) { closeInbox(); return; }
+    if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
+    if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
     if (ds.theme) { run(store.setMeta({ theme: ds.theme })); data.meta = { ...data.meta, theme: ds.theme }; render(); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
@@ -645,6 +746,9 @@
   $('[data-lightbox]').addEventListener('keydown', e => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); $(`[data-lightbox-step="${e.key === 'ArrowRight' ? 1 : -1}"]`)?.click(); } });
   $('[data-lightbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closePhoto(); });
   $('[data-lightbox]').addEventListener('close', () => { lightbox.id = null; });
+  $('[data-inbox]').addEventListener('close', () => { ui.inboxOpen = false; ui.inboxFresh = null; });
+  $('[data-inbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closeInbox(); });
+  setInterval(() => { if (!document.hidden) renderBadges(); }, 60000);
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
   $('[data-special-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openSpecial(false); });
 

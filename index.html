@@ -21,7 +21,7 @@
 <div id="couple-corner" lang="en-US" aria-label="斯婕 &amp; 真真 — Our Little Corner">
   <div class="cc-top">
     <div class="cc-top-title"><span aria-hidden="true">✿</span><span>our little corner</span><span aria-hidden="true">/</span><span lang="zh-CN">斯婕 &amp; 真真</span></div>
-    <div class="cc-top-actions"><span class="cc-sync" data-sync>…</span><button type="button" class="cc-button" data-logout hidden>Log out</button></div>
+    <div class="cc-top-actions"><button type="button" class="cc-bell" data-open-inbox="all" aria-label="Messages"><span aria-hidden="true">✉</span><b class="cc-count" data-bell-count hidden></b></button><span class="cc-sync" data-sync>…</span><button type="button" class="cc-button" data-logout hidden>Log out</button></div>
   </div>
   <div class="cc-browser-strip">
     <span class="cc-nav-buttons"><button type="button" class="cc-strip-btn" data-nav="back" aria-label="Back">←</button><button type="button" class="cc-strip-btn" data-nav="forward" aria-label="Forward">→</button><button type="button" class="cc-strip-btn" data-go="home" aria-label="Home">♡</button></span>
@@ -96,13 +96,14 @@
       </header>
 
       <nav class="cc-tabs" aria-label="Main navigation">
-        <button class="cc-tab" data-go="home" aria-pressed="true"><span aria-hidden="true" class="cc-tab-ico">⌂</span><span>HOME</span></button>
-        <button class="cc-tab" data-go="diary" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✎</span><span>DIARY</span></button>
-        <button class="cc-tab" data-go="todo" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✓</span><span>TODO</span></button>
-        <button class="cc-tab" data-go="wishlist" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">♡</span><span>WISHLIST</span></button>
-        <button class="cc-tab" data-go="album" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">▧</span><span>ALBUM</span></button>
+        <button class="cc-tab" data-go="home" aria-pressed="true"><span aria-hidden="true" class="cc-tab-ico">⌂</span><span>HOME</span><b class="cc-count cc-tab-count" data-tab-count="home" hidden></b></button>
+        <button class="cc-tab" data-go="diary" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✎</span><span>DIARY</span><b class="cc-count cc-tab-count" data-tab-count="diary" hidden></b></button>
+        <button class="cc-tab" data-go="todo" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">✓</span><span>TODO</span><b class="cc-count cc-tab-count" data-tab-count="todo" hidden></b></button>
+        <button class="cc-tab" data-go="wishlist" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">♡</span><span>WISHLIST</span><b class="cc-count cc-tab-count" data-tab-count="wishlist" hidden></b></button>
+        <button class="cc-tab" data-go="album" aria-pressed="false"><span aria-hidden="true" class="cc-tab-ico">▧</span><span>ALBUM</span><b class="cc-count cc-tab-count" data-tab-count="album" hidden></b></button>
       </nav>
 
+      <div class="cc-inbox-pill-row" data-inbox-pill></div>
       <div class="cc-preview-message" id="cc-planner-message" role="status" aria-live="polite" hidden></div>
 
       <div data-panel="home" hidden>
@@ -121,6 +122,7 @@
 
   <dialog class="cc-lightbox" data-lightbox aria-label="Photo"></dialog>
   <dialog class="cc-modal" data-special-dialog aria-label="Special days"></dialog>
+  <dialog class="cc-modal cc-inbox" data-inbox aria-label="Messages"></dialog>
 </div>
 
 <script src="config.js"></script>

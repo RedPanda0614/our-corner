@@ -405,3 +405,46 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-left { gap: 8px; }
   #couple-corner .cc-dock { transform: scale(.9); transform-origin: top center; }
 }
+
+/* ===== v6: messages + compact calendar ===== */
+#couple-corner .cc-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; background: hsl(355 80% 55%); color: #fff; font: 11px/1 var(--cc-pixel); box-shadow: 1px 1px 0 hsl(355 60% 35%); }
+#couple-corner .cc-count[hidden] { display: none; }
+#couple-corner .cc-tab { position: relative; }
+#couple-corner .cc-tab-count { position: absolute; top: -7px; right: -5px; }
+#couple-corner .cc-bell { position: relative; background: hsl(0 0% 100% / .2); border: 1px solid hsl(0 0% 100% / .5); color: inherit; min-width: 30px; height: 26px; padding: 0 6px; font: 15px/1 monospace; }
+#couple-corner .cc-bell:hover { background: hsl(0 0% 100% / .35); }
+#couple-corner .cc-bell .cc-count { position: absolute; top: -7px; right: -8px; }
+#couple-corner .cc-inbox-pill-row { display: flex; justify-content: center; }
+#couple-corner .cc-inbox-pill-row:empty { display: none; }
+#couple-corner .cc-inbox-pill { display: inline-flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 5px 12px 5px 5px; background: hsl(0 0% 22%); color: #fff; border: 0; font: 13px/1.2 var(--cc-pixel); box-shadow: 2px 2px 0 hsl(0 0% 0% / .25); }
+#couple-corner .cc-inbox-pill .cc-mini-avatar { margin: 0; }
+#couple-corner .cc-inbox-pill:hover { background: hsl(0 0% 30%); }
+#couple-corner .cc-inbox { width: min(520px, 94vw); }
+#couple-corner .cc-inbox-list { display: flex; flex-direction: column; }
+#couple-corner .cc-inbox-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; padding: 10px 6px; background: none; border: 0; border-bottom: 1px dashed hsl(0 0% 50% / .35); color: inherit; font: 13px/1.5 Verdana, var(--cc-zh), sans-serif; }
+#couple-corner .cc-inbox-item:hover { background: hsl(0 0% 50% / .08); }
+#couple-corner .cc-inbox-item.cc-fresh { background: hsl(355 80% 60% / .1); }
+#couple-corner .cc-inbox-item.cc-fresh::before { content: ''; position: absolute; }
+#couple-corner .cc-inbox-item .cc-mini-avatar { width: 32px; height: 32px; margin: 0; font-size: 15px; }
+#couple-corner .cc-inbox-text small { display: block; font-size: 11px; opacity: .65; margin-top: 2px; }
+#couple-corner .cc-inbox-item img { width: 40px; height: 40px; object-fit: cover; border: 1px solid hsl(0 0% 50% / .3); }
+#couple-corner .cc-inbox-arrow { opacity: .5; font-size: 16px; }
+
+/* compact calendar: grid on the left, the day's plans on the right */
+#couple-corner .cc-cal-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 900px) { #couple-corner .cc-cal-wrap { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } #couple-corner .cc-cal-side .cc-agenda { margin-top: 0; } #couple-corner .cc-cal-side .cc-home-grid .cc-fields, #couple-corner .cc-cal-side .cc-fields { grid-template-columns: 1fr; } }
+#couple-corner .cc-calendar-grid { gap: 3px; }
+#couple-corner .cc-day, #couple-corner .cc-day-blank { min-height: 34px; font-size: 13px; padding-top: 3px; }
+#couple-corner .cc-day-dots { min-height: 8px; padding-top: 2px; }
+#couple-corner .cc-weekday { font-size: 11px; padding: 2px 0; }
+#couple-corner .cc-planner-toolbar h3 { font-size: 19px; }
+#couple-corner .cc-week-row { grid-template-columns: 48px minmax(0, 1fr); padding: 3px; }
+#couple-corner .cc-week-day { min-height: 36px; }
+#couple-corner .cc-week-day b { font-size: 15px; }
+#couple-corner .cc-year { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+#couple-corner .cc-mini { padding: 3px; }
+#couple-corner .cc-mini-title { font-size: 11px; }
+#couple-corner .cc-mini-day { font-size: 8px; }
+#couple-corner .cc-legend { font-size: 10px; }
+@media (pointer: coarse) { #couple-corner .cc-day { min-height: 40px; } }
+#couple-corner .cc-bell { margin-right: 8px; }

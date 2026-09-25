@@ -1,5 +1,5 @@
 // Offline shell. Bump VERSION after each deploy so phones pick up the new files.
-const VERSION = 'olc-v6';
+const VERSION = 'olc-v7';
 const SHELL = ['./', 'index.html', 'theme-vars.css', 'style.css', 'app.css', 'config.js', 'calendar-import.js', 'store.js', 'bgm.js', 'app.js',
   'manifest.webmanifest', 'assets/hero.jpg', 'assets/bunny.png', 'assets/fusion-pixel-sc.woff2', 'assets/icon-192.png', 'assets/ipod.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
