@@ -4,7 +4,7 @@
 //  - local:  IndexedDB on this device only (used when config.js has no repo filled in).
 (function (scope) {
   'use strict';
-  const COLLECTIONS = ['events', 'trips', 'tasks', 'dates', 'wishes', 'diary', 'photos'];
+  const COLLECTIONS = ['events', 'trips', 'tasks', 'dates', 'wishes', 'diary', 'photos', 'albums'];
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const clean = value => JSON.parse(JSON.stringify(value));
 

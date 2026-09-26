@@ -117,3 +117,14 @@ test('a diary photo is saved only after both image files upload, then can be rem
   assert.equal(remote.files.size, 0);
   assert.equal(remote.data.collections.photos.length, 0);
 });
+
+test('older shared data accepts albums and preserves photo membership', async () => {
+  const remote = server(); // The old data file has no albums collection.
+  const page = browser(remote); await page.start();
+  assert.deepEqual(page.changes.albums, []);
+  await page.store.set('albums', { id: 'album-1', title: 'Summer', createdAt: 1 });
+  await page.store.set('photos', { id: 'photo-1', albumId: 'album-1', thumb: '' });
+  await page.flush();
+  assert.equal(remote.data.collections.albums[0].title, 'Summer');
+  assert.equal(remote.data.collections.photos[0].albumId, 'album-1');
+});

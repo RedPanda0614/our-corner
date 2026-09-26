@@ -1,0 +1,84 @@
+/* Soft dotted neon accents on the existing pale UI. */
+#couple-corner {
+  --neon-ink: #755878;
+  --neon-pink: #db80ab;
+  --neon-blue: #a7d2db;
+}
+
+/* The named accents feel like old illuminated lettering, without making the
+   diary, calendar or controls harder to read. */
+#couple-corner .cc-top-title > span:nth-child(2),
+#couple-corner .cc-statusbar span,
+#couple-corner .cc-hero h2.cc-savepoint-title {
+  color: var(--neon-ink);
+  font-variation-settings: 'ROND' 100, 'wght' 750;
+  text-shadow:
+    1px 1px 0 #fffaf7,
+    2px 2px 0 var(--neon-blue),
+    0 0 7px rgb(225 111 161 / .34),
+    0 0 16px rgb(225 111 161 / .18);
+}
+
+#couple-corner .cc-top-title > span:nth-child(2) {
+  letter-spacing: .6px;
+}
+
+#couple-corner .cc-hero h2.cc-savepoint-title {
+  font-size: clamp(34px, 4vw, 52px);
+  line-height: 1.08;
+  margin-bottom: 12px;
+}
+
+#couple-corner .cc-hero h2.cc-savepoint-title em {
+  color: #bc6e98;
+  font-style: normal;
+  text-shadow: 1px 1px #fff, 0 0 9px rgb(222 104 155 / .5);
+}
+
+#couple-corner .cc-hero-content {
+  background-image:
+    radial-gradient(ellipse at 27% 46%, rgb(247 223 237 / .49), transparent 45%),
+    linear-gradient(90deg, rgb(160 181 147 / .12) 1px, transparent 1px),
+    linear-gradient(rgb(160 181 147 / .12) 1px, transparent 1px);
+  background-size: auto, 12px 12px, 12px 12px;
+}
+
+#couple-corner .cc-hero .cc-savepoint-subtitle {
+  border-color: #d6b1c9;
+  background: #fff9fc;
+  color: #805a79;
+  box-shadow: 2px 2px 0 rgb(171 209 213 / .46);
+}
+
+#couple-corner .cc-hero .cc-savepoint-subtitle::after {
+  content: ' ✧';
+  color: #d077a8;
+}
+
+#couple-corner .cc-top-title > span:nth-child(2),
+#couple-corner .cc-statusbar span,
+#couple-corner .cc-hero-bar-title,
+#couple-corner .cc-window > .cc-bar > span:first-child {
+  font-variation-settings: 'ROND' 100, 'wght' 750;
+}
+
+#couple-corner .cc-hero-bar-status .cc-hero-spark {
+  color: #bb6d9d;
+  text-shadow: 0 0 5px rgb(229 129 177 / .55);
+}
+
+@media (max-width: 600px) {
+  #couple-corner .cc-hero h2.cc-savepoint-title { font-size: 36px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #couple-corner .cc-hero-bar-status .cc-hero-spark {
+    animation: neon-twinkle 3.8s ease-in-out infinite;
+  }
+  @keyframes neon-twinkle {
+    0%, 82%, 100% { opacity: 1; }
+    88% { opacity: .62; }
+    91% { opacity: 1; }
+    94% { opacity: .78; }
+  }
+}

@@ -38,9 +38,10 @@
   const kindLabel = k => ({ plan: 'PLAN', trip: 'TRIP', task: 'LITTLE THING', birthday: 'BIRTHDAY', holiday: 'HOLIDAY', anniversary: 'ANNIVERSARY' })[k] || 'PLAN';
   const statusLabel = s => ({ dreaming: 'Dreaming', planning: 'Planning', booked: 'Booked', visited: 'Visited' })[s];
   const newId = CCStore.uid;
+  const { paginate, pageForItem } = CCPagination;
 
   // ---------- state ----------
-  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], meta: {} };
+  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], meta: {} };
   // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
   // c = contrast (1 normal), dark = invert lightness.
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
@@ -78,12 +79,33 @@
     me: store.mode === 'local' ? ls.get('me', 'sijie') : null,
     message: null, undo: null, messageTimer: null,
     confirm: null, // key of a two-step delete button
-    memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false
+    memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false, newEntryOpen: false,
+    pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1 },
+    album: 'all', albumForm: '', albumDraft: ''
   };
+  function pageList(key, items) {
+    const result = paginate(items, ui.pages[key]);
+    ui.pages[key] = result.page;
+    return result;
+  }
+  function pageNav(key, result) {
+    if (result.totalPages < 2) return '';
+    const { page, totalPages, start, end, total } = result;
+    const pages = [...new Set([1, totalPages, page - 2, page - 1, page, page + 1, page + 2]
+      .filter(n => n >= 1 && n <= totalPages))].sort((a, b) => a - b);
+    let last = 0;
+    const buttons = pages.map(n => {
+      const gap = n - last > 1 ? '<span class="cc-page-gap" aria-hidden="true">…</span>' : '';
+      last = n;
+      return `${gap}<button type="button" class="cc-button" data-page-key="${key}" data-page-number="${n}" ${n === page ? 'aria-current="page"' : ''} aria-label="Page ${n}">${n}</button>`;
+    }).join('');
+    return `<nav class="cc-pagination" aria-label="${key} pages"><span class="cc-page-range">${start + 1}–${end} / ${total}</span><div class="cc-page-buttons"><button type="button" class="cc-button" data-page-key="${key}" data-page-number="${page - 1}" ${page === 1 ? 'disabled' : ''} aria-label="Previous page">‹</button>${buttons}<button type="button" class="cc-button" data-page-key="${key}" data-page-number="${page + 1}" ${page === totalPages ? 'disabled' : ''} aria-label="Next page">›</button></div></nav>`;
+  }
+  const pageToolbar = (note, action) => `<div class="cc-page-toolbar"><span class="cc-small">${esc(note)}</span>${action}</div>`;
   const initialSelected = today;
   const planner = {
     view: ls.get('calView', 'month'), month: today.slice(0, 7), year: +today.slice(0, 4), selected: initialSelected,
-    filter: 'all', todoFilter: 'all', forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
+    filter: 'all', todoFilter: 'all', exportKind: ls.get('exportKind', 'plan'), forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
     drafts: {
       event: { title: '', kind: 'plan', date: today, endDate: '', note: '', repeat: true },
       edit: { title: '', date: '', endDate: '', note: '' },
@@ -148,6 +170,13 @@
   const confirmButton = (key, label, attrs) => ui.confirm === key
     ? `<button class="cc-button cc-danger" type="button" ${attrs}>Sure? Delete</button><button class="cc-button" type="button" data-confirm-cancel>Keep</button>`
     : `<button class="cc-button" type="button" data-confirm="${esc(key)}">${label}</button>`;
+  let pendingCommentDelete = null;
+  function openCommentDelete(entryId, commentId) {
+    const entry = data.diary.find(x => x.id === entryId);
+    if (!(entry?.comments || []).some(c => c.id === commentId && c.author === meName())) return;
+    pendingCommentDelete = { entryId, commentId };
+    $('[data-comment-confirm-dialog]').showModal();
+  }
 
   // ---------- calendar ----------
   function dayEvents(iso) {
@@ -241,14 +270,16 @@
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
-      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button><button type="button" class="cc-button" data-export-ics>Export .ics</button></div>${form}${renderImport()}</div></div>`);
+      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
+      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`);
   }
 
   // ---------- special days + memory ----------
   function renderSpecialDays() {
     const names = [['all', 'All'], ['birthday', 'Birthdays'], ['holiday', 'Holidays'], ['anniversary', 'Anniversaries']];
     const items = data.dates.filter(d => planner.filter === 'all' || d.kind === planner.filter).map(d => ({ ...d, next: repeatDate(d) })).sort((a, b) => Number(a.next < today) - Number(b.next < today) || a.next.localeCompare(b.next));
-    const cards = items.map(it => {
+    const page = pageList('special', items);
+    const cards = page.items.map(it => {
       if (planner.editingDay === it.id) {
         const f = formField('dayedit', 'title', 'Name of the day', 'text', true) + selectField('dayedit', 'kind', 'Category', names.slice(1)) + formField('dayedit', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.dayedit.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
         return `<article class="cc-plan-card k-${it.kind} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
@@ -260,7 +291,7 @@
     $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
     const editor = $('[data-special-dialog]');
     if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
-    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid">${cards}</div>${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
+    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
   }
   const entryDisplayDate = entry => entry.updatedAt ? currentDayFor(entry.updatedAt) : (entry.date || today);
   const currentDayFor = timestamp => { const d = new Date(timestamp); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -276,11 +307,23 @@
   }
 
   // ---------- todo + wishlist ----------
+  function todoSorted() {
+    return [...data.trips.map(i => ({ ...i, kind: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity' }))]
+      .sort((a, b) => Number(!!a.done) - Number(!!b.done) || (a.createdAt || 0) - (b.createdAt || 0));
+  }
+  function wishesSorted() {
+    return [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0));
+  }
+  function wishNoteStyle(wish) {
+    if (Number.isInteger(wish.noteStyle) && wish.noteStyle >= 0 && wish.noteStyle < 8) return wish.noteStyle;
+    return [...String(wish.id)].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 8;
+  }
   function renderTodo() {
     const filters = [['all', 'All'], ['trips', 'Trips'], ['activities', 'Little things'], ['done', 'Done']];
-    const combined = [...data.trips.map(i => ({ ...i, kind: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity' }))].sort((a, b) => Number(!!a.done) - Number(!!b.done) || (a.createdAt || 0) - (b.createdAt || 0));
+    const combined = todoSorted();
     const items = combined.filter(i => planner.todoFilter === 'all' || (planner.todoFilter === 'trips' && i.kind === 'trip') || (planner.todoFilter === 'activities' && i.kind === 'activity') || (planner.todoFilter === 'done' && i.done));
-    const cards = items.map(i => {
+    const page = pageList('todo', items);
+    const cards = page.items.map(i => {
       const trip = i.kind === 'trip', date = trip ? i.start : i.date;
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
@@ -288,13 +331,15 @@
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
-    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div><button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button></div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid">${cards}</div>`);
+    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`);
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
-    const cards = [...data.wishes].sort((a, b) => Number(!!a.got) - Number(!!b.got) || (a.createdAt || 0) - (b.createdAt || 0)).map(i => `<article class="cc-plan-card ${i.got ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
+    const wishes = wishesSorted();
+    const page = pageList('wishlist', wishes);
+    const cards = page.items.map(i => `<article class="cc-plan-card cc-wish-note cc-wish-note-${wishNoteStyle(i)} ${i.got ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
     const fields = formField('wish', 'title', 'Something we would love', 'text', true) + selectField('wish', 'who', 'Who is it for?', [['both', 'Both of us'], ['sijie', '斯婕'], ['zhenzhen', '真真']]) + notesField('wish');
-    $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `<div class="cc-add-row"><p class="cc-small">Things we want, gift ideas.</p><button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button></div>${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid">${cards}</div>`);
+    $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `${pageToolbar(`${wishes.length} wishes`, `<button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button>`)}${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid" data-page-list="wishlist">${cards}</div>${pageNav('wishlist', page)}`);
   }
 
   // ---------- diary ----------
@@ -322,14 +367,15 @@
   }
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${p.thumb}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button></div></form>`;
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${ui.busy ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
     const filtering = diaryFilter.q.trim() || diaryFilter.tag;
     const list = diarySorted().filter(entryMatches);
+    const page = pageList('diary', list);
     const search = `<form class="cc-diary-search" data-diary-search role="search"><input name="q" type="search" placeholder="Search the diary…" value="${esc(diaryFilter.q)}" aria-label="Search the diary"><button type="submit" class="cc-button">Search</button>${filtering ? '<button type="button" class="cc-button" data-clear-filter>Clear</button>' : ''}</form>${tagsRow ? `<div class="cc-tag-row">${tagsRow}</div>` : ''}${filtering ? `<p class="cc-small cc-result-count">${list.length} of ${data.diary.length} entries</p>` : ''}`;
-    const feed = list.map(e => {
+    const feed = page.items.map(e => {
       const mine = e.author === meName(), key = nameToKey(e.author);
       if (ui.editingEntry === e.id) {
         return diaryEditForm(e);
@@ -338,15 +384,38 @@
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b> ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
       return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(niceDate(entryDisplayDate(e)))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
-    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', composer + search + feed);
+    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${ui.busy ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
   }
 
   // ---------- album ----------
+  function photosSorted() { return [...data.photos].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)); }
+  function albumsSorted() { return [...data.albums].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
+  function albumPhotos(photos = photosSorted()) {
+    if (ui.album === 'all') return photos;
+    const known = new Set(data.albums.map(a => a.id));
+    if (ui.album === 'unsorted') return photos.filter(p => !p.albumId || !known.has(p.albumId));
+    return photos.filter(p => p.albumId === ui.album);
+  }
   function renderAlbum() {
-    const photos = [...data.photos].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
-    const grid = photos.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${p.thumb ? `<img class="cc-photo-img" src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
+    const photos = photosSorted();
+    const albums = albumsSorted();
+    if (ui.album !== 'all' && ui.album !== 'unsorted' && !albums.some(a => a.id === ui.album)) ui.album = 'all';
+    const visible = albumPhotos(photos);
+    const page = pageList('album', visible);
+    const selected = albums.find(a => a.id === ui.album);
+    const albumTile = (key, title, items) => {
+      const cover = items.find(p => p.thumb)?.thumb;
+      return `<button type="button" class="cc-album-folder" data-album-open="${esc(key)}" aria-pressed="${ui.album === key}"><span class="cc-album-cover">${cover ? `<img src="${esc(cover)}" alt="">` : '<span aria-hidden="true">▧</span>'}</span><span class="cc-album-label"><strong>${esc(title)}</strong><small>${items.length} photo${items.length === 1 ? '' : 's'}</small></span></button>`;
+    };
+    const known = new Set(albums.map(a => a.id));
+    const unsorted = photos.filter(p => !p.albumId || !known.has(p.albumId));
+    const shelf = `<div class="cc-album-shelf" role="group" aria-label="Photo albums">${albumTile('all', 'All photos', photos)}${albumTile('unsorted', 'Unsorted', unsorted)}${albums.map(a => albumTile(a.id, a.title, photos.filter(p => p.albumId === a.id))).join('')}</div>`;
+    const form = ui.albumForm ? `<form class="cc-plan-form cc-album-form" data-album-form><h3>${ui.albumForm === 'new' ? 'New album' : 'Rename album'}</h3><label class="cc-field">Album name<input name="albumName" maxlength="50" required value="${esc(ui.albumDraft)}" autocomplete="off"></label><div class="cc-form-footer"><button type="submit" class="cc-button">Save album</button><button type="button" class="cc-button" data-album-cancel>Cancel</button></div></form>` : '';
+    const title = selected?.title || (ui.album === 'unsorted' ? 'Unsorted' : 'All photos');
+    const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
+    const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${p.thumb ? `<img class="cc-photo-img" src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
     $('[data-panel="album"]').innerHTML = panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `<div class="cc-add-row"><p class="cc-small">${photos.length} photo${photos.length === 1 ? '' : 's'} · diary photos show up here too.</p><span class="cc-button cc-file-btn">${ui.busy ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${ui.busy ? 'disabled' : ''}></span></div>${grid ? `<div class="cc-photos">${grid}</div>` : '<p class="cc-empty-plan">No photos yet.</p>'}`);
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${ui.busy ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${ui.busy ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`);
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
@@ -366,12 +435,13 @@
   // ---------- lightbox ----------
   const lightbox = { id: null };
   async function openPhoto(id) {
-    const list = ui.page === 'album' ? [...data.photos].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)) : data.photos;
+    const list = ui.page === 'album' ? albumPhotos(photosSorted()) : data.photos;
     const p = data.photos.find(x => x.id === id); if (!p) return;
     lightbox.id = id; lightbox.list = list.map(x => x.id);
     const dlg = $('[data-lightbox]');
     const idx = lightbox.list.indexOf(id);
-    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"> <img data-full src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(niceDate(p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions"><button type="button" class="cc-button" data-lightbox-step="-1" aria-label="Previous photo">‹</button><button type="button" class="cc-button" data-lightbox-step="1" aria-label="Next photo">›</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
+    const albumPicker = `<label class="cc-photo-album">Album<select data-photo-album="${esc(p.id)}" aria-label="Move photo to album"><option value="" ${!p.albumId ? 'selected' : ''}>Unsorted</option>${albumsSorted().map(a => `<option value="${esc(a.id)}" ${p.albumId === a.id ? 'selected' : ''}>${esc(a.title)}</option>`).join('')}</select></label>`;
+    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"> <img data-full src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(niceDate(p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-lightbox-step="-1" aria-label="Previous photo">‹</button><button type="button" class="cc-button" data-lightbox-step="1" aria-label="Next photo">›</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     const full = await store.getFull(id).catch(() => null);
     if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) img.src = full; }
@@ -462,9 +532,12 @@
     markRead([key]); closeInbox();
     const t = m.target;
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
-    else if (t.type === 'photo') { go('album'); openPhoto(t.id); }
+    else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
     else {
-      ui.highlight = t.id; if (t.tab === 'todo') planner.todoFilter = 'all';
+      ui.highlight = t.id;
+      if (t.type === 'entry') { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), t.id); }
+      if (t.tab === 'todo') { planner.todoFilter = 'all'; ui.pages.todo = pageForItem(todoSorted(), t.id); }
+      if (t.tab === 'wishlist') ui.pages.wishlist = pageForItem(wishesSorted(), t.id);
       go(t.type === 'entry' ? 'diary' : t.tab);
       document.getElementById((t.type === 'entry' ? 'entry-' : 'item-') + t.id)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       setTimeout(() => { ui.highlight = null; scheduleRender(); }, 3000);
@@ -560,8 +633,6 @@
     const chip = $('[data-sync]'); chip.textContent = syncText; chip.dataset.state = ui.sync;
     chip.title = local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
     $('[data-logout]').hidden = local || !ui.user;
-    $('[data-foot-note]').textContent = local ? 'Saved on this device only' : ui.sync === 'offline' ? 'Offline · changes sync when back online' : 'Saved to GitHub · both of us';
-    $('[data-status]').textContent = ui.sync === 'saving' ? 'SAVING…' : ui.sync === 'error' ? 'ERROR' : 'READY';
   }
 
   // ---------- render with focus preservation ----------
@@ -569,7 +640,7 @@
   function render() {
     cancelAnimationFrame(frame); frame = 0;
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
-    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search'].find(n => fa.hasAttribute(n));
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     renderChrome(); renderCalendar(); renderSpecialDays(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
@@ -603,6 +674,7 @@
         for (const id of (entry.photoIds || []).filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
         planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
+        ui.pages.diary = 1;
         flash('Saved.');
       } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
       ui.busy = false; render(); return;
@@ -627,12 +699,14 @@
     }
     if (name === 'edit') { run(store.update('events', planner.editing, { title, date: d.date, endDate: d.endDate || '', note })); planner.editing = null; select(d.date); flash('Saved.'); }
     if (name === 'todo') {
-      if (d.kind === 'trip') run(store.set('trips', { ...base, status: d.status, start: d.start || '', end: d.end || '', note }));
-      else run(store.set('tasks', { ...base, date: d.date || '', done: false, note }));
+      const save = d.kind === 'trip'
+        ? store.set('trips', { ...base, status: d.status, start: d.start || '', end: d.end || '', note })
+        : store.set('tasks', { ...base, date: d.date || '', done: false, note });
+      run(save.then(() => { ui.pages.todo = pageForItem(todoSorted(), base.id); render(); }));
       planner.drafts.todo = { title: '', kind: 'activity', status: 'dreaming', date: '', start: '', end: '', note: '' }; planner.todoFilter = 'all'; planner.forms.todo = false;
       flash((d.date || d.start) ? 'Added. It also shows in the calendar.' : 'Added.');
     }
-    if (name === 'wish') { run(store.set('wishes', { ...base, who: d.who, note, got: false })); planner.drafts.wish = { title: '', who: 'both', note: '' }; planner.forms.wish = false; flash('Wish added.'); }
+    if (name === 'wish') { run(store.set('wishes', { ...base, who: d.who, note, got: false, noteStyle: Math.floor(Math.random() * 8) }).then(() => { ui.pages.wishlist = pageForItem(wishesSorted(), base.id); render(); })); planner.drafts.wish = { title: '', who: 'both', note: '' }; planner.forms.wish = false; flash('Wish added.'); }
     if (name === 'special') { run(store.set('dates', { ...base, kind: d.kind, date: d.date, repeat: d.repeat === 'on' })); planner.drafts.special = { title: '', kind: 'anniversary', date: '', repeat: true }; planner.filter = 'all'; flash('Special day saved.'); }
     render();
   }
@@ -646,6 +720,8 @@
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
       await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
+      ui.pages.diary = 1;
+      ui.newEntryOpen = false;
       flash('Posted.');
     } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
     ui.busy = false; render();
@@ -654,16 +730,28 @@
   // ---------- events ----------
   root.addEventListener('input', e => {
     const el = e.target; el.setCustomValidity?.('');
+    if (el.closest('[data-album-form]') && el.name === 'albumName') ui.albumDraft = el.value;
     const pf = el.closest('[data-planner-form]');
     if (pf) planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value;
     if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) diaryDraft[el.name] = el.value;
-    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
+    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
     const cf = el.closest('[data-comment-form]'); if (cf) commentDrafts[cf.dataset.commentForm] = el.value;
   });
   root.addEventListener('change', async e => {
     const el = e.target;
+    if (el.matches('[data-photo-album]')) {
+      const albumId = el.value;
+      if (albumId && !data.albums.some(a => a.id === albumId)) return;
+      const photo = data.photos.find(p => p.id === el.dataset.photoAlbum);
+      if (!photo || (photo.albumId || '') === albumId) return;
+      closePhoto();
+      run(store.update('photos', photo.id, { albumId }));
+      flash('Photo moved.');
+      return;
+    }
     if (el.matches('[data-calendar-file]')) { calendarImport.file = el.files[0] || null; calendarImport.name = calendarImport.file?.name || ''; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-import-date]')) { calendarImport[el.dataset.importDate] = el.value; calendarImport.preview = null; calendarImport.error = ''; render(); }
+    if (el.matches('[data-export-kind]')) { planner.exportKind = el.value; ls.set('exportKind', el.value); }
     if (el.matches('[data-task-id]')) run(store.update('tasks', el.dataset.taskId, { done: el.checked }));
     if (el.matches('[data-trip-status]')) run(store.update('trips', el.dataset.tripStatus, { status: el.value }));
     if (el.matches('[data-wish-id]')) run(store.update('wishes', el.dataset.wishId, { got: el.checked }));
@@ -704,16 +792,29 @@
     if (el.matches('[data-album-photos]')) {
       const files = [...el.files].slice(0, 20);
       ui.busy = true; render();
-      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today }); flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
+      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
       ui.busy = false; render();
     }
   });
   root.addEventListener('submit', e => {
     const f = e.target; e.preventDefault();
+    if (f.matches('[data-album-form]')) {
+      const title = String(f.elements.albumName.value || '').trim();
+      if (!title) { f.elements.albumName.setCustomValidity('Add an album name.'); f.elements.albumName.reportValidity(); return; }
+      const existing = data.albums.find(a => a.title.toLocaleLowerCase() === title.toLocaleLowerCase() && a.id !== ui.albumForm);
+      if (existing) { f.elements.albumName.setCustomValidity('That album name already exists.'); f.elements.albumName.reportValidity(); return; }
+      if (ui.albumForm === 'new') {
+        const album = { id: newId(), title, by: meName(), createdAt: Date.now() };
+        run(store.set('albums', album).then(() => { ui.album = album.id; ui.pages.album = 1; render(); flash('Album created.'); }));
+      } else if (data.albums.some(a => a.id === ui.albumForm)) {
+        run(store.update('albums', ui.albumForm, { title })); flash('Album renamed.');
+      }
+      ui.albumForm = ''; ui.albumDraft = ''; render(); return;
+    }
     if (f.matches('[data-planner-form]')) submitPlanner(f);
     else if (f.matches('[data-diary-form]')) submitDiary(f);
-    else if (f.matches('[data-diary-search]')) { diaryFilter.q = f.elements.q.value; render(); }
+    else if (f.matches('[data-diary-search]')) { diaryFilter.q = f.elements.q.value; ui.pages.diary = 1; render(); }
     else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
@@ -731,6 +832,27 @@
   root.addEventListener('click', e => {
     const el = e.target.closest('button'); if (!el || el.disabled) return;
     const ds = el.dataset;
+    if (el.hasAttribute('data-album-new')) { ui.albumForm = 'new'; ui.albumDraft = ''; render(); $('[data-album-form] input[name="albumName"]')?.focus(); return; }
+    if (ds.albumOpen) { ui.album = ds.albumOpen; ui.albumForm = ''; ui.pages.album = 1; render(); return; }
+    if (ds.albumRename) { const album = data.albums.find(a => a.id === ds.albumRename); if (album) { ui.albumForm = album.id; ui.albumDraft = album.title; render(); $('[data-album-form] input[name="albumName"]')?.focus(); } return; }
+    if (el.hasAttribute('data-album-cancel')) { ui.albumForm = ''; ui.albumDraft = ''; render(); return; }
+    if (ds.albumDelete) {
+      const album = data.albums.find(a => a.id === ds.albumDelete); if (!album) return;
+      ui.confirm = null; ui.album = 'unsorted'; ui.albumForm = ''; ui.pages.album = 1;
+      run((async () => {
+        for (const photo of data.photos.filter(p => p.albumId === album.id)) await store.update('photos', photo.id, { albumId: '' });
+        await store.remove('albums', album.id);
+        flash('Album deleted. Photos are in Unsorted.');
+      })());
+      render(); return;
+    }
+    if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
+    if (ds.pageKey && ds.pageNumber) {
+      ui.pages[ds.pageKey] = +ds.pageNumber;
+      render();
+      $(`[data-page-list="${ds.pageKey}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
     if (ds.go) { go(ds.go); if (ds.go === 'home') window.scrollTo({ top: 0 }); return; }
     if (ds.nav) { history[ds.nav](); return; }
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
@@ -746,8 +868,8 @@
     if (el.hasAttribute('data-avatar-reset')) { const av = { ...(data.meta.avatars || {}) }; delete av[ui.me]; run(store.setMeta({ avatars: av })); return; }
     if (ds.editDay) { const it = data.dates.find(x => x.id === ds.editDay); if (it) { planner.editingDay = it.id; planner.drafts.dayedit = { title: it.title, kind: it.kind, date: it.date, repeat: !!it.repeat }; render(); } return; }
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
-    if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; if (ui.page !== 'diary') go('diary'); else render(); return; }
-    if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; render(); return; }
+    if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
+    if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
     if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: [...(en.photoIds || [])], pending: [] }; render(); } return; }
     if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
@@ -775,8 +897,8 @@
     if (ds.editEvent) { const ev = data.events.find(x => x.id === ds.editEvent); if (ev) { planner.editing = ev.id; planner.drafts.edit = { title: ev.title, date: ev.date, endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : '', note: ev.note || '' }; render(); } return; }
     if (el.hasAttribute('data-edit-cancel')) { planner.editing = null; render(); return; }
     if (ds.openDate) { select(ds.openDate); openSpecial(false); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start' }); return; }
-    if (ds.openTodo) { planner.todoFilter = ds.openTodo; go('todo'); return; }
-    if (ds.todoFilter) { planner.todoFilter = ds.todoFilter; render(); return; }
+    if (ds.openTodo) { planner.todoFilter = ds.openTodo; ui.pages.todo = 1; go('todo'); return; }
+    if (ds.todoFilter) { planner.todoFilter = ds.todoFilter; ui.pages.todo = 1; render(); return; }
     if (ds.showForm) { planner.forms[ds.showForm] = !planner.forms[ds.showForm]; render(); return; }
     if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
@@ -784,7 +906,7 @@
     if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
     if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
-    if (ds.dateFilter) { planner.filter = ds.dateFilter; render(); return; }
+    if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
     if (ds.remove) {
       const col = ds.remove, item = data[col]?.find(x => x.id === ds.id); if (!item) return;
       run(store.remove(col, item.id)); flash('Removed.', () => store.set(col, item)); return;
@@ -797,13 +919,22 @@
     if (el.hasAttribute('data-import-confirm')) { confirmImport(); return; }
     // memory / diary / photos
     if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); renderMemory(); return; }
-    if (ds.openEntry) { closePhoto(); ui.highlight = ds.openEntry; go('diary'); document.getElementById('entry-' + ds.openEntry)?.scrollIntoView({ block: 'center' }); setTimeout(() => { ui.highlight = null; scheduleRender(); }, 2500); return; }
+    if (ds.openEntry) { closePhoto(); diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), ds.openEntry); ui.highlight = ds.openEntry; go('diary'); document.getElementById('entry-' + ds.openEntry)?.scrollIntoView({ block: 'center' }); setTimeout(() => { ui.highlight = null; scheduleRender(); }, 2500); return; }
     if (ds.pendingRemove) { diaryDraft.pending.splice(+ds.pendingRemove, 1); render(); return; }
     if (ds.entryDelete) {
       const entry = data.diary.find(x => x.id === ds.entryDelete); ui.confirm = null; if (!entry) return;
       run((async () => { for (const pid of entry.photoIds || []) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
     }
-    if (ds.commentRemove) { const entry = data.diary.find(x => x.id === ds.entry); run(store.removeComment(ds.entry, ds.commentRemove, entry?.comments)); return; }
+    if (ds.commentRemove) { openCommentDelete(ds.entry, ds.commentRemove); return; }
+    if (el.hasAttribute('data-comment-confirm-cancel')) { $('[data-comment-confirm-dialog]').close(); return; }
+    if (el.hasAttribute('data-comment-confirm-delete')) {
+      const pending = pendingCommentDelete;
+      $('[data-comment-confirm-dialog]').close();
+      if (!pending) return;
+      const entry = data.diary.find(x => x.id === pending.entryId);
+      if ((entry?.comments || []).some(c => c.id === pending.commentId && c.author === meName())) run(store.removeComment(pending.entryId, pending.commentId));
+      return;
+    }
     if (ds.photo) { ui.confirm = null; openPhoto(ds.photo); return; }
     if (el.hasAttribute('data-lightbox-close')) { closePhoto(); return; }
     if (ds.lightboxStep) { const l = lightbox.list, i = l.indexOf(lightbox.id); ui.confirm = null; openPhoto(l[(i + +ds.lightboxStep + l.length) % l.length]); return; }
@@ -818,6 +949,8 @@
   $('[data-lightbox]').addEventListener('close', () => { lightbox.id = null; });
   $('[data-inbox]').addEventListener('close', () => { ui.inboxOpen = false; ui.inboxFresh = null; });
   $('[data-inbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closeInbox(); });
+  $('[data-comment-confirm-dialog]').addEventListener('close', () => { pendingCommentDelete = null; });
+  $('[data-comment-confirm-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   setInterval(() => { if (!document.hidden) renderBadges(); }, 60000);
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
   $('[data-special-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openSpecial(false); });
@@ -855,32 +988,13 @@
 
   // ---------- calendar export (.ics for Apple / Google Calendar) ----------
   function exportIcs() {
-    const escT = t => String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
-    const ymd = iso => iso.replace(/-/g, '');
-    const utc = ms => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    const fold = line => { const out = []; let cur = ''; for (const ch of line) { if (new TextEncoder().encode(cur + ch).length > 74) { out.push(cur); cur = ' ' + ch; } else cur += ch; } out.push(cur); return out.join('\r\n'); };
-    const stamp = utc(Date.now()), lines = [];
-    const ev = (id, title, fields, note, location) => {
-      lines.push('BEGIN:VEVENT', `UID:${id}@our-little-corner`, `DTSTAMP:${stamp}`, `SUMMARY:${escT(title)}`, ...fields);
-      if (note) lines.push(`DESCRIPTION:${escT(note)}`);
-      if (location) lines.push(`LOCATION:${escT(location)}`);
-      lines.push('END:VEVENT');
-    };
-    const allDay = (start, endInclusive) => [`DTSTART;VALUE=DATE:${ymd(start)}`, `DTEND;VALUE=DATE:${ymd(shiftDay(endInclusive || start, 1))}`];
-    let n = 0;
-    for (const e of data.events) {
-      const timed = e.startMs && e.endMs && e.allDay === false;
-      ev('ev-' + e.id, e.title, timed ? [`DTSTART:${utc(e.startMs)}`, `DTEND:${utc(e.endMs)}`] : allDay(e.date, e.endDate || e.date), e.note, e.location); n++;
-    }
-    for (const t of data.trips) if (t.start) { ev('trip-' + t.id, '✈ ' + t.title, allDay(t.start, t.end || t.start), [statusLabel(t.status), t.note].filter(Boolean).join(' · ')); n++; }
-    for (const t of data.tasks) if (t.date) { ev('task-' + t.id, (t.done ? '✓ ' : '') + t.title, allDay(t.date), t.note); n++; }
-    for (const d of data.dates) { ev('day-' + d.id, '♡ ' + d.title, [...allDay(d.date), ...(d.repeat ? ['RRULE:FREQ=YEARLY'] : [])], kindLabel(d.kind)); n++; }
-    if (!n) { flash('Nothing to export yet.'); return; }
-    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Our Little Corner//Calendar//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:斯婕 & 真真', ...lines, 'END:VCALENDAR'].map(fold).join('\r\n') + '\r\n';
-    const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
-    const a = document.createElement('a'); a.href = url; a.download = `our-little-corner-${today}.ics`; document.body.appendChild(a); a.click(); a.remove();
+    const category = KINDS.some(([kind]) => kind === planner.exportKind) ? planner.exportKind : 'plan';
+    const file = CoupleCalendarExport.build(category, data, currentDay());
+    if (!file) { flash(`No ${kindLabel(category).toLowerCase()} items to export yet.`); return; }
+    const url = URL.createObjectURL(new Blob([file.ics], { type: 'text/calendar;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = file.filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    flash(`Exported ${n} item${n === 1 ? '' : 's'}. Open the file to add them to Apple or Google Calendar.`);
+    flash(`Exported ${file.count} ${file.label.toLowerCase()} item${file.count === 1 ? '' : 's'}. Open the file to add them to Apple or Google Calendar.`);
   }
 
   // ---------- seed (first run only) ----------

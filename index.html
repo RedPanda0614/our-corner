@@ -12,16 +12,17 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600&amp;display=swap">
 <link rel="stylesheet" href="theme-vars.css">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="retro-window.css">
+<link rel="stylesheet" href="typography.css">
+<link rel="stylesheet" href="neon-accent.css">
 </head>
 <body>
 <div id="couple-corner" lang="en-US" aria-label="Bibo &amp; Bobi: Save Point">
   <div class="cc-top">
-    <div class="cc-top-title"><span class="cc-top-meteor" aria-hidden="true"></span><span>Bibo &amp; Bobi</span><span aria-hidden="true">/</span><span lang="zh-CN">斯婕 &amp; 真真</span></div>
+    <div class="cc-top-title"><span class="cc-top-meteor" aria-hidden="true"></span><span>Bibo &amp; Bobi</span></div>
     <div class="cc-top-actions"><button type="button" class="cc-bell" data-open-inbox="all" aria-label="Messages"><span aria-hidden="true">✉</span><b class="cc-count" data-bell-count hidden></b></button><span class="cc-sync" data-sync>…</span>
       <div class="cc-user" data-user>
         <button type="button" class="cc-user-btn" data-user-toggle aria-expanded="false" aria-label="Player card"><span data-user-icon></span></button>
@@ -86,7 +87,6 @@
         <p class="cc-dock-hint" data-dock-hint>drag me · 拖出来玩</p>
         </div>
       </section>
-      <div class="cc-bunny-sticker" aria-hidden="true"></div>
     </aside>
 
     <main class="cc-center">
@@ -122,18 +122,31 @@
       <div data-panel="todo" class="cc-planner" hidden></div>
       <div data-panel="wishlist" class="cc-planner" hidden></div>
 
-      <footer class="cc-foot"><span lang="zh-CN">斯婕 &amp; 真真</span><span data-foot-note></span></footer>
     </main>
   </div>
-  <div class="cc-statusbar"><span data-status>READY</span><span lang="zh-CN">斯婕 + 真真 &nbsp;·&nbsp; 2P</span></div>
+  <div class="cc-statusbar"><span>bibo&amp;bobi 2026</span></div>
 
   <dialog class="cc-lightbox" data-lightbox aria-label="Photo"></dialog>
   <dialog class="cc-modal" data-special-dialog aria-label="Special days"></dialog>
   <dialog class="cc-modal cc-inbox" data-inbox aria-label="Messages"></dialog>
+  <dialog class="cc-modal cc-confirm-modal" data-comment-confirm-dialog aria-labelledby="comment-confirm-title">
+    <section class="cc-window">
+      <div class="cc-bar"><span id="comment-confirm-title">DELETE COMMENT</span></div>
+      <div class="cc-body">
+        <p>Delete this comment? · 确定删除这条评论吗？</p>
+        <div class="cc-plan-actions">
+          <button type="button" class="cc-button" data-comment-confirm-cancel autofocus>Cancel</button>
+          <button type="button" class="cc-button cc-danger" data-comment-confirm-delete>Delete comment</button>
+        </div>
+      </div>
+    </section>
+  </dialog>
 </div>
 
 <script src="config.js"></script>
 <script src="calendar-import.js"></script>
+<script src="calendar-export.js"></script>
+<script src="pagination.js"></script>
 <script src="store.js"></script>
 <script src="bgm.js"></script>
 <script src="app.js"></script>
