@@ -25,11 +25,7 @@
 
 #couple-corner .cc-hero h2.cc-savepoint-title {
   color: #54725a;
-  text-shadow:
-    1px 1px 0 #fff,
-    2px 2px 0 #d9ead4,
-    0 0 7px rgb(255 255 255 / .95),
-    0 0 17px rgb(147 207 156 / .56);
+  text-shadow: 1px 1px 0 #fff, 2px 2px 0 #d9ead4;
 }
 
 #couple-corner .cc-top-title > span:nth-child(2) {
@@ -45,15 +41,14 @@
 #couple-corner .cc-hero h2.cc-savepoint-title em {
   color: #76a482;
   font-style: normal;
-  text-shadow: 1px 1px #fff, 0 0 9px rgb(171 224 175 / .72);
+  text-shadow: 1px 1px 0 #fff, 2px 2px 0 #d9ead4;
 }
 
 #couple-corner .cc-hero-content {
   background-image:
-    radial-gradient(ellipse at 27% 46%, rgb(236 249 228 / .7), transparent 45%),
     linear-gradient(90deg, rgb(160 181 147 / .12) 1px, transparent 1px),
     linear-gradient(rgb(160 181 147 / .12) 1px, transparent 1px);
-  background-size: auto, 12px 12px, 12px 12px;
+  background-size: 12px 12px;
 }
 
 #couple-corner .cc-hero .cc-savepoint-subtitle {
