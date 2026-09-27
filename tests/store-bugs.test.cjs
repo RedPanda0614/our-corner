@@ -62,7 +62,11 @@ function server() {
       if (this.dataReply) return response(...this.dataReply);
       if (this.lagOnce) { const lag = this.lagOnce; this.lagOnce = null; return response(200, lag); }
       if (this.data == null) return response(404, { message: 'Not Found' });
-      return response(200, { sha: String(this.sha), content: b64(this.data) }, { etag: '"' + this.sha + '"' });
+      const etag = '"' + this.sha + '"';
+      if (options.headers?.['If-None-Match'] === etag) return response(304);
+      if (raw) return response(200, this.data, { etag });
+      if (this.big) return response(200, { sha: String(this.sha), size: 2e6, content: '' }, { etag }); // over 1 MB: the details come without the content
+      return response(200, { sha: String(this.sha), content: b64(this.data) }, { etag });
     }
   };
 }
@@ -454,6 +458,25 @@ test('a save conflict still reloads whatever GitHub has, even the content from b
   await page.store.set('tasks', { id: 'two', title: 'x' }); await page.flush();
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
   assert.equal(page.store.pending(), false);
+});
+
+// ---------- the file we already have is not downloaded again ----------
+test('a relaunch and the first check after our own save do not download or redraw an unchanged data.json', async () => {
+  const remote = server(); remote.big = true; remote.data.collections.tasks = [{ id: 't0', title: 'x' }];
+  const page = browser(remote); await page.start();
+  const raws = () => remote.count(/^GET data\.json raw$/);
+  assert.equal(raws(), 1, 'a new device downloads it once'); assert.equal(page.emits, 1);
+  const again = browser(remote, { disk: page.disk, local: page.local }); await again.start(); // relaunch: this device has the same file
+  assert.equal(raws(), 1, 'not downloaded again'); assert.equal(again.emits, 1, 'shown once, from the copy on this device');
+  assert.deepEqual(again.changes.tasks.map(t => t.id), ['t0']); assert.equal(again.statuses.at(-1).state, 'synced');
+  await again.store.set('tasks', { id: 't1', title: 'y' }); await again.flush();
+  const shown = again.emits; await again.intervals[0].fn(); // the first check after our own save finds what we saved
+  assert.equal(raws(), 1); assert.equal(again.emits, shown);
+  const sent = remote.log.length; await again.intervals[0].fn(); // its ETag is kept, so the next check is a 304
+  assert.deepEqual(remote.log.slice(sent), ['GET data.json']); assert.equal(again.emits, shown);
+  remote.data.collections.tasks.push({ id: 'theirs', title: 'z' }); remote.sha++; // a real change from the other phone still comes in
+  await again.intervals[0].fn();
+  assert.equal(raws(), 2); assert.deepEqual(again.changes.tasks.map(t => t.id), ['t0', 't1', 'theirs']);
 });
 
 test('removeMany also works in local mode', async () => {

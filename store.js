@@ -239,6 +239,7 @@
       if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
       if (!res.ok) throw new Error('GitHub error ' + res.status);
       const json = await res.json();
+      if (!force && json.sha === sha && revision === observedRevision) { etag = res.headers.get('ETag'); return false; } // the file we have already (on launch, or the first check after our own save)
       if (!force && json.sha !== sha && Date.now() - (superseded.get(json.sha) || 0) < 30000) return false; // a lagging copy from before our own save
       let text = json.content ? b64decode(json.content) : '';
       if (!text && json.size) { // files over 1 MB come without content
@@ -407,7 +408,7 @@
         const cached = await db.get(stateKey);
         if (cached) { base = cached.base; sha = cached.sha; pending = cached.pending || []; fileDeletes = cached.files || []; fullCache = cached.fullCache || []; emit(); }
         for (;;) {
-          try { await pull(); started = true; emit(); status(pending.length ? 'saving' : 'synced'); break; }
+          try { const changed = await pull(); started = true; if (changed || !cached) emit(); status(pending.length ? 'saving' : 'synced'); break; }
           catch (err) {
             if (cached) { started = true; status(navigator.onLine === false ? 'offline' : 'error', err); break; }
             if (err.code === 'auth') { if (listening) { clearInterval(pollTimer); auth.token = null; } throw err; }
