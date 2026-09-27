@@ -89,6 +89,19 @@ test('a move stopped part way (offline, or the app closed) goes on from where it
   assert.equal(again.store.pending(), false);
 });
 
+test('a phone closed before its move uploaded anything, while the other phone moved: it takes every file as it is and adds its own change', async () => {
+  const remote = legacyServer(), a = browser(remote); await a.start();
+  await a.store.set('tasks', { id: 'waiting', title: 'saved on a only' }); // the app is closed now, before any upload
+  const b = browser(remote); await b.start('真真'); await b.store.set('tasks', { id: 'from-b', title: 'b' }); await b.flush();
+  const shas = PARTS.map(n => remote.tree.get(`data/${n}.json.gz`));
+  const again = browser(remote, { disk: a.disk, local: a.local }); await again.start();
+  assert.equal(again.file('main').create, false, 'main is there now: taken, not made again');
+  await again.flush();
+  assert.deepEqual(PARTS.slice(1).map(n => remote.tree.get(`data/${n}.json.gz`)), shas.slice(1), 'the other files are left as b made them');
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1', 't2', 't3', 'from-b', 'waiting']);
+  assert.equal(remote.count(/^PUT data\/(imported|sijie|zhenzhen)/), 3, 'each made once');
+});
+
 test('two phones moving from different versions of data.json (an older app saved in between): the files take in the difference', async () => {
   const remote = legacyServer(), a = browser(remote), b = browser(remote);
   let failMain = true; const fetch = remote.fetch.bind(remote);
@@ -196,6 +209,8 @@ test('a read receipt uploads only its person file, a diary post only main in one
   const item = await page.store.uploadPhoto({ id: 'np', thumb: IMG, entryId: 'e1', caption: '' }, IMG);
   await page.store.saveAll([{ col: 'diary', item: { id: 'e1', text: 'post', photoIds: ['np'] } }, { col: 'photos', item }]); await page.flush();
   assert.deepEqual(remote.log.slice(log).filter(l => l.startsWith('PUT')), ['PUT photos/np.jpg', 'PUT photos/np-thumb.jpg', 'PUT data/main.json.gz']);
+  const before = JSON.stringify({ content: Buffer.from(JSON.stringify(remote.json('data.json'), null, 1)).toString('base64') }).length; // what the one-file app sent for any change
+  assert.ok(remote.puts.at(-1).bytes < before / 4, `a diary post sends ${remote.puts.at(-1).bytes} bytes, the one-file app ${before}`);
   from = remote.puts.length;
   await page.store.batchSet('events', Array.from({ length: 50 }, (_, i) => ({ id: 'imp' + i, title: 'Imported ' + i, importKey: `["x${i}","1"]` }))); await page.flush();
   assert.deepEqual(remote.puts.slice(from).map(p => p.path), ['data/imported.json.gz']);
