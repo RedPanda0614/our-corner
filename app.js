@@ -88,9 +88,9 @@
     T('nightmatcha', '夜抹茶', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
     T('nighthigh', '夜抹茶 · 高对比', 'dark', [0, 2], [0, 1.9], [0, 1.5], [0, 1.1], 1.25, true)
   ];
-  function currentMode() {
-    const m = data.meta.mode; if (m) return { dark: !!m.dark, high: !!m.high };
-    return { dark: /night|dark/.test(data.meta.theme || ''), high: false };   // older saved skins
+  function currentMode() { // shared by the two of us; each flag is saved on its own, so two toggles at once both land
+    const m = data.meta.mode && typeof data.meta.mode === 'object' ? data.meta.mode : {};
+    return { dark: 'dark' in m ? !!m.dark : /night|dark/.test(data.meta.theme || ''), high: !!m.high };   // not saved yet: older saved skins
   }
   const themeFor = m => (m.dark ? (m.high ? 'nighthigh' : 'nightmatcha') : (m.high ? 'matchahigh' : 'matcha'));
   const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
@@ -1636,7 +1636,7 @@
     if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; dropDraft('answer', ds.answerCancel); ui.editingAnswer = null; render(); return; }
     if (el.hasAttribute('data-enable-badge')) { Promise.resolve(Notification.requestPermission()).catch(() => {}).finally(() => { iconBadge = -1; render(); }); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); loadDrafts(); render(); return; }
-    if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
+    if (ds.modeToggle) { const m = currentMode(), k = ds.modeToggle; m[k] = !m[k]; data.meta = { ...data.meta, mode: m }; run(store.metaKey('mode', k, m[k])); render(); return; } // just this flag, merged into the shared mode
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
     if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.metaKey('kindColors', ui.colorKind, ds.setColor)); render(); return; }

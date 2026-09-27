@@ -188,6 +188,18 @@ test('avatar and colour changes made at the same time on both phones both surviv
   assert.deepEqual(remote.data.meta.avatars, { zhenzhen: 'data:B' });
 });
 
+test('dark and high contrast switched at the same time on both phones both land (the mode is shared, one flag per save)', async () => {
+  const remote = server(), a = browser(remote), b = browser(remote);
+  remote.data.meta.mode = { dark: false, high: false };
+  await a.start('斯婕'); await b.start('真真');
+  await a.store.metaKey('mode', 'dark', true);
+  await b.store.metaKey('mode', 'high', true);
+  await a.flush(); await b.flush(); // b replays onto a's save
+  assert.deepEqual(remote.data.meta.mode, { dark: true, high: true });
+  await b.store.metaKey('mode', 'dark', false); await b.flush();
+  assert.deepEqual(remote.data.meta.mode, { dark: false, high: true }, 'switching off is kept too');
+});
+
 // ---------- mergeMeta ----------
 test('mergeMeta: two devices of one person saving out of order keep the newest seen time, all seen ids and the earliest kept time', async () => {
   const remote = server(), phone = browser(remote), laptop = browser(remote);
