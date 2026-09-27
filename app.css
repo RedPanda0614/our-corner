@@ -742,3 +742,8 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-button.cc-ck-mood { white-space: normal; text-align: center; }
   #couple-corner .cc-ck-form textarea { font-size: 16px; }
 }
+
+/* pixel emoji (pixel-emoji.js): whole-pixel sizes so every pixel stays square; unknown emoji fall back to normal text */
+#couple-corner .cc-px { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; flex: none; image-rendering: pixelated; }
+#couple-corner :is(.cc-status-emoji, .cc-status-preset, .cc-ck-mood) .cc-px { width: 32px; height: 32px; vertical-align: middle; }
+#couple-corner .cc-ach-glyph .cc-px { width: 32px; height: 32px; vertical-align: 0; }

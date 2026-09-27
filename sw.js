@@ -1,7 +1,7 @@
 // Offline shell. Bump VERSION after each deploy so phones pick up the new files.
 const PREFIX = 'olc:' + self.registration.scope + ':';
 const VERSION = PREFIX + 'v38';
-const SHELL = ['./', 'index.html', 'theme-vars.css', 'style.css', 'app.css', 'typography.css', 'neon-accent.css', 'config.js', 'calendar-import.js', 'calendar-export.js', 'pagination.js', 'questions.js', 'achievements.js', 'store.js', 'bgm.js', 'app.js',
+const SHELL = ['./', 'index.html', 'theme-vars.css', 'style.css', 'app.css', 'typography.css', 'neon-accent.css', 'config.js', 'calendar-import.js', 'calendar-export.js', 'pagination.js', 'questions.js', 'achievements.js', 'pixel-emoji.js', 'store.js', 'bgm.js', 'app.js',
   'manifest.webmanifest', 'retro-window.css', 'assets/hero.jpg', 'assets/bunny-wallpaper.svg', 'assets/doto.ttf', 'assets/icon-192.png', 'assets/ipod.png',
   'assets/clover-sky.png', 'assets/cd-y2k.png', 'assets/shooting-star-y2k.png', 'assets/wishlist-notes-sprite.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

@@ -350,7 +350,7 @@
     const key = partnerKey(), theirs = answerOf(date, key);
     if (!theirs) return `<div class="cc-q-answer cc-q-waiting ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-small">${date < qDay() ? 'No answer that day.' : 'Hasn’t answered yet.'}</p></div>`;
     // the partner's text never reaches the page until you have answered too
-    if (!answerOf(date, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>🔒 ${esc(PEOPLE[key])} answered. Answer to unlock.</p></div>`;
+    if (!answerOf(date, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>${emojiHtml('🔒')} ${esc(PEOPLE[key])} answered. Answer to unlock.</p></div>`;
     return `<div class="cc-q-answer ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-feed-text">${esc(theirs.text)}</p></div>`;
   }
   const qaBlock = date => `<div class="cc-q-answers">${myAnswerCell(date)}<div class="cc-q-cell" data-q-partner="${date}">${partnerAnswerCell(date)}</div></div>`;
@@ -380,7 +380,7 @@
     const dlg = $('[data-question-dialog]');
     if (!ui.questionOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
     const a = document.activeElement;
-    if (passive && a && dlg.contains(a) && a.matches('input, textarea')) return;
+    if (passive && a && dlg.contains(a) && (a.matches('input, textarea') || a.closest('[data-checkin-form], [data-question-form]'))) return;
     const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask;
     const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, data.questions))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
     const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
@@ -545,7 +545,7 @@
     const bar = p => { const f = Math.min(10, Math.floor(10 * Math.min(p.n, p.of) / p.of)); return `<span class="cc-ach-bar" role="img" aria-label="${p.n} of ${p.of}"><span aria-hidden="true">${'▮'.repeat(f)}${'▯'.repeat(10 - f)}</span> ${Math.min(p.n, p.of)} / ${p.of}</span>`; };
     const desc = `<small>${esc(a.desc.en)} <span lang="zh-CN">${esc(a.desc.zh)}</span></small>`; // locked firsts come back as a gentle invitation
     const when = a.earned && a.at ? `<small class="cc-ach-when">${esc(niceDate(currentDayFor(a.at)))}${achTarget(a) ? ` · <button type="button" class="cc-link" data-ach-go="${esc(a.id)}">See the moment ›</button>` : ''}</small>` : '';
-    return `<article class="cc-ach ${a.earned ? '' : 'cc-ach-locked'}"><span class="cc-ach-glyph" aria-hidden="true">${esc(a.glyph)}</span><div class="cc-ach-text"><div><b>${esc(a.en)}</b> <span lang="zh-CN">${esc(a.zh)}</span>${fresh.has(a.id) ? ' <span class="cc-q-new">NEW</span>' : ''}</div>${desc}${when}${!a.earned && a.progress ? bar(a.progress) : ''}</div></article>`;
+    return `<article class="cc-ach ${a.earned ? '' : 'cc-ach-locked'}"><span class="cc-ach-glyph" aria-hidden="true">${emojiHtml(a.glyph)}</span><div class="cc-ach-text"><div><b>${esc(a.en)}</b> <span lang="zh-CN">${esc(a.zh)}</span>${fresh.has(a.id) ? ' <span class="cc-q-new">NEW</span>' : ''}</div>${desc}${when}${!a.earned && a.progress ? bar(a.progress) : ''}</div></article>`;
   }
   function achChip() {
     const n = achievements().filter(a => a.earned).length, fresh = unseenAchievements().length;
@@ -808,9 +808,9 @@
       if (edited(e) && /text|tags|date/.test(e.updatedWhat || '')) add('diary', `dy-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a diary entry · ${clip(e.text)}`, { type: 'entry', id: e.id });
       for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
     }
-    for (const g of photoUploads()) {
+    for (const g of photoUploads()) { // a batch that grows gets a new key (so it alerts again); older photos keep their first photo's key
       const first = g[0], n = g.length, album = data.albums.find(a => a.id === first.albumId);
-      add('album', 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, thumb: first.thumb });
+      add('album', first.batch ? `ph:b:${first.batch}#${n}` : 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, ids: g.map(p => p.id), thumb: first.thumb });
     }
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
@@ -827,13 +827,19 @@
     const groups = new Map(), open = new Map();
     for (const p of data.photos.filter(x => !x.entryId && x.author && x.createdAt).sort((a, b) => a.createdAt - b.createdAt)) {
       if (p.batch) { const g = groups.get('b:' + p.batch); g ? g.push(p) : groups.set('b:' + p.batch, [p]); continue; }
-      const k = p.author + '|' + (p.albumId || ''), g = open.get(k);
+      const k = p.author, g = open.get(k); // not the album, so moving a photo later doesn't split its upload
       if (g && p.createdAt - g[g.length - 1].createdAt < 10 * 60000) g.push(p);
       else { const fresh = [p]; open.set(k, fresh); groups.set('p:' + p.id, fresh); }
     }
     return [...groups.values()];
   }
-  function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
+  function isRead(key, read) { // a photo batch read at a bigger size stays read after one of its photos is deleted
+    if (read.has(key)) return true;
+    const m = /^ph:b:(.+)#(\d+)$/.exec(key); if (!m) return false;
+    for (const k of read) { const r = /^ph:b:(.+)#(\d+)$/.exec(k); if (r && r[1] === m[1] && +r[2] >= +m[2]) return true; }
+    return false;
+  }
+  function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !isRead(m.key, read)); }
   function syncInboxState() {
     if (!ui.me) return;
     const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
@@ -875,7 +881,7 @@
     const tabs = [['all', 'All'], ...Object.entries(TAB_NAMES)];
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✉ MESSAGES</span><button type="button" class="cc-min" data-close-inbox aria-label="Close">×</button></div><div class="cc-body">
       <div class="cc-filter-row">${tabs.map(([v, l]) => `<button type="button" class="cc-button" data-inbox-filter="${v}" aria-pressed="${filter === v}">${l}</button>`).join('')}</div>
-      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
+      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${window.CCPixelEmoji ? CCPixelEmoji.text(m.text) : esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
     </div></section>`;
   }
   function openInbox(filter) {
@@ -892,7 +898,7 @@
   }
   function goToTarget(t) { // shared by the inbox and the achievements shelf
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
-    else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
+    else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id, t.ids?.filter(id => data.photos.some(p => p.id === id))); }
     else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
     else if (t.type === 'checkin') { if (t.week === thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
     else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
@@ -1265,7 +1271,7 @@
     try {
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() });
+      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
@@ -1537,7 +1543,7 @@
   $('[data-comment-confirm-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $('[data-question-dialog]').addEventListener('close', () => { if (ui.questionOpen) { ui.questionOpen = false; render(); } });
   $('[data-question-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openQuestions(false); });
-  $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } });
+  $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } $('[data-ach-open]')?.focus({ preventScroll: true }); });
   $('[data-ach-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openAchievements(false); });
   let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
   const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; achCache = null; scheduleRender(); return true; };

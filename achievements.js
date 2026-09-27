@@ -200,15 +200,21 @@
       if (!deck && seen.size >= deckSize) deck = day;
     }
 
-    // secrets
-    const hourIn = (lo, hi) => earliest(entries.filter(c => { const h = new Date(c.t).getHours(); return h >= lo && h <= hi; }));
-    const onDay = test => earliest(entries.filter(c => test(dayOf(c.t))));
+    // secrets: judged on the writer's wall clock (new entries carry tzo = their getTimezoneOffset()), else this device's clock
+    const wall = c => {
+      const o = c.x && c.x.tzo;
+      if (typeof o === 'number' && Number.isFinite(o) && Math.abs(o) <= 840) { const d = new Date(c.t - o * 60000); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours() }; }
+      const d = new Date(c.t); return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate(), h: d.getHours() };
+    };
+    const wallDay = c => { const w = wall(c); return `${w.y}-${pad(w.m)}-${pad(w.d)}`; };
+    const hourIn = (lo, hi) => earliest(entries.filter(c => { const h = wall(c).h; return h >= lo && h <= hi; }));
+    const onDay = test => earliest(entries.filter(c => test(wallDay(c))));
     const annivs = dates.filter(x => x.kind === 'anniversary' && validDay(x.date));
     const bdays = dates.filter(x => x.kind === 'birthday' && validDay(x.date));
     const covered = new Set();
     let seasons = null;
     for (const c of entries) {
-      covered.add(season(new Date(c.t).getMonth() + 1));
+      covered.add(season(wall(c).m));
       if (covered.size === 4) { seasons = c; break; }
     }
     const minds = [];

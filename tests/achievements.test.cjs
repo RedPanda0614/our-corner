@@ -495,3 +495,16 @@ test('results are deterministic and never touch the input', () => {
   assert.doesNotMatch(JSON.stringify(b), DASH);
   assert.ok(!JSON.stringify(b).includes('Hidden'));
 });
+
+test('secrets use the writer\'s clock when the entry carries its time zone offset', () => {
+  const at = Date.parse('2026-05-19T21:30:00Z'); // Shanghai: May 20 05:30 · Los Angeles (UTC-7): May 19 14:30
+  const ids = d => A.evaluate({ diary: d }, { today: '2026-09-27', Q }).filter(a => a.earned).map(a => a.id);
+  const la = ids([{ id: 'la', author: 'A', createdAt: at, tzo: 420 }]);
+  assert.ok(!la.includes('secret-520') && !la.includes('secret-early-bird'), 'written in LA on May 19 afternoon');
+  const sh = ids([{ id: 'sh', author: 'A', createdAt: at, tzo: -480 }]);
+  assert.ok(sh.includes('secret-520') && sh.includes('secret-early-bird'), 'written in Shanghai on May 20 morning');
+  const old = ids([{ id: 'old', author: 'A', createdAt: at }]); // no tzo: this device's clock (TZ=Asia/Shanghai in these tests)
+  assert.ok(old.includes('secret-520'));
+  const bogus = ids([{ id: 'x', author: 'A', createdAt: at, tzo: 99999 }]);
+  assert.ok(bogus.includes('secret-520'), 'an implausible offset falls back to this device');
+});
