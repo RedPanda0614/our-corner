@@ -61,3 +61,60 @@ test('a yearly Feb 29 day exports so calendars show it on Mar 1 in other years',
   const { events } = globalThis.CoupleCalendarImport.parse(leap.ics, { from: '2027-01-01', to: '2028-12-31' });
   assert.deepEqual(events.map(e => e.date), ['2027-03-01', '2028-02-29']);
 });
+
+// Events that came from Apple Calendar (calendar-import.js sets importKey/uid/source) and special days from the
+// first-run seed (importUIDs) are already in that calendar: re-exported with our UIDs they would show up twice.
+const withImported = {
+  events: [
+    { id: 'mine', title: 'Picnic', kind: 'plan', date: '2026-10-03', by: '斯婕', createdAt: 1 },
+    { id: 'apple', title: 'Dentist', date: '2026-10-04', importKey: '["abc@icloud","2026-10-04"]', uid: 'abc@icloud', source: 'Apple Calendar', by: '斯婕', createdAt: 2 },
+    { id: 'seed-event-0', title: 'Seeded concert', date: '2026-10-05', importKey: '["seed","2026-10-05"]', source: 'Apple Calendar' }
+  ],
+  trips: [{ id: 'trip', title: 'Taiwan', start: '2026-11-10' }],
+  dates: [
+    { id: 'bday', title: 'Mum', kind: 'birthday', date: '1970-05-02', repeat: true, by: '真真', createdAt: 3 },
+    { id: 'seed-date-0', title: 'Imported birthday', kind: 'birthday', date: '1990-07-01', repeat: true, importUIDs: ['xyz@icloud'] }
+  ]
+};
+const uids = file => [...file.ics.matchAll(/^UID:(.*)$/gm)].map(m => m[1].trim());
+const at = (kind, opts) => build(kind, withImported, '2026-09-26', Date.UTC(2026, 8, 26), opts);
+
+test('imported events and special days are left out of an export by default', () => {
+  const plan = at('plan');
+  assert.deepEqual(uids(plan), ['ev-mine@our-little-corner']);
+  assert.equal(plan.count, 1);
+  assert.equal(plan.skipped, 2);
+  assert.doesNotMatch(plan.ics, /Dentist|Seeded concert/);
+  const bday = at('birthday');
+  assert.deepEqual(uids(bday), ['day-bday@our-little-corner']);
+  assert.equal(bday.skipped, 1);
+  assert.equal(build('plan', { events: [withImported.events[1]] }, '2026-09-26'), null, 'only imported items: nothing to download');
+});
+
+test('an event read by the calendar importer counts as imported', () => {
+  globalThis.ICAL = ICAL;
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Apple Inc.//macOS//EN', 'BEGIN:VEVENT', 'UID:dinner-1@icloud.com', 'DTSTAMP:20260901T000000Z',
+    'DTSTART;VALUE=DATE:20261012', 'DTEND;VALUE=DATE:20261013', 'SUMMARY:Dinner with friends', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const [parsed] = globalThis.CoupleCalendarImport.parse(ics, { from: '2026-10-01', to: '2026-10-31' }).events;
+  const stored = { ...parsed, id: 'imp1', by: '斯婕', createdAt: 5 }; // what confirmImport saves
+  const mixed = { events: [stored, withImported.events[0]] };
+  assert.deepEqual(uids(build('plan', mixed, '2026-09-26')), ['ev-mine@our-little-corner']);
+  assert.deepEqual(uids(build('plan', mixed, '2026-09-26', Date.now(), { includeImported: true })), ['ev-imp1@our-little-corner', 'ev-mine@our-little-corner']);
+});
+
+test('imported events and special days are exported when asked for', () => {
+  const plan = at('plan', { includeImported: true });
+  assert.deepEqual(uids(plan), ['ev-mine@our-little-corner', 'ev-apple@our-little-corner', 'ev-seed-event-0@our-little-corner']);
+  assert.equal(plan.count, 3);
+  assert.equal(plan.skipped, 0);
+  assert.deepEqual(uids(at('birthday', { includeImported: true })), ['day-bday@our-little-corner', 'day-seed-date-0@our-little-corner']);
+});
+
+test('hand-added events, trips and special days are always exported', () => {
+  for (const opts of [undefined, {}, { includeImported: false }, { includeImported: true }]) {
+    assert.ok(uids(at('plan', opts)).includes('ev-mine@our-little-corner'));
+    assert.deepEqual(uids(at('trip', opts)), ['trip-trip@our-little-corner']);
+    assert.ok(uids(at('birthday', opts)).includes('day-bday@our-little-corner'));
+  }
+  assert.equal(read('plan').skipped, 0, 'the hand-made test data has nothing imported');
+});

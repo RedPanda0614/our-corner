@@ -540,6 +540,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-export-row { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin-top: 9px; }
 #couple-corner .cc-export-row .cc-field { flex: 1 1 135px; margin: 0; }
 #couple-corner .cc-export-row .cc-button { min-height: 33px; }
+#couple-corner .cc-export-row .cc-inline-check { flex-basis: 100%; }
 @media (min-width: 900px) { #couple-corner .cc-cal-wrap { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } #couple-corner .cc-cal-side .cc-agenda { margin-top: 0; } #couple-corner .cc-cal-side .cc-home-grid .cc-fields, #couple-corner .cc-cal-side .cc-fields { grid-template-columns: 1fr; } }
 #couple-corner .cc-calendar-grid { gap: 3px; }
 #couple-corner .cc-day, #couple-corner .cc-day-blank { min-height: 34px; font-size: 13px; padding-top: 3px; }

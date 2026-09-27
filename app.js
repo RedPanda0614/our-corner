@@ -138,7 +138,7 @@
   const initialSelected = today;
   const planner = {
     view: ls.get('calView', 'month'), month: today.slice(0, 7), year: +today.slice(0, 4), selected: initialSelected,
-    filter: 'all', todoFilter: 'all', exportKind: ls.get('exportKind', 'plan'), forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
+    filter: 'all', todoFilter: 'all', exportKind: ls.get('exportKind', 'plan'), exportImported: false, forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
     drafts: {
       event: { title: '', kind: 'plan', date: today, endDate: '', note: '', repeat: true },
       edit: { title: '', date: '', endDate: '', note: '' },
@@ -306,7 +306,7 @@
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
-      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`));
+      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button><label class="cc-inline-check"><input type="checkbox" data-export-imported ${planner.exportImported ? 'checked' : ''}><span>Include imported events</span></label></div>${form}${renderImport()}</div></div>`));
   }
 
   // ---------- special days + memory ----------
@@ -1474,6 +1474,7 @@
     }
     if (el.matches('[data-import-date]')) { calendarImport[el.dataset.importDate] = el.value; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-export-kind]')) { planner.exportKind = el.value; ls.set('exportKind', el.value); }
+    if (el.matches('[data-export-imported]')) planner.exportImported = el.checked; // not saved: every visit starts without imported events
     if (el.matches('[data-task-id]')) run(store.update('tasks', el.dataset.taskId, { done: el.checked }));
     if (el.matches('[data-trip-status]')) run(store.update('trips', el.dataset.tripStatus, { status: el.value }));
     if (el.matches('[data-wish-id]')) run(store.update('wishes', el.dataset.wishId, { got: el.checked }));
@@ -1768,12 +1769,17 @@
   // ---------- calendar export (.ics for Apple / Google Calendar) ----------
   function exportIcs() {
     const category = KINDS.some(([kind]) => kind === planner.exportKind) ? planner.exportKind : 'plan';
-    const file = CoupleCalendarExport.build(category, data, currentDay());
-    if (!file) { flash(`No ${kindLabel(category).toLowerCase()} items to export yet.`); return; }
+    // Imported events are already in the calendar they came from; exporting them again doubles them there.
+    const includeImported = planner.exportImported, name = kindLabel(category).toLowerCase();
+    const file = CoupleCalendarExport.build(category, data, currentDay(), Date.now(), { includeImported });
+    if (!file) {
+      const onlyImported = !includeImported && CoupleCalendarExport.build(category, data, currentDay(), Date.now(), { includeImported: true });
+      flash(onlyImported ? `Only imported ${name} items here. Tick “Include imported events” to export them too.` : `No ${name} items to export yet.`); return;
+    }
     const url = URL.createObjectURL(new Blob([file.ics], { type: 'text/calendar;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = file.filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    flash(`Exported ${file.count} ${file.label.toLowerCase()} item${file.count === 1 ? '' : 's'}. Open the file to add them to Apple or Google Calendar.`);
+    flash(`Exported ${file.count} ${file.label.toLowerCase()} item${file.count === 1 ? '' : 's'}${file.skipped ? ` (${file.skipped} imported left out)` : ''}. Open the file to add them to Apple or Google Calendar.`);
   }
 
   // ---------- seed (first run only) ----------
