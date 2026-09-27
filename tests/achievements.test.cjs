@@ -460,11 +460,11 @@ test('kept achievements stay earned after their item is gone', () => {
   assert.deepEqual([res['diary-50'].visible, res['diary-100'].visible], [true, false]);
   assert.equal(res['first-photo'].earned, false);
   assert.equal(res['first-album'].earned, false);
-  // when the data still has it, the earlier time wins; the moment to see is always the item there now
+  // the earlier time wins; the link only shows when that moment is the item still there
   const now = pick({ diary: [e] }, 'first-entry', { kept: { 'first-entry': L(2026, 4, 1) } });
   assert.deepEqual([now.at, now.target], [L(2026, 3, 3, 2), { col: 'diary', id: 'gone' }]);
   const older = pick({ diary: [e] }, 'first-entry', { kept: { 'first-entry': 5 } });
-  assert.deepEqual([older.at, older.target], [5, { col: 'diary', id: 'gone' }]);
+  assert.deepEqual([older.at, older.target], [5, null]);
   assert.equal(pick({}, 'toString', { kept: { toString: 1 } }), undefined);
 });
 
@@ -477,8 +477,12 @@ test('deleting what earned an achievement never moves its date later', () => {
   // the first entry is deleted: the next one now counts as the first and the tenth is a day later, but the shelf kept both dates
   const kept = { 'first-entry': before['first-entry'].at, 'diary-10': before['diary-10'].at };
   const after = byId(run({ diary: [later, ...rest] }, { kept }));
-  assert.deepEqual([after['first-entry'].earned, after['first-entry'].at, after['first-entry'].target], [true, L(2026, 3, 3), { col: 'diary', id: 'later' }]);
-  assert.deepEqual([after['diary-10'].earned, after['diary-10'].at], [true, L(2026, 6, 8)]);
+  // the moment shown is gone, so there is no link to a different one
+  assert.deepEqual([after['first-entry'].earned, after['first-entry'].at, after['first-entry'].target], [true, L(2026, 3, 3), null]);
+  assert.deepEqual([after['diary-10'].earned, after['diary-10'].at, after['diary-10'].target], [true, L(2026, 6, 8), null]);
+  // a kept date that still matches keeps its link
+  const same = byId(run({ diary: [first, later, ...rest] }, { kept }));
+  assert.deepEqual(same['first-entry'].target, { col: 'diary', id: 'first' });
   // without the kept dates they would have moved
   const bare = byId(run({ diary: [later, ...rest] }));
   assert.deepEqual([bare['first-entry'].at, bare['diary-10'].at], [L(2026, 5, 5), L(2026, 6, 9)]);

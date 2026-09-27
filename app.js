@@ -115,7 +115,7 @@
     sync: store.mode === 'local' ? 'local' : 'connecting',
     user: null,
     me: store.mode === 'local' ? ls.get('me', 'sijie') : null,
-    message: null, undo: null, messageTimer: null,
+    message: null, undo: null, undoText: null, showUndo: false, messageTimer: null,
     confirm: null, // key of a two-step delete button
     memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false, newEntryOpen: false,
     pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1, questions: 1 },
@@ -171,17 +171,18 @@
 
   // ---------- messages ----------
   function flash(text, undo = null) {
-    const left = ui.undo ? ui.undoUntil - Date.now() : 0; // a message with no Undo of its own keeps one still waiting, on its own clock
-    if (undo || left <= 0) { ui.undo = undo; ui.undoUntil = Date.now() + 9000; clearTimeout(ui.undoTimer); if (undo) ui.undoTimer = setTimeout(() => { ui.undo = null; renderMessage(); }, 9000); }
-    ui.message = text;
-    clearTimeout(ui.messageTimer);
-    ui.messageTimer = setTimeout(() => { ui.message = null; ui.undo = null; renderMessage(); }, undo ? 9000 : Math.max(4000, left));
+    if (undo) { ui.undo = undo; ui.undoText = text; ui.undoUntil = Date.now() + 9000; }
+    const left = ui.undo ? ui.undoUntil - Date.now() : 0, end = () => { ui.message = null; ui.undo = null; renderMessage(); };
+    if (left <= 0) ui.undo = null;
+    ui.message = text; ui.showUndo = !!undo;
+    clearTimeout(ui.messageTimer); // an Undo still waiting comes back beside its own message once this one has been read
+    ui.messageTimer = undo ? setTimeout(end, 9000) : setTimeout(() => { if (ui.undo && ui.undoUntil - Date.now() > 1000) { ui.message = ui.undoText; ui.showUndo = true; renderMessage(); ui.messageTimer = setTimeout(end, ui.undoUntil - Date.now()); } else end(); }, left > 0 ? Math.min(3500, left) : 4000);
     renderMessage();
   }
   function renderMessage() {
     const el = $('#cc-planner-message');
     el.hidden = !ui.message;
-    el.innerHTML = ui.message ? `<span>${esc(ui.message)}</span>${ui.undo ? '<button type="button" class="cc-button" data-undo>Undo</button>' : ''}<button type="button" class="cc-button" data-dismiss aria-label="Dismiss">OK</button>` : '';
+    el.innerHTML = ui.message ? `<span>${esc(ui.message)}</span>${ui.undo && ui.showUndo ? '<button type="button" class="cc-button" data-undo>Undo</button>' : ''}<button type="button" class="cc-button" data-dismiss aria-label="Dismiss">OK</button>` : '';
   }
 
   // ---------- window chrome ----------
