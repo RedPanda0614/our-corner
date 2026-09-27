@@ -40,6 +40,7 @@
   const newId = CCStore.uid;
   const { paginate, pageForItem } = CCPagination;
   const Q = CCQuestions;
+  const A = window.CCAchievements || null; // the shelf stays hidden if achievements.js is missing
   // the daily question follows this device's date; the local preview can pretend with ?day=YYYY-MM-DD
   const previewDay = store.mode === 'local' ? new URLSearchParams(location.search).get('day') : null;
   const qDay = () => (previewDay && validDay(previewDay) ? previewDay : currentDay());
@@ -398,6 +399,74 @@
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
   }
 
+  // ---------- achievements: earned from what is already in the data; nothing resets, nothing is counted elsewhere ----------
+  const achKey = key => 'achievements:' + key;
+  const mergeKept = (...all) => { const out = {}; for (const k of all) for (const [id, at] of Object.entries(k || {})) if (typeof at === 'number' && !(out[id] <= at)) out[id] = at; return out; };
+  function achState() { // this person's seen list, plus "kept": once earned, never taken back even if the item is deleted
+    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null;
+    return { seen: [...new Set([...(synced?.seen || []), ...(local?.seen || [])])], kept: mergeKept(local?.kept, synced?.kept) };
+  }
+  function saveAchState(st) {
+    const key = achKey(ui.me); ls.set(key, st);
+    const cur = data.meta[key];
+    if (!ui.dataReady || (cur && (cur.seen || []).length === st.seen.length && JSON.stringify(mergeKept(cur.kept)) === JSON.stringify(mergeKept(st.kept)))) return;
+    data.meta = { ...data.meta, [key]: st };
+    run(store.setMeta({ [key]: st }));
+  }
+  let achCache = null, achCacheKey = '';
+  function achievements() {
+    const key = (ui.me || '') + '|' + qDay();
+    if (!A) return [];
+    if (!achCache || achCacheKey !== key) {
+      const kept = mergeKept(achState().kept, ...Object.keys(PEOPLE).map(k => data.meta[achKey(k)]?.kept));
+      achCache = A.evaluate(data, { today: qDay(), kept, Q }); achCacheKey = key;
+    }
+    return achCache;
+  }
+  const unseenAchievements = () => { const seen = new Set(achState().seen); return achievements().filter(a => a.earned && !seen.has(a.id)); };
+  function achTarget(a) { // the moment that earned it, if it is still there
+    const t = a.target; if (!t) return null;
+    if (t.question) return { type: 'question', date: t.question };
+    const item = (data[t.col] || []).find(x => x.id === t.id); if (!item) return null;
+    return { diary: { type: 'entry', id: t.id }, photos: { type: 'photo', id: t.id }, trips: { type: 'item', tab: 'todo', id: t.id }, tasks: { type: 'item', tab: 'todo', id: t.id }, wishes: { type: 'item', tab: 'wishlist', id: t.id }, albums: { type: 'album', id: t.id }, dates: { type: 'date', date: repeatDate(item) }, events: { type: 'date', date: item.date } }[t.col] || null;
+  }
+  function achTile(a, fresh) {
+    const bar = p => { const f = Math.min(10, Math.floor(10 * Math.min(p.n, p.of) / p.of)); return `<span class="cc-ach-bar" role="img" aria-label="${p.n} of ${p.of}"><span aria-hidden="true">${'▮'.repeat(f)}${'▯'.repeat(10 - f)}</span> ${Math.min(p.n, p.of)} / ${p.of}</span>`; };
+    const desc = !a.earned || a.cat !== 'firsts' ? `<small>${esc(a.desc.en)} <span lang="zh-CN">${esc(a.desc.zh)}</span></small>` : '';
+    const when = a.earned && a.at ? `<small class="cc-ach-when">${esc(niceDate(currentDayFor(a.at)))}${achTarget(a) ? ` · <button type="button" class="cc-link" data-ach-go="${esc(a.id)}">See the moment ›</button>` : ''}</small>` : '';
+    return `<article class="cc-ach ${a.earned ? '' : 'cc-ach-locked'}"><span class="cc-ach-glyph" aria-hidden="true">${esc(a.glyph)}</span><div class="cc-ach-text"><div><b>${esc(a.en)}</b> <span lang="zh-CN">${esc(a.zh)}</span>${fresh.has(a.id) ? ' <span class="cc-q-new">NEW</span>' : ''}</div>${desc}${when}${!a.earned && a.progress ? bar(a.progress) : ''}</div></article>`;
+  }
+  function achChip() {
+    const n = achievements().filter(a => a.earned).length, fresh = unseenAchievements().length;
+    return `<button type="button" data-ach-open aria-label="${n} achievement${n === 1 ? '' : 's'}${fresh ? ', some new' : ''}">✦ ${n} achievement${n === 1 ? '' : 's'}${fresh ? '<i class="cc-ach-spark" aria-hidden="true"></i>' : ''}</button>`;
+  }
+  function renderAchievementsDialog() {
+    const dlg = $('[data-ach-dialog]');
+    if (!ui.achOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
+    const list = achievements(), fresh = ui.achFresh || new Set();
+    const earned = list.filter(a => a.earned).sort((a, b) => (b.at || 0) - (a.at || 0));
+    const onTheWay = list.filter(a => !a.earned && a.visible), hidden = list.filter(a => a.cat === 'secret' && !a.earned).length;
+    dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✦ ACHIEVEMENTS · 成就</span><button type="button" class="cc-min" data-ach-close aria-label="Close">×</button></div><div class="cc-body">
+      <p class="cc-small">Little things you have done together. Nothing expires and nothing resets.</p>
+      <h3 class="cc-q-sub">Earned · ${earned.length}</h3><div class="cc-ach-grid">${earned.map(a => achTile(a, fresh)).join('') || '<p class="cc-empty-plan">Nothing yet. They turn up on their own as you use the site.</p>'}</div>
+      ${onTheWay.length ? `<h3 class="cc-q-sub">On the way</h3><div class="cc-ach-grid">${onTheWay.map(a => achTile(a, fresh)).join('')}</div>` : ''}
+      ${hidden ? `<h3 class="cc-q-sub">Hidden · ${hidden}</h3><div class="cc-ach-grid cc-ach-hidden">${Array.from({ length: hidden }, () => '<article class="cc-ach cc-ach-locked" aria-label="Hidden achievement"><span class="cc-ach-glyph" aria-hidden="true">?</span><div class="cc-ach-text"><b>???</b></div></article>').join('')}</div><p class="cc-small">These show up when they happen.</p>` : ''}
+    </div></section>`;
+  }
+  function openAchievements(open) {
+    ui.achOpen = open;
+    if (!open) ui.achFresh = null;
+    if (open && ui.me) { // opening the shelf marks everything seen and keeps what has been earned
+      const st = achState(), earned = achievements().filter(a => a.earned), kept = { ...st.kept };
+      ui.achFresh = new Set(unseenAchievements().map(a => a.id));
+      for (const a of earned) if (typeof a.at === 'number' && !(kept[a.id] <= a.at)) kept[a.id] = a.at;
+      saveAchState({ seen: [...new Set([...st.seen, ...earned.map(a => a.id)])], kept });
+    }
+    render();
+    const dlg = $('[data-ach-dialog]');
+    if (open && !dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+  }
+
   // ---------- todo + wishlist ----------
   function todoSorted() {
     return [...data.trips.map(i => ({ ...i, kind: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity' }))]
@@ -674,11 +743,13 @@
   function closeInbox() { ui.inboxOpen = false; const dlg = $('[data-inbox]'); if (dlg.open) dlg.close(); }
   function goToMessage(key) {
     const m = allMessages().find(x => x.key === key); if (!m) return;
-    markRead([key]); closeInbox();
-    const t = m.target;
+    markRead([key]); closeInbox(); goToTarget(m.target);
+  }
+  function goToTarget(t) { // shared by the inbox and the achievements shelf
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
     else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
+    else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
     else {
       ui.highlight = t.id;
       if (t.type === 'entry') { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), t.id); }
@@ -772,7 +843,7 @@
     $('[data-user-icon]').className = 'cc-user-icon ' + (ui.me || '');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
-    $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
+    $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>${ui.me && A ? achChip() : ''}`;
     const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
     renderTearpad(anniv);
     renderHeroCaption();
@@ -789,7 +860,7 @@
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
@@ -1020,6 +1091,9 @@
     if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
     if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
     if (ds.questionOpen) { openQuestions(true, ds.questionOpen); return; }
+    if (el.hasAttribute('data-ach-open')) { openAchievements(true); return; }
+    if (el.hasAttribute('data-ach-close')) { openAchievements(false); return; }
+    if (ds.achGo) { const a = achievements().find(x => x.id === ds.achGo), t = a && achTarget(a); openAchievements(false); if (t) goToTarget(t); return; }
     if (el.hasAttribute('data-question-close')) { openQuestions(false); return; }
     if (ds.answerEdit) { const mine = answerOf(ds.answerEdit, ui.me); if (mine) { ui.editingAnswer = ds.answerEdit; questionDrafts[ds.answerEdit] = mine.text; render(); $(`[data-question-form="${ds.answerEdit}"] textarea`)?.focus(); } return; }
     if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; ui.editingAnswer = null; render(); return; }
@@ -1117,8 +1191,10 @@
   $('[data-comment-confirm-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $('[data-question-dialog]').addEventListener('close', () => { if (ui.questionOpen) { ui.questionOpen = false; render(); } });
   $('[data-question-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openQuestions(false); });
+  $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } });
+  $('[data-ach-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openAchievements(false); });
   let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
-  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; scheduleRender(); return true; };
+  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; achCache = null; scheduleRender(); return true; };
   setInterval(() => { if (!document.hidden && !checkDay()) renderBadges(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDay(); });
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
@@ -1252,7 +1328,7 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; scheduleRender(); };
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; achCache = null; scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }

@@ -634,3 +634,27 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-q-answers { grid-template-columns: minmax(0, 1fr); }
   #couple-corner .cc-q-form textarea { font-size: 16px; }
 }
+
+/* achievements shelf */
+#couple-corner .cc-ach-modal { width: min(660px, 94vw); }
+#couple-corner .cc-ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+#couple-corner .cc-ach { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; background: hsl(calc(77deg + var(--g-dh)) calc(35% * var(--g-s)) calc(var(--lo) + 92.2% * var(--lk))); border: 2px solid hsl(calc(81deg + var(--g-dh)) calc(21% * var(--g-s)) calc(var(--lo) + 73.3% * var(--lk))); box-shadow: 2px 2px 0 hsl(calc(97deg + var(--g-dh)) calc(22% * var(--g-s)) calc(var(--lo) + 58% * var(--lk))); }
+#couple-corner .cc-ach-glyph { flex: 0 0 34px; height: 34px; display: grid; place-items: center; font-size: 18px; line-height: 1; background: hsl(calc(29deg + var(--a-dh)) calc(83% * var(--a-s)) calc(var(--lo) + 84.1% * var(--lk))); border: 1px solid hsl(calc(30deg + var(--a-dh)) calc(38% * var(--a-s)) calc(var(--lo) + 71.2% * var(--lk))); color: hsl(calc(25deg + var(--a-dh)) calc(29% * var(--a-s)) calc(var(--lo) + 41.6% * var(--lk))); }
+#couple-corner .cc-ach-text { min-width: 0; font-size: 12px; line-height: 1.5; }
+#couple-corner .cc-ach-text b { font-weight: 600; }
+#couple-corner .cc-ach-text small { display: block; margin-top: 2px; font-size: 11px; color: hsl(calc(79deg + var(--g-dh)) calc(10% * var(--g-s)) calc(var(--lo) + 43.1% * var(--lk))); }
+#couple-corner .cc-ach-when .cc-link { font-size: 11px; }
+#couple-corner .cc-ach-locked { background: none; border-style: dashed; box-shadow: none; }
+#couple-corner .cc-ach-locked .cc-ach-glyph { background: none; border-style: dashed; color: hsl(calc(79deg + var(--g-dh)) calc(10% * var(--g-s)) calc(var(--lo) + 43.1% * var(--lk))); }
+#couple-corner .cc-ach-bar { display: block; margin-top: 4px; font-size: 11px; letter-spacing: .5px; color: hsl(calc(25deg + var(--a-dh)) calc(29% * var(--a-s)) calc(var(--lo) + 41.6% * var(--lk))); }
+#couple-corner .cc-ach-hidden { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+#couple-corner .cc-ach-hidden .cc-ach { align-items: center; }
+#couple-corner .cc-ach-spark { display: inline-block; width: 7px; height: 7px; margin-left: 6px; vertical-align: 1px; background: hsl(calc(25deg + var(--a-dh)) calc(71% * var(--a-s)) calc(var(--lo) + 60% * var(--lk))); transform: rotate(45deg); }
+@media (prefers-reduced-motion: no-preference) {
+  #couple-corner .cc-ach-spark { animation: cc-ach-twinkle 1.6s ease-in-out infinite; }
+  @keyframes cc-ach-twinkle { 50% { opacity: .35; transform: rotate(45deg) scale(.7); } }
+}
+@media (max-width: 600px) {
+  #couple-corner .cc-ach-grid { grid-template-columns: minmax(0, 1fr); }
+  #couple-corner .cc-ach-hidden { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
