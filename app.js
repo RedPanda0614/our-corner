@@ -432,7 +432,7 @@
   }
   function achTile(a, fresh) {
     const bar = p => { const f = Math.min(10, Math.floor(10 * Math.min(p.n, p.of) / p.of)); return `<span class="cc-ach-bar" role="img" aria-label="${p.n} of ${p.of}"><span aria-hidden="true">${'▮'.repeat(f)}${'▯'.repeat(10 - f)}</span> ${Math.min(p.n, p.of)} / ${p.of}</span>`; };
-    const desc = !a.earned || a.cat !== 'firsts' ? `<small>${esc(a.desc.en)} <span lang="zh-CN">${esc(a.desc.zh)}</span></small>` : '';
+    const desc = `<small>${esc(a.desc.en)} <span lang="zh-CN">${esc(a.desc.zh)}</span></small>`; // locked firsts come back as a gentle invitation
     const when = a.earned && a.at ? `<small class="cc-ach-when">${esc(niceDate(currentDayFor(a.at)))}${achTarget(a) ? ` · <button type="button" class="cc-link" data-ach-go="${esc(a.id)}">See the moment ›</button>` : ''}</small>` : '';
     return `<article class="cc-ach ${a.earned ? '' : 'cc-ach-locked'}"><span class="cc-ach-glyph" aria-hidden="true">${esc(a.glyph)}</span><div class="cc-ach-text"><div><b>${esc(a.en)}</b> <span lang="zh-CN">${esc(a.zh)}</span>${fresh.has(a.id) ? ' <span class="cc-q-new">NEW</span>' : ''}</div>${desc}${when}${!a.earned && a.progress ? bar(a.progress) : ''}</div></article>`;
   }
