@@ -762,11 +762,24 @@
     lightbox.zoom = Math.max(1, Math.min(4, value));
     applyPhotoZoom();
   }
+  const photoExists = id => data.photos.some(p => p.id === id);
+  function nextInLightbox(direction) { // the nearest photo that way which still exists (the other person may have deleted some)
+    const list = lightbox.list, i = list.indexOf(lightbox.id), n = list.length;
+    for (let k = 1; k < n; k++) { const id = list[(((i + direction * k) % n) + n) % n]; if (photoExists(id)) return id; }
+    return null;
+  }
   function stepPhoto(direction) {
     const i = lightbox.list.indexOf(lightbox.id);
     if (i < 0 || lightbox.list.length < 2) return;
+    const next = nextInLightbox(direction); if (!next) return;
     ui.confirm = null;
-    openPhoto(lightbox.list[(i + direction + lightbox.list.length) % lightbox.list.length], lightbox.list);
+    openPhoto(next, lightbox.list.filter(photoExists));
+  }
+  function keepLightboxOnData() { // the photo on screen was deleted elsewhere: show the next one, or close when none is left
+    if (!lightbox.id || photoExists(lightbox.id)) return;
+    const next = nextInLightbox(1);
+    ui.confirm = null;
+    if (next) openPhoto(next, lightbox.list.filter(photoExists)); else closePhoto();
   }
   async function openPhoto(id, sequence = null) {
     const p = data.photos.find(x => x.id === id); if (!p) return;
@@ -1717,7 +1730,7 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; achCache = null; scheduleRender(); };
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
