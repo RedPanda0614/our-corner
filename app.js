@@ -522,7 +522,7 @@
     const cur = data.meta[key];
     if (!ui.dataReady || (cur && (cur.seen || []).length === st.seen.length && JSON.stringify(mergeKept(cur.kept)) === JSON.stringify(mergeKept(st.kept)))) return;
     data.meta = { ...data.meta, [key]: st };
-    run(store.setMeta({ [key]: st }));
+    run(store.mergeMeta(key, { seen: st.seen }, 'max')); run(store.mergeMeta(key, { kept: st.kept }, 'min')); // union of seen, earliest kept time
   }
   let achCache = null, achCacheKey = '';
   function achievements() {
@@ -1011,7 +1011,7 @@
   const statusClip = (t, n = 12) => { const c = statusChars(String(t).replace(/\s+/g, ' ').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
   // "seen" bookkeeping: always go through these two, so the storage behind them can change
   function statusSeenAt() { return ui.me ? Math.max(+data.meta['statusSeen:' + ui.me] || 0, +ls.get('statusSeen:' + ui.me, 0) || 0) : 0; } // synced per person, local copy for right now
-  function markStatusSeen(at) { if (!ui.me || !(at > statusSeenAt())) return; const key = 'statusSeen:' + ui.me; ls.set(key, at); data.meta = { ...data.meta, [key]: at }; run(store.setMeta({ [key]: at })); }
+  function markStatusSeen(at) { if (!ui.me || !(at > statusSeenAt())) return; const key = 'statusSeen:' + ui.me; ls.set(key, at); data.meta = { ...data.meta, [key]: at }; run(store.mergeMeta(key, at, 'max')); } // merged, so an older device can't lower it
   function statusUnseen() {
     const s = statusOf(partnerKey()); if (!s) return false;
     const seen = statusSeenAt();
@@ -1330,7 +1330,7 @@
     }
     if (el.matches('[data-avatar-file]') && el.files[0]) {
       ui.busy = 'avatar'; render();
-      try { const img = await CCStore.resizeImage(el.files[0], 160, 0.8, true); run(store.setMeta({ avatars: { ...(data.meta.avatars || {}), [ui.me]: img } })); flash('Picture updated.'); }
+      try { const img = await CCStore.resizeImage(el.files[0], 160, 0.8, true); run(store.metaKey('avatars', ui.me, img)); flash('Picture updated.'); }
       catch (err) { flash(err.message); }
       ui.busy = false; render();
     }
@@ -1427,8 +1427,8 @@
     if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
-    if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.setMeta({ kindColors: kc })); render(); return; }
-    if (el.hasAttribute('data-avatar-reset')) { const av = { ...(data.meta.avatars || {}) }; delete av[ui.me]; run(store.setMeta({ avatars: av })); return; }
+    if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.metaKey('kindColors', ui.colorKind, ds.setColor)); render(); return; }
+    if (el.hasAttribute('data-avatar-reset')) { run(store.metaKey('avatars', ui.me, null)); return; }
     if (ds.editDay) { const it = data.dates.find(x => x.id === ds.editDay); if (it) { planner.editingDay = it.id; planner.drafts.dayedit = { title: it.title, kind: it.kind, date: it.date, repeat: !!it.repeat }; render(); } return; }
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
