@@ -1271,6 +1271,7 @@
     answer: id => questionDrafts[id] || null,
     checkin: id => { const c = checkinDrafts[id]; return c && (c.mood || c.text) ? { mood: c.mood, text: c.text } : null; },
     ask: () => (planner.drafts.ask.text ? { text: planner.drafts.ask.text, date: planner.drafts.ask.date || '' } : null),
+    entryedit: () => { const d = planner.drafts.entryedit; return ui.editingEntry ? { id: ui.editingEntry, text: d.text, tags: d.tags, photoIds: d.photoIds } : null; }, // photos picked for it are not kept
     status: () => (statusDraft.dirty ? { emoji: statusDraft.emoji, text: statusDraft.text } : null)
   };
   const obj = v => (v && typeof v === 'object' ? v : {}), str = v => (typeof v === 'string' ? v : '');
@@ -1293,16 +1294,25 @@
     const ask = one('ask'); planner.drafts.ask = { text: str(ask.text), date: str(ask.date) };
     const st = one('status'); Object.assign(statusDraft, { owner: ui.me, emoji: str(st.emoji), text: str(st.text), dirty: !!(st.emoji || st.text) });
     if (diaryDraft.text || diaryDraft.tags) ui.newEntryOpen = true; // an unfinished entry comes back already open
-    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts) }; reopenDraftEdits();
+    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts), entry: one('entryedit') }; reopenDraftEdits();
   }
   let reopenEdits = null;
   function reopenDraftEdits() { // a half-finished edit of an answer or check-in already posted reopens in edit mode, once the data is here
     if (!reopenEdits || !ui.dataReady || !ui.me) return;
-    const { answers, checkins } = reopenEdits; reopenEdits = null;
+    const { answers, checkins, entry } = reopenEdits; reopenEdits = null;
     const a = answers.filter(d => { const m = answerOf(d, ui.me); return m && questionDrafts[d] !== m.text; }).sort().pop();
     if (a) ui.editingAnswer = a;
     const c = checkins.filter(w => { const m = checkinOf(w, ui.me), d = checkinDrafts[w]; return m && d && (d.mood !== (Number(m.mood) || 0) || d.text !== (m.text || '')); }).sort().pop();
     if (c) editingCheckin = c;
+    // and so does a half-finished edit of a diary entry, if it is still there and yours, on the page that has it
+    const e = entryEditToReopen(entry);
+    if (e) { ui.editingEntry = e.id; planner.drafts.entryedit = e.draft; ui.pages.diary = pageForItem(diarySorted(), e.id); } else if (entry.id) dropDraft('entryedit');
+  }
+  function entryEditToReopen(saved) {
+    const en = str(saved.id) && data.diary.find(x => x.id === saved.id); if (!en || en.author !== meName()) return null;
+    const draft = { text: str(saved.text), tags: str(saved.tags), photoIds: Array.isArray(saved.photoIds) ? saved.photoIds.filter(id => typeof id === 'string') : entryPhotoIds(en), pending: [] };
+    const same = draft.text === (en.text || '') && draft.tags === (en.tags || []).join(', ') && draft.photoIds.join() === entryPhotoIds(en).join();
+    return same ? null : { id: en.id, draft };
   }
 
   // ---------- chrome: player card, hero, sync ----------
@@ -1444,7 +1454,7 @@
         await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
         for (const id of current.filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
-        planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
+        planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit');
         ui.pages.diary = 1;
         flash('Saved.');
       } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
@@ -1516,7 +1526,7 @@
     if (el.closest('[data-album-form]') && el.name === 'albumName') ui.albumDraft = el.value;
     if (el.closest('[data-caption-form]')) ui.captionDraft = el.value; // a sync while editing the caption keeps what you typed
     const pf = el.closest('[data-planner-form]');
-    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (pf.dataset.plannerForm === 'ask') keepDraft('ask'); }
+    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (['ask', 'entryedit'].includes(pf.dataset.plannerForm)) keepDraft(pf.dataset.plannerForm); }
     if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) { diaryDraft[el.name] = el.value; keepDraft('diary'); }
     if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); } // the box itself is kept (fill), only the results change
     const cf = el.closest('[data-comment-form]'); if (cf) { commentDrafts[cf.dataset.commentForm] = el.value; keepDraft('reply', cf.dataset.commentForm); }
@@ -1667,10 +1677,10 @@
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; render(); } return; }
-    if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; keepDraft('entryedit'); render(); } return; }
+    if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); keepDraft('entryedit'); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
-    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
+    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit'); render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
     if (el.hasAttribute('data-logout')) { store.signOut(); return; }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
