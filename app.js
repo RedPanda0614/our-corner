@@ -1884,7 +1884,9 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
+  const onChange = (col, items, only) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (only !== 'thumbs' || thumbsWaiting()) scheduleRender(); };
+  // arriving thumbnails are drawn only where one can show: the album page, an open inbox, or a ▧ still waiting on screen
+  const thumbsWaiting = () => ui.page === 'album' || $('[data-inbox]').open || !!root.querySelector('[data-panel]:not([hidden]) .cc-img-wait');
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown

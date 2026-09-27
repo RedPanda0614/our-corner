@@ -101,9 +101,9 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   });
   vm.runInContext(source, context);
   const store = window.CCStore.create(config);
-  const changes = {}, statuses = [], photoTimes = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
-  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, Blob, reloads, get emits() { return emits; },
-    connect: () => store.start((col, items) => { if (col === 'meta') emits++; if (col === 'photos') photoTimes.push(Date.now() + clock.offset); changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
+  const changes = {}, statuses = [], photoTimes = [], photoHints = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
+  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, photoHints, Blob, reloads, get emits() { return emits; },
+    connect: () => store.start((col, items, hint) => { if (col === 'meta') emits++; if (col === 'photos') { photoTimes.push(Date.now() + clock.offset); photoHints.push(hint); } changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
     async flush() { assert.ok(await page.runTimers(700), 'save scheduled'); },
@@ -254,6 +254,7 @@ test('a new device downloads thumbnails four at a time and shows a burst of them
   assert.ok(remote.maxActive <= 4, 'max concurrent ' + remote.maxActive);
   const full = page.emits, sent = page.photoTimes.length; await page.advance(400);
   assert.equal(page.photoTimes.length - sent, 1, 'one update for the burst'); assert.equal(page.emits, full, 'only the photo list is sent again');
+  assert.deepEqual(page.photoHints.slice(-2), [undefined, 'thumbs'], 'marked as thumbnails only, so the page can skip drawing it');
   assert.ok(page.changes.photos.every(p => p.thumb.type === 'image/jpeg'), 'thumbnails come as Blobs');
   assert.equal(page.disk.get('thumb:ph0').type, 'image/jpeg', 'and are kept on the device as Blobs');
 });
