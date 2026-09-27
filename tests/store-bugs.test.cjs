@@ -19,7 +19,7 @@ function server() {
     data: { version: 1, meta: { seeded: true }, collections: { events: [], dates: [], trips: [], tasks: [], wishes: [], diary: [], photos: [] } },
     sha: 1, files: new Map(), fileSeq: 0, log: [], messages: [], offline: false, conflict: null, beforePut: null,
     verify: { status: 200, body: {}, headers: {} }, dataReply: null, lagOnce: null,
-    deleteStatus: [], photoStatus: null, photoDelay: 0, active: 0, maxActive: 0,
+    deleteStatus: [], photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0,
     count(re) { return this.log.filter(l => re.test(l)).length; },
     async fetch(url, options = {}) {
       const file = decodeURIComponent(new URL(url).pathname).split('/contents/')[1];
@@ -44,6 +44,7 @@ function server() {
         this.active++; this.maxActive = Math.max(this.maxActive, this.active);
         await new Promise(r => setTimeout(r, this.photoDelay)); this.active--;
         if (this.photoStatus) return response(this.photoStatus);
+        if (this.photoReply) return response(...this.photoReply);
         if (!cur) return response(404);
         if (raw) return { ...response(200), arrayBuffer: async () => Buffer.from(cur.content, 'base64') };
         return response(200, { sha: cur.sha, content: cur.content });
@@ -52,6 +53,7 @@ function server() {
         await new Promise(resolve => setImmediate(resolve));
         if (this.conflict) { this.conflict(this.data); this.conflict = null; this.sha++; }
         if (this.beforePut) { this.beforePut(); this.beforePut = null; }
+        if (this.putReply) { const reply = this.putReply; this.putReply = null; return response(...reply); }
         const body = JSON.parse(options.body); this.messages.push(body.message);
         if (this.data == null ? !!body.sha : body.sha !== String(this.sha)) return response(409);
         this.data = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')); this.sha++;
@@ -86,7 +88,7 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
     document: { hidden: false, addEventListener: on('doc:') }, navigator: { onLine: true }, Date: FakeDate, Blob, FileReader,
     fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array,
     btoa: s => Buffer.from(s, 'binary').toString('base64'), atob: s => Buffer.from(s, 'base64').toString('binary'),
-    setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id),
+    setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms, at: Date.now() + clock.offset + ms }); return id; }, clearTimeout: id => timers.delete(id),
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return ++timerId; }, clearInterval() {}, console: { ...console, warn: (...a) => warnings.push(a) }
   });
   vm.runInContext(source, context);
@@ -97,6 +99,15 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
     async flush() { assert.ok(await page.runTimers(700), 'save scheduled'); },
+    async advance(ms) { // move the clock on, running each timer that falls due on the way at its own time
+      const end = Date.now() + clock.offset + ms;
+      for (;;) {
+        const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        clock.offset = Math.max(clock.offset, due[1].at - Date.now()); timers.delete(due[0]); await due[1].fn(); await settle();
+      }
+      clock.offset = end - Date.now();
+    },
     fire: (type, ...args) => Promise.all((listeners[type] || []).map(fn => fn(...args)))
   };
   return page;
@@ -257,15 +268,15 @@ test('a rate-limited 403 at startup keeps the saved token', async () => {
   }
 });
 
-test('a rate limit while loading is a sync error, not a bad token; a real 401/403 still signs out', async () => {
+test('a rate limit while loading is a busy status, not a bad token; a real 401/403 still signs out', async () => {
   const remote = server(), page = browser(remote); await page.start();
   remote.dataReply = [403, { message: 'API rate limit exceeded for user.' }, { 'x-ratelimit-remaining': '0' }];
   const again = browser(remote, { disk: page.disk, local: page.local }); await again.connect(); // with a copy on this device
-  assert.equal(again.statuses.at(-1).state, 'error'); assert.notEqual(again.statuses.at(-1).error.code, 'auth');
+  assert.equal(again.statuses.at(-1).state, 'ratelimited'); assert.equal(again.statuses.at(-1).error.code, 'ratelimit');
   const fresh = browser(remote, { local: page.local }); let done = false; // nothing on this device: waits and tries again
   fresh.connect().then(() => { done = true; }, () => { done = 'threw'; });
-  await settle(); assert.equal(done, false); assert.equal(fresh.statuses.at(-1).state, 'error');
-  remote.dataReply = null; await fresh.intervals[0].fn(); await waitFor(() => done === true, 'start after the limit');
+  await settle(); assert.equal(done, false); assert.equal(fresh.statuses.at(-1).state, 'ratelimited');
+  remote.dataReply = null; await fresh.advance(60000); await waitFor(() => done === true, 'start after the limit');
   assert.ok(page.local.has('olc:github'));
   for (const verify of [{ status: 401, body: {}, headers: {} }, { status: 403, body: { message: 'Resource not accessible by personal access token' }, headers: {} }]) {
     remote.verify = verify;
@@ -273,6 +284,84 @@ test('a rate limit while loading is a sync error, not a bad token; a real 401/40
     const [user, err] = await new Promise(res => browser(remote, { local }).store.onAuth((...a) => res(a)));
     assert.equal(user, null); assert.equal(err.code, 'auth'); assert.equal(local.has('olc:github'), false);
   }
+});
+
+// ---------- #9 follow-up: a friendly wait instead of retrying every 20 s ----------
+test('a rate limit shows "GitHub is busy" with the minutes left and pauses polling until then, even when back online or in the tab', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.dataReply = [403, { message: 'You have exceeded a secondary rate limit.' }, { 'retry-after': '150' }];
+  await page.intervals[0].fn();
+  const busy = page.statuses.at(-1);
+  assert.equal(busy.state, 'ratelimited'); assert.equal(busy.error.message, 'GitHub is busy, trying again in 3 min.');
+  assert.ok(Math.abs(busy.error.until - (Date.now() + 150000)) < 1000);
+  remote.dataReply = null;
+  const sent = remote.log.length;
+  await page.intervals[0].fn(); await page.fire('online'); await page.fire('doc:visibilitychange'); await settle();
+  await page.advance(20000); await page.intervals[0].fn(); // a poll 20 s later still waits
+  assert.equal(remote.log.length, sent, 'no requests while GitHub is busy');
+  await page.advance(15000); // the countdown ticks each minute (at 30 s and 90 s here)
+  assert.equal(page.statuses.at(-1).error.message, 'GitHub is busy, trying again in 2 min.');
+  await page.advance(60000);
+  assert.equal(page.statuses.at(-1).error.message, 'GitHub is busy, trying again in 1 min.');
+  assert.equal(remote.log.length, sent);
+  await page.advance(60000); // the wait is over at 150 s: sync resumes by itself
+  assert.equal(remote.log.at(-1), 'GET data.json'); assert.equal(page.statuses.at(-1).state, 'synced');
+});
+
+test('the wait uses x-ratelimit-reset when no requests are left, a minute otherwise, and any 429 counts', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.dataReply = [403, { message: 'API rate limit exceeded for user.' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) }];
+  await page.intervals[0].fn();
+  assert.equal(page.statuses.at(-1).error.message, 'GitHub is busy, trying again in 10 min.');
+  const other = browser(remote, { local: page.local, disk: new Map(page.disk) }); remote.dataReply = [429, {}];
+  await other.connect();
+  assert.equal(other.statuses.at(-1).state, 'ratelimited'); assert.equal(other.statuses.at(-1).error.message, 'GitHub is busy, trying again in 1 min.');
+  // a secondary limit: the hourly reset time doesn't apply while requests are left, so wait a minute
+  const third = browser(remote, { local: page.local, disk: new Map(page.disk) });
+  remote.dataReply = [403, { message: 'You have exceeded a secondary rate limit.' }, { 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3000) }];
+  await third.connect();
+  assert.equal(third.statuses.at(-1).error.message, 'GitHub is busy, trying again in 1 min.');
+});
+
+test('a rate-limited save keeps the changes, never says the token cannot write, and saves after the wait', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.set('tasks', { id: 'kept', title: 'x' });
+  remote.putReply = [403, { message: 'You have exceeded a secondary rate limit.' }, {}];
+  await page.flush();
+  assert.ok(page.statuses.every(x => !/Token cannot write/.test(x.error?.message || '')));
+  assert.equal(page.statuses.at(-1).state, 'ratelimited'); assert.equal(page.statuses.at(-1).error.message, 'GitHub is busy, trying again in 1 min.');
+  assert.equal(page.store.pending(), true); assert.deepEqual(remote.data.collections.tasks, []);
+  await page.store.set('tasks', { id: 'during', title: 'y' }); // a change made while waiting stays queued too
+  assert.equal(page.statuses.at(-1).state, 'ratelimited');
+  assert.ok([...page.timers.values()].every(t => t.ms !== 700), 'no save before the wait is over');
+  await page.advance(61000);
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['kept', 'during']);
+  assert.equal(page.store.pending(), false); assert.equal(page.statuses.at(-1).state, 'synced');
+});
+
+test('logging in while GitHub is busy says to try again in N minutes and keeps nothing', async () => {
+  const remote = server(); remote.verify = { status: 429, body: {}, headers: { 'retry-after': '120' } };
+  const page = browser(remote);
+  await assert.rejects(page.store.signIn('fake-test-credential', '斯婕'), { message: 'GitHub is busy, try again in 2 min.' });
+  assert.equal(page.local.has('olc:github'), false);
+  const sent = remote.log.length; remote.verify = { status: 200, body: {}, headers: {} };
+  await assert.rejects(page.store.signIn('fake-test-credential', '斯婕'), /GitHub is busy, try again in \d min\./); // not sent again yet
+  assert.equal(remote.log.length, sent);
+  await page.advance(120000);
+  await page.store.signIn('fake-test-credential', '斯婕'); assert.ok(page.local.has('olc:github'));
+});
+
+test('thumbnails skipped while GitHub is busy load after the wait, without counting as failures', async () => {
+  const remote = server();
+  remote.data.collections.photos = Array.from({ length: 8 }, (_, i) => ({ id: 'ph' + i, thumb: '' }));
+  for (let i = 0; i < 8; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
+  remote.photoReply = [403, { message: 'You have exceeded a secondary rate limit.' }, { 'retry-after': '60' }];
+  const page = browser(remote); await page.start();
+  await waitFor(() => remote.active === 0 && remote.count(/-thumb/) >= 1, 'first tries'); await settle();
+  const tries = remote.count(/-thumb/); assert.ok(tries <= 4, 'stopped after the first answers: ' + tries);
+  remote.photoReply = null;
+  await page.advance(60000); await waitFor(() => remote.count(/-thumb/) === tries + 8 && remote.active === 0, 'after the wait'); await settle(); await page.runTimers(50);
+  assert.ok(page.changes.photos.every(p => p.thumb));
 });
 
 // ---------- #10 first start fails ----------

@@ -28,7 +28,7 @@ body { padding: 0; min-height: 100vh; }
 /* top bar + sync chip */
 #couple-corner .cc-sync { font: 11px/1.3 var(--cc-pixel); letter-spacing: 1px; padding: 3px 7px; background: hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk)) / 0.20); border: 1px solid hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk)) / 0.40); }
 #couple-corner .cc-sync[data-state=local] { background: hsl(calc(26deg + var(--a-dh)) calc(84% * var(--a-s)) calc(var(--lo) + 82.4% * var(--lk))); color: hsl(calc(23deg + var(--a-dh)) calc(47% * var(--a-s)) calc(var(--lo) + 32.5% * var(--lk))); border-color: hsl(calc(34deg + var(--a-dh)) calc(100% * var(--a-s)) calc(var(--lo) + 95.1% * var(--lk))); }
-#couple-corner .cc-sync[data-state=offline], #couple-corner .cc-sync[data-state=error] { background: hsl(calc(25deg + var(--a-dh)) calc(74% * var(--a-s)) calc(var(--lo) + 83.1% * var(--lk))); color: hsl(calc(17deg + var(--a-dh)) calc(61% * var(--a-s)) calc(var(--lo) + 33.9% * var(--lk))); }
+#couple-corner .cc-sync[data-state=offline], #couple-corner .cc-sync[data-state=error], #couple-corner .cc-sync[data-state=ratelimited] { background: hsl(calc(25deg + var(--a-dh)) calc(74% * var(--a-s)) calc(var(--lo) + 83.1% * var(--lk))); color: hsl(calc(17deg + var(--a-dh)) calc(61% * var(--a-s)) calc(var(--lo) + 33.9% * var(--lk))); }
 
 /* browser strip buttons */
 #couple-corner .cc-nav-buttons { display: flex; gap: 4px; }
