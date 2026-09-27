@@ -30,11 +30,14 @@
   const validDay = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso) && Number.isFinite(+utcDay(iso)) && dayISO(utcDay(iso)) === iso;
   const shiftDay = (iso, n) => { const d = utcDay(iso); d.setUTCDate(d.getUTCDate() + n); return dayISO(d); };
   const shiftMonth = (ym, n) => { const d = utcDay(ym + '-01'); d.setUTCMonth(d.getUTCMonth() + n); return dayISO(d).slice(0, 7); };
-  const niceDate = (iso, o = { month: 'short', day: 'numeric', year: 'numeric' }) => new Intl.DateTimeFormat('en-US', { ...o, timeZone: 'UTC' }).format(utcDay(iso));
+  // a date format is slow to build, so each one is built once (per time zone, for local times: the device may travel)
+  const formats = new Map();
+  const dateFormat = o => { const k = JSON.stringify(o) + (o.timeZone ? '' : new Date().getTimezoneOffset()); let f = formats.get(k); if (!f) formats.set(k, f = new Intl.DateTimeFormat('en-US', o)); return f; };
+  const niceDate = (iso, o = { month: 'short', day: 'numeric', year: 'numeric' }) => dateFormat({ ...o, timeZone: 'UTC' }).format(utcDay(iso));
   const timestamp = (ms, fallbackDate = '') => {
     const value = Number(ms);
     if (!Number.isFinite(value) || value <= 0) return fallbackDate ? niceDate(fallbackDate) : '';
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(value).map(p => [p.type, p.value]));
+    const parts = Object.fromEntries(dateFormat({ year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(value).map(p => [p.type, p.value]));
     return `${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute}`;
   };
   const weekStart = iso => shiftDay(iso, -((utcDay(iso).getUTCDay() + 6) % 7));
@@ -214,13 +217,28 @@
   }
 
   // ---------- calendar ----------
+  // what is on each day, sorted out once per change of the data instead of once per day drawn (a year asks 365 times);
+  // the store hands over new lists whenever something changes. One-day plans are looked up by date, longer ones checked
+  let dayIndex = null;
   function dayEvents(iso) {
-    return [
-      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
+    const src = [data.events, data.trips, data.tasks, data.dates];
+    if (!dayIndex || src.some((s, i) => s !== dayIndex.src[i])) {
+      const one = new Map(), spans = [], tasks = new Map(), put = (m, k, v) => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
+      data.events.forEach((e, i) => { if (typeof e.date === 'string' && (!e.endDate || e.endDate === e.date)) put(one, e.date, i); else spans.push(i); });
+      data.tasks.forEach(e => put(tasks, e.date, e));
+      dayIndex = { src, one, spans, tasks, days: new Map() };
+    }
+    if (dayIndex.days.has(iso)) return dayIndex.days.get(iso);
+    const long = dayIndex.spans.filter(i => { const e = data.events[i]; return e.date <= iso && (e.endDate || e.date) >= iso; });
+    const events = long.length ? [...(dayIndex.one.get(iso) || []), ...long].sort((a, b) => a - b) : dayIndex.one.get(iso) || []; // in list order, as before
+    const list = [
+      ...events.map(i => data.events[i]).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
-      ...data.tasks.filter(e => e.date === iso).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
+      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
       ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
+    dayIndex.days.set(iso, list);
+    return list;
   }
   function calendarTitle() {
     if (planner.view === 'year') return String(planner.year);
@@ -494,9 +512,9 @@
   }
   const checkinArticle = week => `<article class="cc-q-day cc-ck-day ${ui.highlight === 'wk:' + week ? 'cc-highlight' : ''}" id="qweek-${week}"><div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week, true))}</span></div>${questionHtml(checkinPromptFor(week))}${checkinBlock(week)}</article>`;
   function checkinMessages(add, edited) { // for allMessages: nothing about their week shows before you check in for it
-    const current = thisWeek();
+    const current = thisWeek(), me = meName();
     for (const c of data.checkins) {
-      if (!validDay(c.week || '')) continue;
+      if (!validDay(c.week || '') || (c.author === me && (!c.updatedBy || c.updatedBy === me))) continue;
       const open = !!checkinOf(c.week, ui.me), target = { type: 'checkin', week: c.week };
       const which = c.week === current ? 'for the week' : `for the week of ${niceDate(c.week, { month: 'short', day: 'numeric' })}`;
       const said = [moodOf(c.mood)?.glyph, clip(c.text)].filter(Boolean).join(' ');
@@ -831,7 +849,15 @@
     return sec < 7 * 86400 ? Math.floor(sec / 86400) + 'd ago' : new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
   const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+  // every render asks (the badges), so the list is only rebuilt when what it is made from changes;
+  // the store hands over new lists whenever something changes
+  let messages = null;
   function allMessages() {
+    const deps = [ui.me, qDay(), today, data.events, data.dates, data.tasks, data.trips, data.wishes, data.diary, data.photos, data.albums, data.answers, data.checkins, data.questions];
+    if (!messages || deps.some((d, i) => d !== messages.deps[i])) messages = { deps, list: buildMessages() };
+    return messages.list;
+  }
+  function buildMessages() {
     const me = meName(), out = [];
     const add = (tab, key, who, at, text, target) => { if (who && who !== me && at) out.push({ tab, key, who, at, text, target }); };
     const edited = x => x.updatedBy && x.updatedAt && x.updatedAt - (x.createdAt || 0) > 2000;
@@ -871,8 +897,9 @@
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
     for (const a of data.answers) {
+      if (!validDay(a.date || '') || (a.author === me && (!a.updatedBy || a.updatedBy === me))) continue; // nothing to tell you about your own answers
       const open = answered.has(a.date), target = { type: 'question', date: a.date }; // no spoilers before you answer
-      add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
+      if (a.author !== me) add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
       if (open && edited(a)) add('home', `qa-u:${a.id}:${a.updatedAt}`, a.updatedBy, a.updatedAt, `edited their answer · ${clip(a.text)}`, target);
     }
     checkinMessages(add, edited);
@@ -944,7 +971,7 @@
     const unread = unreadMessages();
     ui.inboxFresh = new Set(unread.map(m => m.key)); ui.inboxFilter = filter || 'all'; ui.inboxOpen = true;
     markRead(unread.filter(m => ui.inboxFilter === 'all' || m.tab === ui.inboxFilter).map(m => m.key));
-    renderInbox(); renderBadges();
+    renderBadges(); // draws the inbox too, now that it is open
     const dlg = $('[data-inbox]'); if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
   }
   function closeInbox() { ui.inboxOpen = false; const dlg = $('[data-inbox]'); if (dlg.open) dlg.close(); }
