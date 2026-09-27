@@ -1,4 +1,5 @@
-// Store fixes, checked against a fake GitHub (never api.github.com).
+// Store fixes, checked against a fake GitHub (never api.github.com): photo deletes, meta merges, thumbnails,
+// rate limits, first start, device storage, a repo without data.json, lagging reads.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -108,6 +109,61 @@ async function addPhotos(page, entryId, ids) {
 // app.js entry delete handler, unchanged: photo records one by one, then the entry
 async function deleteEntry(page, id) { const entry = page.changes.diary.find(x => x.id === id); for (const pid of entry.photoIds) await page.store.remove('photos', pid); await page.store.remove('diary', id); }
 
+// ---------- #4 entry delete offline / after a failed file delete ----------
+test('deleting a diary entry offline removes it right away and deletes the photo files once back online', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await addPhotos(page, 'e1', ['p1', 'p2']);
+  assert.equal(remote.files.size, 4);
+  remote.offline = true;
+  await deleteEntry(page, 'e1'); // used to throw "Failed to fetch" after removing one photo record
+  assert.deepEqual(page.changes.diary, []); assert.deepEqual(page.changes.photos, []);
+  assert.equal(page.store.pending(), true);
+  await page.flush(); // offline: nothing saved, nothing lost
+  // reopen the app later, online: the queued removal saves first, then the files go
+  remote.offline = false;
+  const reopened = browser(remote, { disk: page.disk, local: page.local }); await reopened.start(); await reopened.flush();
+  assert.deepEqual(remote.data.collections.diary, []); assert.deepEqual(remote.data.collections.photos, []);
+  assert.equal(remote.files.size, 0);
+  assert.deepEqual(reopened.disk.get('github-state:test/private-data:main').files, []);
+});
+
+test('a photo file delete that fails is retried later and never blocks the entry removal', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await addPhotos(page, 'e1', ['p1', 'p2']);
+  remote.deleteStatus = [409, 409];
+  await deleteEntry(page, 'e1');
+  const order = remote.log.length;
+  await page.flush();
+  assert.deepEqual(remote.data.collections.diary, []); // saved even though a file delete failed
+  assert.ok(remote.log.slice(order).findIndex(l => l === 'PUT data.json') < remote.log.slice(order).findIndex(l => l.startsWith('DELETE')), 'data saved before files deleted');
+  assert.equal(remote.files.size, 4);
+  assert.equal(page.statuses.at(-1).state, 'synced');
+  assert.ok(await page.runTimers(20000), 'retry scheduled'); await settle();
+  assert.equal(remote.files.size, 0);
+});
+
+// ---------- #27 photo delete without downloading the photo ----------
+test('deleting a photo uses the file shas saved at upload and downloads nothing', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await addPhotos(page, 'e1', ['p1']);
+  assert.deepEqual(remote.data.collections.photos[0].shas, { full: remote.files.get('photos/p1.jpg').sha, thumb: remote.files.get('photos/p1-thumb.jpg').sha });
+  const order = remote.log.length;
+  await page.store.remove('photos', 'p1'); await page.flush();
+  assert.deepEqual(remote.log.slice(order).filter(l => l.startsWith('GET')), []);
+  assert.equal(remote.files.size, 0);
+});
+
+test('older photo records without shas use one directory listing instead of reading each file', async () => {
+  const remote = server();
+  for (const id of ['old1', 'old2']) { remote.files.set(`photos/${id}.jpg`, { content: 'YQ==', sha: id + '-full' }); remote.files.set(`photos/${id}-thumb.jpg`, { content: 'YQ==', sha: id + '-thumb' }); }
+  remote.data.collections.photos = [{ id: 'old1', thumb: '' }, { id: 'old2', thumb: '' }];
+  const page = browser(remote); await page.start(); await settle();
+  const order = remote.log.length;
+  await page.store.remove('photos', 'old1'); await page.store.remove('photos', 'old2'); await page.flush();
+  assert.deepEqual(remote.log.slice(order).filter(l => l.startsWith('GET') && !l.endsWith(' raw')), ['GET photos']);
+  assert.equal(remote.files.size, 0);
+});
+
 // ---------- #6 per-person meta entries ----------
 test('avatar and colour changes made at the same time on both phones both survive', async () => {
   const remote = server(), a = browser(remote), b = browser(remote);
@@ -157,4 +213,156 @@ test('metaKey and mergeMeta also work in local mode', async () => {
   await page.store.metaKey('avatars', 'sijie', 'data:A'); await page.store.mergeMeta('statusSeen:sijie', 5); await page.store.mergeMeta('statusSeen:sijie', 3);
   assert.deepEqual(page.disk.get('data').meta.avatars, { sijie: 'data:A' });
   assert.equal(page.changes.meta['statusSeen:sijie'], 5);
+});
+
+// ---------- #8 thumbnails ----------
+test('a new device downloads thumbnails four at a time and redraws once per burst', async () => {
+  const remote = server(); remote.photoDelay = 2;
+  remote.data.collections.photos = Array.from({ length: 30 }, (_, i) => ({ id: 'ph' + i, thumb: '' }));
+  for (let i = 0; i < 30; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
+  const page = browser(remote); await page.start();
+  await waitFor(() => remote.count(/-thumb\.jpg raw$/) === 30 && remote.active === 0, 'thumbs');
+  await settle();
+  assert.ok(remote.maxActive <= 4, 'max concurrent ' + remote.maxActive);
+  const before = page.emits, runs = await page.runTimers(50);
+  assert.equal(page.emits - before, runs); assert.ok(runs <= 2, 'emits ' + runs);
+  assert.ok(page.changes.photos.every(p => p.thumb.startsWith('data:image/jpeg;base64,')));
+});
+
+test('failed thumbnails wait before trying again instead of being requested on every change', async () => {
+  const remote = server(); remote.photoStatus = 403;
+  remote.data.collections.photos = Array.from({ length: 10 }, (_, i) => ({ id: 'ph' + i, thumb: '' }));
+  const page = browser(remote); await page.start();
+  await waitFor(() => remote.count(/-thumb/) === 10 && remote.active === 0, 'first tries'); await settle();
+  for (let i = 0; i < 5; i++) await page.store.set('tasks', { id: 't' + i, title: 'x' });
+  await settle();
+  assert.equal(remote.count(/-thumb/), 10);
+  remote.photoStatus = null; for (let i = 0; i < 10; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
+  page.clock.offset = 16000; await page.intervals[0].fn(); // next poll after the wait
+  await waitFor(() => remote.count(/-thumb/) === 20 && remote.active === 0, 'retry'); await settle(); await page.runTimers(50);
+  assert.ok(page.changes.photos.every(p => p.thumb));
+});
+
+// ---------- #9 rate limits ----------
+test('a rate-limited 403 at startup keeps the saved token', async () => {
+  for (const verify of [{ status: 403, body: { message: 'API rate limit exceeded' }, headers: { 'x-ratelimit-remaining': '0' } },
+    { status: 403, body: { message: 'You have exceeded a secondary rate limit.' }, headers: {} },
+    { status: 403, body: {}, headers: { 'retry-after': '60' } }]) {
+    const remote = server(); remote.verify = verify;
+    const local = new Map([['olc:github', JSON.stringify({ token: 'saved', name: '斯婕' })]]);
+    const page = browser(remote, { local });
+    const [user, err] = await new Promise(res => page.store.onAuth((...a) => res(a)));
+    assert.deepEqual({ ...user }, { name: '斯婕' }); assert.equal(err, undefined);
+    assert.ok(local.has('olc:github'));
+  }
+});
+
+test('a rate limit while loading is a sync error, not a bad token; a real 401/403 still signs out', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.dataReply = [403, { message: 'API rate limit exceeded for user.' }, { 'x-ratelimit-remaining': '0' }];
+  const again = browser(remote, { disk: page.disk, local: page.local }); await again.connect(); // with a copy on this device
+  assert.equal(again.statuses.at(-1).state, 'error'); assert.notEqual(again.statuses.at(-1).error.code, 'auth');
+  const fresh = browser(remote, { local: page.local }); let done = false; // nothing on this device: waits and tries again
+  fresh.connect().then(() => { done = true; }, () => { done = 'threw'; });
+  await settle(); assert.equal(done, false); assert.equal(fresh.statuses.at(-1).state, 'error');
+  remote.dataReply = null; await fresh.intervals[0].fn(); await waitFor(() => done === true, 'start after the limit');
+  assert.ok(page.local.has('olc:github'));
+  for (const verify of [{ status: 401, body: {}, headers: {} }, { status: 403, body: { message: 'Resource not accessible by personal access token' }, headers: {} }]) {
+    remote.verify = verify;
+    const local = new Map([['olc:github', JSON.stringify({ token: 'bad', name: '斯婕' })]]);
+    const [user, err] = await new Promise(res => browser(remote, { local }).store.onAuth((...a) => res(a)));
+    assert.equal(user, null); assert.equal(err.code, 'auth'); assert.equal(local.has('olc:github'), false);
+  }
+});
+
+// ---------- #10 first start fails ----------
+test('when the very first start fails it keeps retrying and loads once the connection is back', async () => {
+  const remote = server(); remote.data.collections.tasks = [{ id: 'saved', title: 'x' }];
+  const page = browser(remote); await page.store.signIn('fake-test-credential', '斯婕');
+  remote.offline = true;
+  let done = false; const starting = page.connect().then(() => { done = true; });
+  await settle();
+  assert.equal(done, false); assert.equal(page.statuses.at(-1).state, 'error');
+  assert.equal(page.intervals.length, 1); assert.ok(page.listeners.online && page.listeners['doc:visibilitychange']);
+  await page.intervals[0].fn(); await settle(); // still offline: keeps waiting
+  assert.equal(done, false);
+  remote.offline = false; await page.fire('online'); await starting;
+  assert.deepEqual(page.changes.tasks.map(t => t.id), ['saved']); assert.equal(page.statuses.at(-1).state, 'synced');
+  assert.equal(page.intervals.length, 1);
+});
+
+test('a first start that fails because of the token still reports it to sign in again', async () => {
+  const remote = server(), page = browser(remote); await page.store.signIn('fake-test-credential', '斯婕');
+  remote.dataReply = [401, {}];
+  await assert.rejects(page.connect(), e => e.code === 'auth');
+});
+
+// ---------- #12 device storage full ----------
+test('a full device storage does not stop the app, hide changes or fail a photo post', async () => {
+  const remote = server(), page = browser(remote, { quota: () => true });
+  await page.start(); // used to throw QuotaExceededError
+  await page.store.set('tasks', { id: 'q1', title: 'x' });
+  assert.ok(page.changes.tasks.some(t => t.id === 'q1'));
+  await page.flush(); assert.ok(remote.data.collections.tasks.some(t => t.id === 'q1'));
+  await page.store.putFull('ph', IMG); await page.store.set('photos', { id: 'ph', thumb: IMG }); await page.flush();
+  assert.equal(remote.files.size, 2); assert.equal(remote.data.collections.photos[0].id, 'ph');
+  assert.equal(page.warnings.length, 1);
+});
+
+test('when storage fills up, the oldest cached full photos make room first', async () => {
+  const remote = server();
+  remote.data.collections.photos = [{ id: 'legacy', thumb: '' }];
+  const disk = new Map([['full:legacy', IMG]]); // cached by an older version, untracked
+  const fulls = d => [...d.keys()].filter(k => k.startsWith('full:')).sort();
+  const page = browser(remote, { disk, quota: (key, v, d) => key.startsWith('full:') && fulls(d).length >= 4 });
+  await page.start();
+  for (const id of ['p1', 'p2', 'p3']) await page.store.putFull(id, IMG);
+  await page.store.putFull('p4', IMG); // full: legacy is dropped, then p1 and p2 (oldest), p3 stays
+  assert.deepEqual(fulls(disk), ['full:p3', 'full:p4']);
+  assert.equal(page.warnings.length, 0);
+});
+
+// ---------- #21 repo without data.json ----------
+test('a data repo without data.json starts empty and the first save creates it', async () => {
+  const remote = server(); remote.data = null;
+  const page = browser(remote); await page.start();
+  assert.deepEqual(page.changes.tasks, []); assert.equal(page.statuses.at(-1).state, 'synced');
+  assert.equal(await page.store.isSeeded(), false);
+  await page.store.set('tasks', { id: 't1', title: 'first' }); await page.flush();
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1']);
+  assert.equal(page.store.pending(), false);
+});
+
+test('data.json disappearing after it was loaded is still reported as an error', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.data = null; await page.intervals[0].fn();
+  assert.equal(page.statuses.at(-1).state, 'error');
+  assert.ok(page.changes.meta.seeded);
+});
+
+// ---------- #23 lagging read after our own save ----------
+test('a lagging copy served right after our own save does not hide the change', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  const old = { sha: String(remote.sha), content: b64(remote.data) };
+  await page.store.set('tasks', { id: 'mine', title: 'x' }); await page.flush();
+  remote.lagOnce = old; await page.intervals[0].fn();
+  assert.ok(page.changes.tasks.some(t => t.id === 'mine'));
+  // a real later change from the other phone still shows up
+  remote.data.collections.tasks.push({ id: 'theirs', title: 'y' }); remote.sha++;
+  await page.intervals[0].fn();
+  assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs']);
+  // long after the save the old content is accepted again (e.g. the other phone undid everything)
+  remote.lagOnce = old; page.clock.offset = 31000; await page.intervals[0].fn();
+  assert.deepEqual(page.changes.tasks, []);
+});
+
+test('a save conflict still reloads whatever GitHub has, even the content from before our own save', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  const before = clone(remote.data);
+  await page.store.set('tasks', { id: 'one', title: 'x' }); await page.flush();
+  // the other phone removes 'one' again: same content as before our save, so GitHub gives it the old sha
+  remote.beforePut = () => { remote.data = clone(before); remote.sha = 1; };
+  await page.store.set('tasks', { id: 'two', title: 'x' }); await page.flush();
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
+  assert.equal(page.store.pending(), false);
 });
