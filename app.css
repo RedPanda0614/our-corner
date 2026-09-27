@@ -201,7 +201,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-wishlist-grid .cc-wish-note.cc-plan-card:nth-child(even) {
   display: flex; flex-direction: column; aspect-ratio: var(--note-ratio); min-height: 0;
   padding: var(--note-top) 13% 11%; overflow: hidden; border: 0; box-shadow: none;
-  background-color: transparent; background-image: url('assets/wishlist-notes-sprite.avif');
+  background-color: transparent; background-image: url('assets/wishlist-notes-sprite.webp');
   background-size: var(--note-size) auto; background-position: var(--note-x) var(--note-y); background-repeat: no-repeat;
   --note-font: var(--cc-font-readable);
   color: #244659; font-family: var(--note-font);
