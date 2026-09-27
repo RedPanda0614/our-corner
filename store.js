@@ -37,6 +37,25 @@
 
   // ---------- operations (shared by both modes, so GitHub conflicts can be replayed) ----------
   function emptyData() { const d = { version: 1, meta: {}, collections: {} }; COLLECTIONS.forEach(c => d.collections[c] = []); return d; }
+  // mergeMeta rules: arrays -> union (order kept, no duplicates); numbers -> max (or min when num is 'min');
+  // plain objects -> merged key by key; anything else or a type mismatch -> the new value; null/undefined -> keep what's there
+  const isPlain = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  function mergeValue(cur, val, num) {
+    if (val == null) return cur;
+    if (Array.isArray(val)) {
+      if (!Array.isArray(cur)) return val;
+      const seen = new Set(), out = [];
+      for (const x of [...cur, ...val]) { const k = JSON.stringify(x); if (!seen.has(k)) { seen.add(k); out.push(x); } }
+      return out;
+    }
+    if (typeof val === 'number') return typeof cur === 'number' ? (num === 'min' ? Math.min(cur, val) : Math.max(cur, val)) : val;
+    if (isPlain(val)) {
+      const out = isPlain(cur) ? { ...cur } : {};
+      for (const [k, v] of Object.entries(val)) { const m = mergeValue(out[k], v, num); if (m === undefined) delete out[k]; else out[k] = m; }
+      return out;
+    }
+    return val;
+  }
   function applyOp(data, op) {
     if (op.type === 'meta') { data.meta = { ...data.meta, ...op.patch }; return data; }
     if (op.type === 'inboxRead') {
@@ -48,6 +67,18 @@
         if (item && typeof item.key === 'string' && Number(item.at) > since) items.set(item.key, { key: item.key, at: Number(item.at) });
       }
       data.meta = { ...data.meta, inboxReads: { ...reads, [op.who]: { since, read: [...items.values()] } } };
+      return data;
+    }
+    // one entry inside a shared meta object (avatars.sijie, kindColors.trip): replaying it after a conflict keeps the other entries; null removes it
+    if (op.type === 'metaKey') {
+      const cur = data.meta?.[op.key], next = cur && typeof cur === 'object' && !Array.isArray(cur) ? { ...cur } : {};
+      if (op.value == null) delete next[op.sub]; else next[op.sub] = op.value;
+      data.meta = { ...data.meta, [op.key]: next };
+      return data;
+    }
+    if (op.type === 'mergeMeta') { // two devices' copies combine instead of the later one winning (see mergeValue)
+      const merged = mergeValue(data.meta?.[op.key], op.value, op.num);
+      if (merged !== undefined) data.meta = { ...data.meta, [op.key]: merged };
       return data;
     }
     const list = data.collections[op.col] || (data.collections[op.col] = []);
@@ -86,6 +117,8 @@
       async isSeeded() { await load(); return !!data.meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
+      mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       set: (col, item) => op({ type: 'set', col, id: item.id, item }),
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
@@ -199,7 +232,7 @@
     }
     function describe(ops) {
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', inboxRead: 'read messages' }[o.type] || 'update';
+      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
       return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
     function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
@@ -273,6 +306,8 @@
       async isSeeded() { if (!started) await pull(); return !!view().meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
+      mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       async set(col, item) {
         if (col === 'photos' && item.thumb && item.thumb.startsWith('data:')) {
