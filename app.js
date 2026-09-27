@@ -40,7 +40,24 @@
   const weekStart = iso => shiftDay(iso, -((utcDay(iso).getUTCDay() + 6) % 7));
   const daysBetween = (a, b) => Math.round((utcDay(b) - utcDay(a)) / 86400000);
   const countdown = d => { const n = daysBetween(today, d); return n === 0 ? 'Today!' : n > 0 ? `In ${n} day${n === 1 ? '' : 's'}` : `${-n} day${n === -1 ? '' : 's'} ago`; };
-  const repeatDate = item => { if (!item.repeat) return item.date; const start = Math.max(+today.slice(0, 4), +item.date.slice(0, 4)); for (let y = start; y < start + 9; y++) { const d = `${y}-${item.date.slice(5)}`; if (validDay(d) && d >= today) return d; } return item.date; };
+  // ---------- pure helpers (tests/app-helpers.test.cjs runs this block on its own, so nothing in it may use page state) ----------
+  // Synced data can come from another device, so a picture from it only goes into src="…" or url("…") if it is a
+  // base64 PNG/JPEG/GIF/WebP data URL (or, where allowBlob, a blob: URL this page made); anything else becomes ''.
+  // What passes holds no quotes, brackets, spaces or backslashes.
+  const safeImage = (url, allowBlob = true) => {
+    if (typeof url !== 'string') return '';
+    const head = /^data:image\/(?:png|jpeg|gif|webp);base64,/.exec(url);
+    if (head) { const bad = /[^A-Za-z0-9+/=]/g; bad.lastIndex = head[0].length; return url.length > head[0].length && !bad.test(url) ? url : ''; }
+    return allowBlob && /^blob:https?:\/\/[\w.:[\]-]+\/[\w-]+$/.test(url) ? url : '';
+  };
+  const safeColor = c => (typeof c === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : ''); // colours go into style values
+  const isLeapYear = y => y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  // where a yearly date (YYYY-MM-DD) falls in a given year: Feb 29 is kept on Mar 1 in years without one
+  const yearlyDay = (date, year) => (date.slice(5) === '02-29' && !isLeapYear(year) ? `${year}-03-01` : `${year}-${date.slice(5)}`);
+  // the next time a valid yearly date comes round, on or after `from`
+  const nextYearly = (date, from) => { const y0 = Math.max(+from.slice(0, 4), +date.slice(0, 4)); for (let y = y0; y < y0 + 9; y++) { const d = yearlyDay(date, y); if (d >= from) return d; } return date; };
+  // ---------- end pure helpers ----------
+  const repeatDate = item => (item.repeat && validDay(item.date || '') ? nextYearly(item.date, today) : item.date);
   const kindLabel = k => ({ plan: 'PLAN', trip: 'TRIP', task: 'LITTLE THING', birthday: 'BIRTHDAY', holiday: 'HOLIDAY', anniversary: 'ANNIVERSARY' })[k] || 'PLAN';
   const statusLabel = s => ({ dreaming: 'Dreaming', planning: 'Planning', booked: 'Booked', visited: 'Visited' })[s];
   const newId = CCStore.uid;
@@ -72,13 +89,14 @@
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
   const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
-  const kindColor = k => (data.meta.kindColors || {})[k] || DEFAULT_KIND_COLORS[k];
+  const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
+  const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
-    const hero = data.meta.hero && ui.heroImages[data.meta.hero];
+    const hero = data.meta.hero && safeImage(ui.heroImages[data.meta.hero]);
     if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
@@ -95,6 +113,9 @@
     pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1, questions: 1 },
     album: 'all', albumForm: '', albumDraft: '', questionOpen: false, editingAnswer: null
   };
+  // work in progress, counted per form, so one upload finishing never re-enables another form's buttons
+  // (ui.busy is left to the profile picture)
+  const busy = { diary: 0, entry: 0, album: 0, hero: 0 };
   function pageList(key, items) {
     const result = paginate(items, ui.pages[key]);
     ui.pages[key] = result.page;
@@ -195,10 +216,10 @@
   // ---------- calendar ----------
   function dayEvents(iso) {
     return [
-      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: e.kind || 'plan', collection: 'events' })),
+      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
       ...data.tasks.filter(e => e.date === iso).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
-      ...data.dates.filter(e => e.repeat ? iso.slice(5) === e.date.slice(5) && iso >= e.date : iso === e.date).map(e => ({ ...e, collection: 'dates' }))
+      ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
   }
   function calendarTitle() {
@@ -296,13 +317,13 @@
     const cards = page.items.map(it => {
       if (planner.editingDay === it.id) {
         const f = formField('dayedit', 'title', 'Name of the day', 'text', true) + selectField('dayedit', 'kind', 'Category', names.slice(1)) + formField('dayedit', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.dayedit.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
-        return `<article class="cc-plan-card k-${it.kind} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
+        return `<article class="cc-plan-card k-${safeKind(it.kind)} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
       }
-      return `<article class="cc-plan-card k-${it.kind} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${it.next}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
+      return `<article class="cc-plan-card k-${safeKind(it.kind)} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${safeKind(it.kind)}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${esc(it.next)}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">No special days yet.</p>';
     const fields = formField('special', 'title', 'Name of the day', 'text', true) + selectField('special', 'kind', 'Category', names.slice(1)) + formField('special', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.special.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
     const upcoming = data.dates.map(it => ({ ...it, next: repeatDate(it) })).filter(it => it.next >= today).sort((a, b) => a.next.localeCompare(b.next)).slice(0, 4);
-    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
+    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${esc(it.next)}"><span class="cc-plan-tag"><i class="cc-dot k-${safeKind(it.kind)}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
     const editor = $('[data-special-dialog]');
     if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
     editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
@@ -317,13 +338,13 @@
   };
   function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
   function renderMemory() {
-    const pool = data.diary.filter(e => (e.text || '').trim() || (e.photoIds || []).length);
+    const pool = data.diary.filter(e => (e.text || '').trim() || entryPhotoIds(e).length);
     const body = $('[data-memory]');
     if (!pool.length) { body.innerHTML = '<div class="cc-memory-label"><span>FROM THE DIARY</span></div><p class="cc-memory">No diary entries yet.</p><button class="cc-button" type="button" data-go="diary">Write the first one</button>'; return; }
     const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
-    const photo = data.photos.find(p => p.id === (e.photoIds || [])[0]);
+    const photo = data.photos.find(p => p.id === entryPhotoIds(e)[0]), src = thumbOf(photo);
     const text = (e.text || '').trim();
-    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
+    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
 
   // ---------- daily question ----------
@@ -599,7 +620,7 @@
       const trip = i.kind === 'trip', date = trip ? i.start : i.date;
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
-      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${date}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
+      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
@@ -615,9 +636,24 @@
   }
 
   // ---------- diary ----------
+  const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
+  const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
+  function entryPhotoIds(entry) {
+    // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
+    // list, so when both of us change one entry's photos at once, the later save can drop the other's new photo from it
+    if (photoIndex?.src !== data.photos) {
+      const ids = new Set(), byEntry = new Map();
+      for (const p of data.photos) { ids.add(p.id); if (p.entryId) { if (!byEntry.has(p.entryId)) byEntry.set(p.entryId, []); byEntry.get(p.entryId).push(p); } }
+      photoIndex = { src: data.photos, ids, byEntry };
+    }
+    const listed = (entry.photoIds || []).filter(id => photoIndex.ids.has(id));
+    const more = (photoIndex.byEntry.get(entry.id) || []).filter(p => !listed.includes(p.id)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return [...listed, ...more.map(p => p.id)];
+  }
   function photoThumbs(ids) {
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
-    return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${p.thumb ? `<img src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`).join('')}</div>` : '';
+    return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => { const src = thumbOf(p); return `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`; }).join('')}</div>` : '';
   }
   function parseTags(text) {
     const seen = new Set();
@@ -629,17 +665,17 @@
     const hay = [e.text, e.author, entryDisplayDate(e), ...(e.tags || []), ...(e.comments || []).map(c => c.text)].join(' ').toLowerCase();
     return q.split(/\s+/).every(w => hay.includes(w));
   }
-  const mini = key => { const img = (data.meta.avatars || {})[key]; return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${img}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
+  const mini = key => { const img = avatarOf(key); return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${esc(img)}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
   function diaryEditForm(entry) {
     const draft = planner.drafts.entryedit;
     const existing = draft.photoIds.map(id => data.photos.find(photo => photo.id === id)).filter(Boolean);
-    const kept = existing.map(photo => `<span class="cc-pending">${photo.thumb ? `<img src="${esc(photo.thumb)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}<button type="button" data-entry-photo-remove="${esc(photo.id)}" aria-label="Remove photo">×</button></span>`).join('');
+    const kept = existing.map(photo => `<span class="cc-pending">${thumbOf(photo) ? `<img src="${esc(thumbOf(photo))}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}<button type="button" data-entry-photo-remove="${esc(photo.id)}" aria-label="Remove photo">×</button></span>`).join('');
     const added = draft.pending.map((photo, index) => `<span class="cc-pending"><img src="${esc(photo.thumb)}" alt=""><button type="button" data-entry-pending-remove="${index}" aria-label="Remove new photo">×</button></span>`).join('');
-    return `<article class="cc-feed" id="entry-${esc(entry.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(draft.text)}</textarea></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(draft.tags)}"></label><label class="cc-field cc-field-wide">Photos (${existing.length + draft.pending.length}/9)<span class="cc-button cc-file-btn">＋ Add photos<input type="file" accept="image/*" multiple data-entry-edit-photos ${ui.busy ? 'disabled' : ''}></span></label></div>${kept || added ? `<div class="cc-pending-row">${kept}${added}</div>` : ''}<p class="cc-small">Date updates when you save.</p><div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Save edits'}</button><button type="button" class="cc-button" data-entry-cancel ${ui.busy ? 'disabled' : ''}>Cancel</button></div></form></article>`;
+    return `<article class="cc-feed" id="entry-${esc(entry.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(draft.text)}</textarea></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(draft.tags)}"></label><label class="cc-field cc-field-wide">Photos (${existing.length + draft.pending.length}/9)<span class="cc-button cc-file-btn">＋ Add photos<input type="file" accept="image/*" multiple data-entry-edit-photos ${busy.entry ? 'disabled' : ''}></span></label></div>${kept || added ? `<div class="cc-pending-row">${kept}${added}</div>` : ''}<p class="cc-small">Date updates when you save.</p><div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.entry ? 'disabled' : ''}>${busy.entry ? 'Saving…' : 'Save edits'}</button><button type="button" class="cc-button" data-entry-cancel ${busy.entry ? 'disabled' : ''}>Cancel</button></div></form></article>`;
   }
   function renderDiary() {
-    const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${p.thumb}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${ui.busy ? 'disabled' : ''}>Close</button></div></form></div>`;
+    const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${esc(p.thumb)}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
@@ -654,9 +690,9 @@
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
-    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${ui.busy ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
+    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
   }
 
   // ---------- album ----------
@@ -676,7 +712,7 @@
     const page = pageList('album', visible);
     const selected = albums.find(a => a.id === ui.album);
     const albumTile = (key, title, items) => {
-      const cover = items.find(p => p.thumb)?.thumb;
+      const cover = thumbOf(items.find(p => p.thumb));
       return `<button type="button" class="cc-album-folder" data-album-open="${esc(key)}" aria-pressed="${ui.album === key}"><span class="cc-album-cover">${cover ? `<img src="${esc(cover)}" alt="">` : '<span aria-hidden="true">▧</span>'}</span><span class="cc-album-label"><strong>${esc(title)}</strong><small>${items.length} photo${items.length === 1 ? '' : 's'}</small></span></button>`;
     };
     const known = new Set(albums.map(a => a.id));
@@ -685,21 +721,28 @@
     const form = ui.albumForm ? `<form class="cc-plan-form cc-album-form" data-album-form><h3>${ui.albumForm === 'new' ? 'New album' : 'Rename album'}</h3><label class="cc-field">Album name<input name="albumName" maxlength="50" required value="${esc(ui.albumDraft)}" autocomplete="off"></label><div class="cc-form-footer"><button type="submit" class="cc-button">Save album</button><button type="button" class="cc-button" data-album-cancel>Cancel</button></div></form>` : '';
     const title = selected?.title || (ui.album === 'unsorted' ? 'Unsorted' : 'All photos');
     const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
-    const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${p.thumb ? `<img class="cc-photo-img" src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
+    const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${thumbOf(p) ? `<img class="cc-photo-img" src="${esc(thumbOf(p))}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
     $('[data-panel="album"]').innerHTML = panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${ui.busy ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${ui.busy ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`);
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`);
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
     return { thumb, full };
   }
-  async function savePhotos(list, extra) {
-    const ids = [], batch = newId(); // photos from one upload share a batch, so they make one message
-    for (const p of list) {
-      const id = newId();
-      await store.putFull(id, p.full);
-      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
-      ids.push(id);
+  async function savePhotos(list, extra, { keepPartial = false } = {}) {
+    const ids = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
+    try {
+      for (const p of list) {
+        const id = newId(); tried.push(id);
+        await store.putFull(id, p.full);
+        await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
+        ids.push(id);
+      }
+    } catch (err) {
+      // a diary photo is no use without its entry: when a post fails part way, take back what this try stored,
+      // so nothing is left pointing at an entry that was never saved and trying again doesn't add them twice
+      if (!keepPartial) for (const id of tried) await Promise.resolve(store.remove('photos', id)).catch(e => console.error(e));
+      throw err;
     }
     return ids;
   }
@@ -710,7 +753,7 @@
     if (ui.page === 'album') return albumPhotos(photosSorted()).map(x => x.id);
     if (ui.page === 'diary' && p.entryId) {
       const entry = data.diary.find(x => x.id === p.entryId);
-      if (entry) return (entry.photoIds || []).filter(id => data.photos.some(x => x.id === id));
+      if (entry) return entryPhotoIds(entry);
     }
     return photosSorted().map(x => x.id);
   }
@@ -732,11 +775,24 @@
     lightbox.zoom = Math.max(1, Math.min(4, value));
     applyPhotoZoom();
   }
+  const photoExists = id => data.photos.some(p => p.id === id);
+  function nextInLightbox(direction) { // the nearest photo that way which still exists (the other person may have deleted some)
+    const list = lightbox.list, i = list.indexOf(lightbox.id), n = list.length;
+    for (let k = 1; k < n; k++) { const id = list[(((i + direction * k) % n) + n) % n]; if (photoExists(id)) return id; }
+    return null;
+  }
   function stepPhoto(direction) {
     const i = lightbox.list.indexOf(lightbox.id);
     if (i < 0 || lightbox.list.length < 2) return;
+    const next = nextInLightbox(direction); if (!next) return;
     ui.confirm = null;
-    openPhoto(lightbox.list[(i + direction + lightbox.list.length) % lightbox.list.length], lightbox.list);
+    openPhoto(next, lightbox.list.filter(photoExists));
+  }
+  function keepLightboxOnData() { // the photo on screen was deleted elsewhere: show the next one, or close when none is left
+    if (!lightbox.id || photoExists(lightbox.id)) return;
+    const next = nextInLightbox(1);
+    ui.confirm = null;
+    if (next) openPhoto(next, lightbox.list.filter(photoExists)); else closePhoto();
   }
   async function openPhoto(id, sequence = null) {
     const p = data.photos.find(x => x.id === id); if (!p) return;
@@ -747,7 +803,7 @@
     const idx = lightbox.list.indexOf(id);
     const albumPicker = `<label class="cc-photo-album">Album<select data-photo-album="${esc(p.id)}" aria-label="Move photo to album"><option value="" ${!p.albumId ? 'selected' : ''}>Unsorted</option>${albumsSorted().map(a => `<option value="${esc(a.id)}" ${p.albumId === a.id ? 'selected' : ''}>${esc(a.title)}</option>`).join('')}</select></label>`;
     const photoDate = p.date && p.createdAt && p.date !== currentDayFor(p.createdAt) ? `Photo date ${niceDate(p.date)} · uploaded ` : '';
-    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"><div class="cc-lightbox-stage" data-lightbox-stage role="group" aria-label="Photo. Swipe left or right to browse."><button type="button" class="cc-lightbox-arrow previous" data-lightbox-step="-1" aria-label="Previous photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>‹</button><img data-full draggable="false" src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><button type="button" class="cc-lightbox-arrow next" data-lightbox-step="1" aria-label="Next photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>›</button></div><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(photoDate)}${esc(timestamp(p.createdAt, p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-photo-zoom="out" aria-label="Zoom out" disabled>−</button><span class="cc-zoom-label" data-photo-zoom-label>100%</span><button type="button" class="cc-button" data-photo-zoom="in" aria-label="Zoom in">＋</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
+    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"><div class="cc-lightbox-stage" data-lightbox-stage role="group" aria-label="Photo. Swipe left or right to browse."><button type="button" class="cc-lightbox-arrow previous" data-lightbox-step="-1" aria-label="Previous photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>‹</button><img data-full draggable="false" src="${esc(thumbOf(p) || 'data:image/gif;base64,R0lGODlhAQABAAAAACw=')}" alt="${esc(p.caption || '')}"><button type="button" class="cc-lightbox-arrow next" data-lightbox-step="1" aria-label="Next photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>›</button></div><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(photoDate)}${esc(timestamp(p.createdAt, p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-photo-zoom="out" aria-label="Zoom out" disabled>−</button><span class="cc-zoom-label" data-photo-zoom-label>100%</span><button type="button" class="cc-button" data-photo-zoom="in" aria-label="Zoom in">＋</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
@@ -810,7 +866,7 @@
     }
     for (const g of photoUploads()) { // a batch that grows gets a new key (so it alerts again); older photos keep their first photo's key
       const first = g[0], n = g.length, album = data.albums.find(a => a.id === first.albumId);
-      add('album', first.batch ? `ph:b:${first.batch}#${n}` : 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, ids: g.map(p => p.id), thumb: first.thumb });
+      add('album', first.batch ? `ph:b:${first.batch}#${n}` : 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, ids: g.map(p => p.id), thumb: thumbOf(first) });
     }
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
@@ -881,7 +937,7 @@
     const tabs = [['all', 'All'], ...Object.entries(TAB_NAMES)];
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✉ MESSAGES</span><button type="button" class="cc-min" data-close-inbox aria-label="Close">×</button></div><div class="cc-body">
       <div class="cc-filter-row">${tabs.map(([v, l]) => `<button type="button" class="cc-button" data-inbox-filter="${v}" aria-pressed="${filter === v}">${l}</button>`).join('')}</div>
-      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${window.CCPixelEmoji ? CCPixelEmoji.text(m.text) : esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
+      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${window.CCPixelEmoji ? CCPixelEmoji.text(m.text) : esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${esc(m.target.thumb)}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
     </div></section>`;
   }
   function openInbox(filter) {
@@ -968,7 +1024,7 @@
     loadHero(data.meta.hero);
     $('[data-hero-caption]').innerHTML = ui.editCaption
       ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
-      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${ui.busy === 'hero' ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
+      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${busy.hero ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
   }
 
   // ---------- status ----------
@@ -1151,7 +1207,7 @@
     $('[data-current-folder]').textContent = ui.page;
     const local = store.mode === 'local';
     const avatars = data.meta.avatars || {};
-    const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
+    const badge = key => `<span class="cc-badge ${key}">${avatarOf(key) ? `<img src="${esc(avatarOf(key))}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
     const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}${statusBubble(key)}</span>`;
     const canBadge = 'setAppBadge' in navigator && 'Notification' in window && Notification.permission === 'default' && (matchMedia('(display-mode: standalone)').matches || navigator.standalone);
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}${canBadge ? '<button type="button" class="cc-link" data-enable-badge>Show a count on the app icon</button>' : ''}</div>`;
@@ -1163,8 +1219,8 @@
       $(`[data-mode-toggle="${k}"]`).setAttribute('aria-pressed', String(mode[k]));
       $(`[data-mode-label="${k}"]`).textContent = k === 'dark' ? (mode.dark ? 'DARK' : 'LIGHT') : (mode.high ? 'HIGH' : 'NORMAL');
     }
-    const icon = avatars[ui.me];
-    $('[data-user-icon]').innerHTML = ui.me ? (icon ? `<img src="${icon}" alt="">` : esc(PEOPLE[ui.me].slice(0, 1))) : '?';
+    const icon = avatarOf(ui.me);
+    $('[data-user-icon]').innerHTML = ui.me ? (icon ? `<img src="${esc(icon)}" alt="">` : esc(PEOPLE[ui.me].slice(0, 1))) : '?';
     $('[data-user-icon]').className = 'cc-user-icon ' + (ui.me || '');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
@@ -1200,28 +1256,29 @@
 
   // ---------- form submit ----------
   async function submitPlanner(form) {
+    checkDay(); // just past midnight, before the minute timer notices: an untouched date becomes the new today
     const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form));
     if (name === 'entryedit') {
       const entry = data.diary.find(item => item.id === ui.editingEntry);
       if (!entry || entry.author !== meName()) return;
       const draft = planner.drafts.entryedit;
       const text = String(d.text || '').trim();
-      const kept = draft.photoIds.filter(id => (entry.photoIds || []).includes(id));
+      const current = entryPhotoIds(entry), kept = draft.photoIds.filter(id => current.includes(id));
       if (!text && !kept.length && !draft.pending.length) {
         form.elements.text.setCustomValidity('Write something or keep a photo.'); form.elements.text.reportValidity(); return;
       }
-      ui.busy = 'entryedit'; render();
+      busy.entry++; render();
       try {
         const editedDate = currentDay();
         const added = await savePhotos(draft.pending, { entryId: entry.id, date: editedDate });
         await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
-        for (const id of (entry.photoIds || []).filter(id => !kept.includes(id))) await store.remove('photos', id);
+        for (const id of current.filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
         planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
         ui.pages.diary = 1;
         flash('Saved.');
       } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
-      ui.busy = false; render(); return;
+      busy.entry--; render(); return;
     }
     if (name === 'ask') {
       const text = String(d.text || '').trim().slice(0, 200), tomorrow = shiftDay(qDay(), 1);
@@ -1265,10 +1322,11 @@
     render();
   }
   async function submitDiary(form) {
+    checkDay(); // see submitPlanner
     const text = String(form.elements.text.value || '').trim(), date = form.elements.date.value || today;
     if (!text && !diaryDraft.pending.length) { form.elements.text.setCustomValidity('Write something or add a photo.'); form.elements.text.reportValidity(); return; }
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
-    ui.busy = true; render();
+    busy.diary++; render();
     try {
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
@@ -1278,7 +1336,7 @@
       ui.newEntryOpen = false;
       flash('Posted.');
     } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
-    ui.busy = false; render();
+    busy.diary--; render();
   }
 
   // ---------- events ----------
@@ -1318,16 +1376,16 @@
       const draft = planner.drafts.entryedit;
       const files = [...el.files].slice(0, 9 - draft.photoIds.length - draft.pending.length);
       if (el.files.length > files.length) flash('Up to 9 photos per entry.');
-      ui.busy = 'entryedit'; render();
+      busy.entry++; render();
       for (const file of files) { try { draft.pending.push(await makePhoto(file)); } catch (err) { flash(err.message); } }
-      ui.busy = false; render();
+      busy.entry--; render();
     }
     if (el.matches('[data-diary-photos]')) {
       const files = [...el.files].slice(0, 9 - diaryDraft.pending.length);
       if (el.files.length > files.length) flash('Up to 9 photos per entry.');
-      ui.busy = true; render();
+      busy.diary++; render();
       for (const f of files) { try { diaryDraft.pending.push(await makePhoto(f)); } catch (err) { flash(err.message); } }
-      ui.busy = false; render();
+      busy.diary--; render();
     }
     if (el.matches('[data-avatar-file]') && el.files[0]) {
       ui.busy = 'avatar'; render();
@@ -1336,20 +1394,20 @@
       ui.busy = false; render();
     }
     if (el.matches('[data-hero-file]') && el.files[0]) {
-      ui.busy = 'hero'; render();
+      busy.hero++; render();
       try {
         const img = await CCStore.resizeImage(el.files[0], 1400, 0.85);
         const id = 'hero-' + newId(); ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
-      ui.busy = false; render();
+      busy.hero--; render();
     }
     if (el.matches('[data-album-photos]')) {
       const files = [...el.files].slice(0, 20);
-      ui.busy = true; render();
-      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
+      busy.album++; render();
+      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }, { keepPartial: true }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
-      ui.busy = false; render();
+      busy.album--; render();
     }
   });
   root.addEventListener('submit', e => {
@@ -1395,11 +1453,8 @@
     if (ds.albumDelete) {
       const album = data.albums.find(a => a.id === ds.albumDelete); if (!album) return;
       ui.confirm = null; ui.album = 'unsorted'; ui.albumForm = ''; ui.pages.album = 1;
-      run((async () => {
-        for (const photo of data.photos.filter(p => p.albumId === album.id)) await store.update('photos', photo.id, { albumId: '' });
-        await store.remove('albums', album.id);
-        flash('Album deleted. Photos are in Unsorted.');
-      })());
+      // one change, however big the album: a photo whose album is gone already counts as Unsorted everywhere
+      run(store.remove('albums', album.id).then(() => flash('Album deleted. Photos are in Unsorted.')));
       render(); return;
     }
     if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
@@ -1434,7 +1489,7 @@
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: [...(en.photoIds || [])], pending: [] }; render(); } return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; render(); } return; }
     if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
     if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
@@ -1487,7 +1542,7 @@
     if (ds.pendingRemove) { diaryDraft.pending.splice(+ds.pendingRemove, 1); render(); return; }
     if (ds.entryDelete) {
       const entry = data.diary.find(x => x.id === ds.entryDelete); ui.confirm = null; if (!entry) return;
-      run((async () => { for (const pid of entry.photoIds || []) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
+      run((async () => { for (const pid of entryPhotoIds(entry)) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
     }
     if (ds.commentRemove) { openCommentDelete(ds.entry, ds.commentRemove); return; }
     if (el.hasAttribute('data-comment-confirm-cancel')) { $('[data-comment-confirm-dialog]').close(); return; }
@@ -1547,7 +1602,18 @@
   $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } $('[data-ach-open]')?.focus({ preventScroll: true }); });
   $('[data-ach-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openAchievements(false); });
   let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
-  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; achCache = null; scheduleRender(); return true; };
+  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; rollDay(shownDay, d); shownDay = today = d; achCache = null; scheduleRender(); return true; };
+  function rollDay(old, day) { // dates that still say the old "today" (nobody changed them) move on to the new day
+    if (diaryDraft.date === old) diaryDraft.date = day;
+    if (planner.drafts.event.date === old) planner.drafts.event.date = day;
+    if (planner.selected === old && !planner.editing) {
+      planner.selected = day;
+      if (planner.month === old.slice(0, 7)) planner.month = day.slice(0, 7);
+      if (planner.year === +old.slice(0, 4)) planner.year = +day.slice(0, 4);
+    }
+    // open forms too, in case this render leaves them alone
+    $$('[data-diary-form] input[name="date"], [data-planner-form="event"] input[name="date"]').forEach(el => { if (el.value === old) el.value = day; });
+  }
   setInterval(() => { if (!document.hidden && !checkDay()) renderBadges(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDay(); });
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
@@ -1580,7 +1646,7 @@
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
-    flash(`${entries.length} events imported.`, async () => { for (const x of entries) await store.remove('events', x.id); });
+    flash(`${entries.length} events imported.`, () => quietly(async () => { for (const x of entries) await store.remove('events', x.id); }));
     render();
   }
 
@@ -1681,7 +1747,10 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; achCache = null; scheduleRender(); };
+  let holdRenders = 0; // see quietly()
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
+  // many changes in a row (undoing an import removes each event): the page renders once at the end instead of after each
+  async function quietly(job) { holdRenders++; try { return await job(); } finally { holdRenders--; scheduleRender(); } }
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown

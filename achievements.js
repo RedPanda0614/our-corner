@@ -117,8 +117,10 @@
   const byHand = x => !!str(x.by) && num(x.createdAt) !== null && !has(x.importKey) && !has(x.importUIDs) && !String(x.id ?? '').startsWith('seed-');
   const squash = s => (typeof s === 'string' ? s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') : '');
   const season = month => (month >= 3 && month <= 5 ? 'spring' : month >= 6 && month <= 8 ? 'summer' : month >= 9 && month <= 11 ? 'autumn' : 'winter');
+  // a yearly Feb 29 is kept on Mar 1 in years without one, the same as on the calendar
+  const yearlyMonthDay = (monthDay, year) => (monthDay === '02-29' && !(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? '03-01' : monthDay);
   const matchesDay = (day, special, onOrAfter) => (special.repeat === true
-    ? day.slice(5) === special.date.slice(5) && (!onOrAfter || day >= special.date)
+    ? day.slice(5) === yearlyMonthDay(special.date.slice(5), +day.slice(0, 4)) && (!onOrAfter || day >= special.date)
     : day === special.date);
 
   // Days the two of us both answered: the time is when the second of us first answered.

@@ -338,8 +338,9 @@ test('anniversary pages match the special day, yearly or once', () => {
   assert.equal(got([ann('2024-06-01', false)], L(2024, 6, 1, 9)), true, 'no repeat, the exact day');
   assert.equal(got([ann('2027-06-01', true)], L(2026, 6, 1)), false, 'before the original day');
   assert.equal(got([ann('2027-06-01', true)], L(2027, 6, 1)), true);
-  for (const at of [L(2025, 2, 28), L(2025, 3, 1), L(2026, 2, 28)]) assert.equal(got([ann('2024-02-29', true)], at), false, 'Feb 29 only');
-  assert.equal(got([ann('2024-02-29', true)], L(2028, 2, 29)), true);
+  for (const at of [L(2025, 2, 28), L(2026, 2, 28), L(2028, 2, 28), L(2028, 3, 1)]) assert.equal(got([ann('2024-02-29', true)], at), false, 'Feb 29, or Mar 1 without one');
+  for (const at of [L(2025, 3, 1), L(2027, 3, 1), L(2028, 2, 29), L(2100, 3, 1)]) assert.equal(got([ann('2024-02-29', true)], at), true, 'Mar 1 stands in for Feb 29 in other years');
+  assert.equal(got([ann('2024-03-01', true)], L(2028, 3, 1)), true, 'a real Mar 1 stays on Mar 1');
   assert.equal(got([ann('2024-06-01', true, { kind: 'birthday' })], L(2026, 6, 1)), false, 'birthdays are not anniversaries');
   assert.equal(got([ann('2024-06-01', true, { id: 'seed-x', importUIDs: ['u'], by: '' })], L(2026, 6, 1)), true, 'any source counts');
   assert.equal(got([ann('2024-06-31', true)], L(2026, 6, 30)), false);
@@ -357,6 +358,9 @@ test('birthday photos match on the photo day and count from when they were added
   assert.equal(hit([bd('2026-07-07', false)], [photo(L(2027, 7, 7), { date: '2027-07-07' })]).earned, false);
   assert.equal(hit([bd('2026-07-07', false)], [photo(L(2026, 7, 8), { date: '2026-07-07' })]).earned, true);
   assert.equal(hit([{ ...bd('1998-03-14', true), kind: 'anniversary' }], [photo(L(2026, 3, 14), { date: '2026-03-14' })]).earned, false);
+  assert.equal(hit([bd('2000-02-29', true)], [photo(L(2027, 3, 1), { date: '2027-03-01' })]).earned, true, 'a Feb 29 birthday is on Mar 1 in 2027');
+  assert.equal(hit([bd('2000-02-29', true)], [photo(L(2027, 2, 28), { date: '2027-02-28' })]).earned, false);
+  assert.equal(hit([bd('2000-02-29', true)], [photo(L(2028, 3, 1), { date: '2028-03-01' })]).earned, false, '2028 has its own Feb 29');
 });
 
 test('four seasons completes at the page that fills the last season', () => {
