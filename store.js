@@ -106,7 +106,16 @@
     }
     return data;
   }
-  const applyAll = (base, ops) => ops.reduce(applyOp, clean(base));
+  // Changes are replayed on a copy that shares what they don't touch: applyOp only swaps items and meta for new ones and edits
+  // the lists, so a copy of each list a change touches is enough (the page and the queue never edit an item in place)
+  function applyAll(base, ops) {
+    const data = { ...base, collections: { ...base.collections } }, copied = new Set();
+    for (const op of ops) {
+      for (const col of op.type === 'setAll' ? (op.items || []).map(x => x.col) : op.col ? [op.col] : []) if (!copied.has(col)) { copied.add(col); data.collections[col] = [...(data.collections[col] || [])]; }
+      applyOp(data, op);
+    }
+    return data;
+  }
 
   // ---------- local mode ----------
   function localStore() {
@@ -233,7 +242,7 @@
       await Promise.all(drop.map(id => db.del('full:' + id)));
     }
     const keepFull = id => { fullCache = [...fullCache.filter(x => x !== id), id]; };
-    const persist = () => cachePut(stateKey, clean({ base, sha, pending, files: fileDeletes, fullCache }));
+    const persist = () => cachePut(stateKey, { base, sha, pending, files: fileDeletes, fullCache }); // IndexedDB copies it; all of it is plain JSON already
     const view = () => applyAll(base, pending);
     const withThumbs = list => list.map(p => ({ ...p, thumb: thumbs.get(p.id) || '' }));
     function emit() {
@@ -296,7 +305,7 @@
       flushing = (async () => {
         while (pending.length) {
           const ops = pending.slice();
-          let ok = false;
+          let ok = false, merged = false;
           for (let attempt = 0; attempt < 4 && !ok; attempt++) {
             const next = applyAll(base, ops);
             const who = auth.name || 'someone';
@@ -306,14 +315,14 @@
               if (sha) { superseded.forEach((at, s) => { if (now - at > 30000) superseded.delete(s); }); superseded.set(sha, now); }
               base = next; sha = j.content.sha; etag = null; revision++; ok = true;
             }
-            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); } // someone else saved first: reload, replay our changes
+            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); merged = true; } // someone else saved first: reload, replay our changes
             else if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token cannot write to this repo.'), { code: 'auth' });
             else throw new Error('GitHub error ' + res.status);
           }
           if (!ok) throw new Error('Could not save after several tries.');
           pending = pending.slice(ops.length);
           await persist();
-          emit();
+          if (merged) emit(); // else what was saved is what the page shows already
         }
       })();
       try { await flushing; status('synced'); }

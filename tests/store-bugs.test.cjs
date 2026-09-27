@@ -487,6 +487,31 @@ test('a save conflict still reloads whatever GitHub has, even the content from b
   assert.equal(page.store.pending(), false);
 });
 
+// ---------- no second update or copy for our own save ----------
+test('our own save updates the page once; a save that met the other phone\'s change shows the combined data', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.set('tasks', { id: 'mine', title: 'x' });
+  const shown = page.emits; await page.flush();
+  assert.equal(page.emits, shown, 'nothing new to show after a plain save');
+  remote.conflict = data => data.collections.tasks.push({ id: 'theirs', title: 'y' });
+  await page.store.set('tasks', { id: 'second', title: 'z' }); await page.flush();
+  assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs', 'second']);
+});
+
+test('changes waiting to be saved never alter the saved copy they are shown on top of', async () => {
+  const remote = server(); remote.data.collections.tasks = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }];
+  remote.data.collections.diary = [{ id: 'e', text: 'hi', comments: [] }];
+  const page = browser(remote); await page.start(); remote.offline = true;
+  await page.store.remove('tasks', 'a'); await page.store.update('tasks', 'b', { title: 'B2' }); await page.store.set('tasks', { id: 'c', title: 'C' });
+  await page.store.addComment('e', { id: 'c1', text: 'yo' }); await page.store.setMeta({ heroCaption: 'X' });
+  const saved = page.disk.get('github-state:test/private-data:main');
+  assert.deepEqual(saved.base.collections.tasks, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }]); assert.deepEqual(saved.base.collections.diary[0].comments, []);
+  assert.equal(saved.base.meta.heroCaption, undefined); assert.equal(saved.pending.length, 5);
+  assert.deepEqual(page.changes.tasks.map(t => [t.id, t.title]), [['b', 'B2'], ['c', 'C']]); assert.equal(page.changes.diary[0].comments.length, 1);
+  remote.offline = false; await page.flush();
+  assert.deepEqual(remote.data.collections.tasks.map(t => [t.id, t.title]), [['b', 'B2'], ['c', 'C']]); assert.equal(remote.data.meta.heroCaption, 'X');
+});
+
 // ---------- a diary post is one change ----------
 test('a diary post with three photos uploads their files first, then saves the photos and the entry in one write', async () => {
   const remote = server(), page = browser(remote); await page.start();
