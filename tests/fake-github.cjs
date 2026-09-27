@@ -93,6 +93,7 @@ function server({ legacy = false } = {}) {
       const p = decodeURIComponent(new URL(url).pathname).replace(/^\/repos\/[^/]+\/[^/]+\/?/, '');
       const method = options.method || 'GET', raw = options.headers?.Accept === RAW;
       const file = p === 'contents' || p.startsWith('contents/') ? p.slice(9) : null, blobSha = p.startsWith('git/blobs/') ? p.slice(10) : null;
+      if (p === 'contents/') { this.log.push(`${method} contents/ (not canonical)`); return response(400, { message: 'Request path could not be canonicalized' }); } // the root is /contents, never /contents/
       this.log.push(`${method} ${p === '' ? '(repo)' : blobSha ? 'blob ' + blobSha : file === '' ? '/' : file}${raw ? ' raw' : ''}`);
       if (this.offline) throw new TypeError('Failed to fetch');
       if (p === '') return this.verify.status === 200 ? response(200, { private: !this.publicRepo, permissions: { push: true } }) : response(this.verify.status, this.verify.body, this.verify.headers);

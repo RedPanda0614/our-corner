@@ -326,6 +326,14 @@ test('data.json is checked on start and every 10 minutes, and no more after 30 d
   assert.ok(remote.part('main').meta.legacy.sha, 'the record stays');
 });
 
+test('the repository root is listed as /contents, never /contents/ (which the way to GitHub can turn down)', async () => {
+  const { remote, page } = await moved();
+  await page.poll(); await settle(50); // the first check of data.json after the move
+  assert.equal(remote.count(/not canonical/), 0);
+  assert.equal(remote.count(/^GET \/$/), 2, 'once for the move, once for the check');
+  assert.ok(remote.part('main').meta.legacy.sha); assert.equal(page.statuses.at(-1).state, 'synced');
+});
+
 // ---------- safety ----------
 test('a damaged file stops all saving (nothing is written over it) until a good one is back', async () => {
   const remote = server(), page = browser(remote); await page.start();

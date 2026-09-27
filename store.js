@@ -440,7 +440,7 @@
       return new Error('GitHub error ' + res.status);
     }
     async function list(path, etag) { // a folder: { list: name -> entry, etag }; list null when there is no such folder; same: unchanged (a 304 costs nothing)
-      const res = await gh$(`/contents/${path}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} });
+      const res = await gh$(`/contents${path ? '/' + path : ''}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} }); // the root is /contents (with a slash it may not be understood)
       if (res.status === 304) return { same: true };
       if (res.status === 404) return { list: null, etag: null };
       if (!res.ok) throw refused(res);
