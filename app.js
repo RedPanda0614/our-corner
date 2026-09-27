@@ -59,6 +59,11 @@
   const yearlyDay = (date, year) => (date.slice(5) === '02-29' && !isLeapYear(year) ? `${year}-03-01` : `${year}-${date.slice(5)}`);
   // the next time a valid yearly date comes round, on or after `from`
   const nextYearly = (date, from) => { const y0 = Math.max(+from.slice(0, 4), +date.slice(0, 4)); for (let y = y0; y < y0 + 9; y++) { const d = yearlyDay(date, y); if (d >= from) return d; } return date; };
+  // diary tags as typed: "travel, food", "#旅行 #美食", "旅行、美食" or "旅行；美食" (up to 8, 20 characters each, no repeats)
+  function parseTags(text) {
+    const seen = new Set();
+    return String(text || '').split(/[,，、;；#＃\s]+/).map(t => t.trim().slice(0, 20)).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 8);
+  }
   // ---------- end pure helpers ----------
   const repeatDate = item => (item.repeat && validDay(item.date || '') ? nextYearly(item.date, today) : item.date);
   const kindLabel = k => ({ plan: 'PLAN', trip: 'TRIP', task: 'LITTLE THING', birthday: 'BIRTHDAY', holiday: 'HOLIDAY', anniversary: 'ANNIVERSARY' })[k] || 'PLAN';
@@ -91,7 +96,7 @@
   const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
-  const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
+  const SWATCHES = [['#e0506a', 'Red'], ['#f06a8f', 'Pink'], ['#d85fb0', 'Magenta'], ['#9a7ad8', 'Purple'], ['#6c6fd8', 'Indigo'], ['#4a9fd8', 'Blue'], ['#3fae9c', 'Teal'], ['#6fa35a', 'Green'], ['#a8c43c', 'Lime'], ['#e8b33c', 'Yellow'], ['#f08a4b', 'Orange'], ['#b0714a', 'Brown'], ['#8a8f98', 'Grey'], ['#3d4a5c', 'Slate']]; // [colour, name read out]
   const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
   const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
   function applyTheme() {
@@ -323,7 +328,7 @@
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
-      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
+      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(([c, name]) => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${name}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
       <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`));
@@ -675,10 +680,6 @@
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
     return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => { const src = thumbOf(p); return `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`; }).join('')}</div>` : '';
   }
-  function parseTags(text) {
-    const seen = new Set();
-    return String(text || '').split(/[,，#\s]+/).map(t => t.trim().slice(0, 20)).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 8);
-  }
   function entryMatches(e) {
     if (diaryFilter.tag && !(e.tags || []).some(t => t.toLowerCase() === diaryFilter.tag.toLowerCase())) return false;
     const q = diaryFilter.q.trim().toLowerCase(); if (!q) return true;
@@ -743,7 +744,7 @@
     const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
     const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${thumbOf(p) ? `<img class="cc-photo-img" src="${esc(thumbOf(p))}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
     fill($('[data-panel="album"]'), panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos aria-label="Upload photos" ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
@@ -986,8 +987,9 @@
   function goToTarget(t) { // shared by the inbox and the achievements shelf
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id, t.ids?.filter(id => data.photos.some(p => p.id === id))); }
-    else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
-    else if (t.type === 'checkin') { if (t.week === thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
+    // a day this device has not reached yet (the other person is ahead in another time zone) shows today's card, like today
+    else if (t.type === 'question') { if (t.date >= qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
+    else if (t.type === 'checkin') { if (t.week >= thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
     else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
     else {
       ui.highlight = t.id;
@@ -1795,8 +1797,8 @@
   }
   function confirmImport() {
     const r = calendarImport.preview; if (!r?.events.length) return;
-    const keys = new Set(data.events.map(e => e.importKey));
-    const entries = r.events.filter(e => !keys.has(e.importKey)).map(e => ({ ...e, id: newId(), by: meName(), createdAt: Date.now() }));
+    const keys = new Set(data.events.map(e => e.importKey)), at = Date.now(); // one time for the whole import, so it makes one message
+    const entries = r.events.filter(e => !keys.has(e.importKey)).map(e => ({ ...e, id: newId(), by: meName(), createdAt: at }));
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
