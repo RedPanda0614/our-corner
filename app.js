@@ -166,9 +166,11 @@
 
   // ---------- messages ----------
   function flash(text, undo = null) {
-    ui.message = text; ui.undo = undo;
+    const left = ui.undo ? ui.undoUntil - Date.now() : 0; // a message with no Undo of its own keeps one still waiting, on its own clock
+    if (undo || left <= 0) { ui.undo = undo; ui.undoUntil = Date.now() + 9000; clearTimeout(ui.undoTimer); if (undo) ui.undoTimer = setTimeout(() => { ui.undo = null; renderMessage(); }, 9000); }
+    ui.message = text;
     clearTimeout(ui.messageTimer);
-    ui.messageTimer = setTimeout(() => { ui.message = null; ui.undo = null; renderMessage(); }, undo ? 9000 : 4000);
+    ui.messageTimer = setTimeout(() => { ui.message = null; ui.undo = null; renderMessage(); }, undo ? 9000 : Math.max(4000, left));
     renderMessage();
   }
   function renderMessage() {
@@ -1086,6 +1088,13 @@
     return s && typeof s === 'object' && s.emoji && Number.isFinite(+s.at) ? { emoji: String(s.emoji), text: String(s.text || ''), at: +s.at } : null;
   }
   const statusStale = s => Date.now() - s.at >= STATUS_DAY; // older statuses stay, just dimmed
+  let fadeTimer = 0, fadeAt = 0;
+  function timeStatusFade() { // dim a status the moment it turns a day old, not at whatever render comes next
+    const at = Math.min(...Object.keys(PEOPLE).map(statusOf).filter(s => s && !statusStale(s)).map(s => s.at + STATUS_DAY));
+    if (at === fadeAt) return;
+    clearTimeout(fadeTimer); fadeAt = at;
+    if (at < Infinity) fadeTimer = setTimeout(() => { fadeAt = 0; scheduleRender(); }, at - Date.now());
+  }
   function statusWhen(s) {
     if (!statusStale(s)) return ago(s.at);
     const n = Math.floor((Date.now() - s.at) / STATUS_DAY);
@@ -1124,7 +1133,7 @@
       <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${emojiHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Tap an emoji, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
   }
   function renderStatus(soft = passive) {
-    const box = $('[data-status-root]'); if (!box) return;
+    const box = $('[data-status-root]'); timeStatusFade(); if (!box) return;
     const tab = box.querySelector('[data-status-toggle]'), panel = box.querySelector('[data-status-panel]'), body = panel.querySelector('[data-status-body]');
     box.hidden = !ui.me || $('[data-app]').hidden;
     if (box.hidden) ui.statusOpen = false;
@@ -1641,7 +1650,7 @@
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
     if (el.hasAttribute('data-logout')) { store.signOut(); return; }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
-    if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve(u()).then(() => flash('Restored.')); return; }
+    if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve().then(u).then(() => flash('Restored.'), err => { console.error(err); flash('Could not undo. Please try again.', u); }); return; }
     if (ds.confirm) { ui.confirm = ds.confirm; lightbox.id ? openPhoto(lightbox.id) : render(); return; }
     if (el.hasAttribute('data-confirm-cancel')) { ui.confirm = null; lightbox.id ? openPhoto(lightbox.id) : render(); return; }
     // calendar
