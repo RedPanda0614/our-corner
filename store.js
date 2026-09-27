@@ -91,6 +91,7 @@
       if (merged !== undefined) data.meta = { ...data.meta, [op.key]: merged };
       return data;
     }
+    if (op.type === 'setAll') { (op.items || []).forEach(({ col, item }) => applyOp(data, { type: 'set', col, id: item.id, item })); return data; } // records in several collections as one change, e.g. an entry and its photos
     const list = data.collections[op.col] || (data.collections[op.col] = []);
     const idx = op.id != null ? list.findIndex(x => x.id === op.id) : -1;
     switch (op.type) {
@@ -121,6 +122,7 @@
       if (o.col === 'photos' && o.type === 'set') o.item = fix(o.item);
       if (o.col === 'photos' && o.type === 'setMany') o.items = o.items.map(fix);
       if (o.col === 'photos' && o.type === 'update' && odd(o.patch?.thumb)) delete o.patch.thumb;
+      if (o.type === 'setAll') o.items = o.items.map(x => (x.col === 'photos' ? { ...x, item: fix(x.item) } : x));
       return o;
     }
     function op(o) {
@@ -147,6 +149,9 @@
       addComment: (id, comment) => op({ type: 'addComment', col: 'diary', id, comment }),
       removeComment: (id, commentId) => op({ type: 'removeComment', col: 'diary', id, commentId }),
       batchSet: (col, items) => op({ type: 'setMany', col, items }),
+      saveAll: changes => op({ type: 'setAll', items: changes }),
+      async uploadPhoto(item, full) { await this.putFull(item.id, full); return item; },
+      discard: ids => Promise.all(ids.map(id => db.del('full:' + id))),
       putFull: (id, dataUrl) => db.put('full:' + id, dataUrlToBlob(dataUrl) || dataUrl),
       getFull: id => readPicture(db, 'full:' + id) // a Blob
     };
@@ -172,7 +177,7 @@
     const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
     const thumbQueue = []; let thumbActive = 0, thumbEmit = null, thumbLast = 0, shown = null; // shown: the photo list of the last full update
     const superseded = new Map(); // data.json shas our own saves replaced -> when; GitHub can briefly serve those again
-    const fullShas = new Map(); // photo id -> sha of the full file uploaded in this session
+    const fileShas = new Map(); // photo id -> { full, thumb }: shas of its files uploaded in this session
     let fileDeletes = []; // photo files still to delete on GitHub, [{ path, sha }]; kept across reloads, retried until done
     let deleting = null, deleteFails = 0, deleteTimer = null;
     let fullCache = []; // ids of full photos cached on this device, oldest first (all are on GitHub too, so they can be dropped)
@@ -184,7 +189,7 @@
       const send = () => Date.now() < busyUntil ? Promise.reject(busyError(busyUntil)) : fetch(api + path, {
         cache: 'no-store', ...opts,
         headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + auth.token, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) }
-      }).then(async res => { const until = await limitedUntil(res); if (until) throw pause(until); return res; });
+      }).then(async res => { const until = await limitedUntil(res); if (until) throw pause(until); return res; }, err => { if (err?.name === 'TypeError') err.code ||= 'offline'; throw err; }); // no answer at all: offline, most likely
       if (opts.method === 'PUT' || opts.method === 'DELETE') {
         const job = mutationQueue.then(send); mutationQueue = job.catch(() => {}); return job;
       }
@@ -318,8 +323,9 @@
     }
     function describe(ops) {
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
-      return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
+      const text = { set: 'save', setAll: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
+      const col = o.col || [...new Set((o.items || []).map(x => x.col))].join(' + '); // setAll: 'diary + photos'
+      return `${text} ${col}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
     function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, Math.max(700, busyUntil - Date.now())); }
     async function op(o) { pending.push(clean(o)); await persist(); status('saving'); emit(); scheduleFlush(); }
@@ -337,6 +343,21 @@
         else if (current.status !== 404) throw new Error('Photo upload failed (' + current.status + ')');
       }
       throw new Error('The photo could not be uploaded. Please try again.');
+    }
+    // A new photo's thumbnail goes up as a file first; the record keeps the files' shas (a later delete needs no download),
+    // never the picture itself: a thumbnail Blob from the page stays on this device
+    async function prepare(col, item) {
+      if (col !== 'photos' || !item.thumb) return item;
+      if (typeof item.thumb !== 'string' || !item.thumb.startsWith('data:')) return { ...item, thumb: '' };
+      const thumbSha = await putFile(`photos/${item.id}-thumb.jpg`, item.thumb, `${auth.name || 'someone'}: add photo`);
+      const blob = dataUrlToBlob(item.thumb); if (blob) { thumbs.set(item.id, blob); await cachePut('thumb:' + item.id, blob); }
+      if (thumbSha) fileShas.set(item.id, { ...fileShas.get(item.id), thumb: thumbSha });
+      const shas = { ...item.shas, ...fileShas.get(item.id) };
+      return { ...item, thumb: '', ...(shas.full || shas.thumb ? { shas } : {}) };
+    }
+    async function forget(id) { // a photo's pictures on this device
+      thumbs.delete(id); thumbFails.delete(id); fileShas.delete(id); fullCache = fullCache.filter(x => x !== id);
+      await Promise.all([db.del('thumb:' + id), db.del('full:' + id)]);
     }
     async function getFile(path) { // a photo file as a Blob
       const res = await gh$(`/contents/${path}?ref=${branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
@@ -464,17 +485,18 @@
       metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
       mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
-      async set(col, item) {
-        if (col === 'photos' && item.thumb && typeof item.thumb !== 'string') item = { ...item, thumb: '' }; // a thumbnail Blob from the page stays on this device
-        if (col === 'photos' && item.thumb && item.thumb.startsWith('data:')) {
-          const thumb = item.thumb;
-          const thumbSha = await putFile(`photos/${item.id}-thumb.jpg`, thumb, `${auth.name || 'someone'}: add photo`);
-          const blob = dataUrlToBlob(thumb); if (blob) { thumbs.set(item.id, blob); await cachePut('thumb:' + item.id, blob); }
-          const shas = { ...item.shas }, fullSha = fullShas.get(item.id); fullShas.delete(item.id);
-          if (fullSha) shas.full = fullSha; if (thumbSha) shas.thumb = thumbSha;
-          item = { ...item, thumb: '', ...(shas.full || shas.thumb ? { shas } : {}) }; // file shas let a later delete skip downloading the photo
-        }
-        return op({ type: 'set', col, id: item.id, item });
+      async set(col, item) { item = await prepare(col, item); return op({ type: 'set', col, id: item.id, item }); },
+      // several records saved as one change, one write to GitHub: e.g. a diary entry with its photos (after uploadPhoto)
+      async saveAll(changes) {
+        const items = []; for (const { col, item } of changes) items.push({ col, item: await prepare(col, item) });
+        return op({ type: 'setAll', items });
+      },
+      // a new photo's two files, uploaded before its record is saved; resolves to the record to save (its thumbnail stays on this device)
+      async uploadPhoto(item, full) { await this.putFull(item.id, full); return prepare('photos', item); },
+      // files uploaded for photos whose records were never saved (a post that failed part way): deleted in the background
+      async discard(ids) {
+        for (const id of ids) { const s = fileShas.get(id) || {}; fileDeletes.push({ path: `photos/${id}-thumb.jpg`, sha: s.thumb || null }, { path: `photos/${id}.jpg`, sha: s.full || null }); await forget(id); }
+        await persist(); deleteFiles();
       },
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
       // Only the data change waits here (it works offline); the photo's files are deleted in the background once it is saved.
@@ -483,8 +505,7 @@
         const s = (view().collections.photos || []).find(p => p.id === id)?.shas || {};
         fileDeletes.push({ path: `photos/${id}-thumb.jpg`, sha: s.thumb || null }, { path: `photos/${id}.jpg`, sha: s.full || null });
         await op({ type: 'remove', col, id }); // saved on this device together with the files to delete
-        thumbs.delete(id); thumbFails.delete(id); fullCache = fullCache.filter(x => x !== id);
-        await Promise.all([db.del('thumb:' + id), db.del('full:' + id)]);
+        await forget(id);
       },
       async removeMany(col, ids) { // photos keep their one-by-one path (their files need deleting too)
         if (col === 'photos') { for (const id of ids) await this.remove(col, id); return; }
@@ -495,7 +516,7 @@
       batchSet: (col, items) => op({ type: 'setMany', col, items }),
       async putFull(id, dataUrl) {
         const fileSha = await putFile(`photos/${id}.jpg`, dataUrl, `${auth.name || 'someone'}: add photo`);
-        if (fileSha) fullShas.set(id, fileSha);
+        if (fileSha) fileShas.set(id, { ...fileShas.get(id), full: fileSha });
         if (await cachePut('full:' + id, dataUrlToBlob(dataUrl) || dataUrl)) keepFull(id);
       },
       async getFull(id) { // a Blob

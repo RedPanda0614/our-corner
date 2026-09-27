@@ -19,7 +19,7 @@ function server() {
     data: { version: 1, meta: { seeded: true }, collections: { events: [], dates: [], trips: [], tasks: [], wishes: [], diary: [], photos: [] } },
     sha: 1, files: new Map(), fileSeq: 0, log: [], messages: [], offline: false, conflict: null, beforePut: null,
     verify: { status: 200, body: {}, headers: {} }, dataReply: null, lagOnce: null,
-    deleteStatus: [], photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0,
+    deleteStatus: [], photoPut: {}, photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0,
     count(re) { return this.log.filter(l => re.test(l)).length; },
     async fetch(url, options = {}) {
       const file = decodeURIComponent(new URL(url).pathname).split('/contents/')[1];
@@ -31,6 +31,7 @@ function server() {
       if (file.startsWith('photos/')) {
         const cur = this.files.get(file), body = options.body ? JSON.parse(options.body) : {};
         if (method === 'PUT') {
+          if (this.photoPut[file]) return response(...[].concat(this.photoPut[file]));
           if (cur && body.sha !== cur.sha) return response(422);
           const sha = 'file-' + (++this.fileSeq); this.files.set(file, { content: body.content, sha });
           return response(201, { content: { sha } });
@@ -120,6 +121,15 @@ async function addPhotos(page, entryId, ids) {
   for (const id of ids) { await page.store.putFull(id, IMG); await page.store.set('photos', { id, entryId, thumb: IMG }); }
   await page.store.set('diary', { id: entryId, text: 'Picnic', photoIds: ids });
   await page.flush();
+}
+// app.js savePhotos for a diary post: every photo's files go up, then the photos and the entry are one change;
+// when it fails part way, the files this try uploaded are taken back
+async function post(page, entryId, ids, text = 'Picnic') {
+  const items = [], tried = [];
+  try {
+    for (const id of ids) { tried.push(id); items.push(await page.store.uploadPhoto({ id, thumb: IMG, entryId, caption: '' }, IMG)); }
+    await page.store.saveAll([{ col: 'diary', item: { id: entryId, text, photoIds: tried } }, ...items.map(item => ({ col: 'photos', item }))]);
+  } catch (err) { await page.store.discard(tried); throw err; }
 }
 // app.js entry delete handler, unchanged: photo records one by one, then the entry
 async function deleteEntry(page, id) { const entry = page.changes.diary.find(x => x.id === id); for (const pid of entry.photoIds) await page.store.remove('photos', pid); await page.store.remove('diary', id); }
@@ -475,6 +485,63 @@ test('a save conflict still reloads whatever GitHub has, even the content from b
   await page.store.set('tasks', { id: 'two', title: 'x' }); await page.flush();
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
   assert.equal(page.store.pending(), false);
+});
+
+// ---------- a diary post is one change ----------
+test('a diary post with three photos uploads their files first, then saves the photos and the entry in one write', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  const from = remote.log.length, shown = page.emits;
+  await post(page, 'e1', ['p1', 'p2', 'p3']);
+  assert.equal(page.emits - shown, 1, 'one change on this device');
+  assert.deepEqual(page.changes.diary.map(e => e.id), ['e1']); assert.ok(page.changes.photos.every(p => p.thumb.type === 'image/jpeg'));
+  await page.flush();
+  const log = remote.log.slice(from).filter(l => l.startsWith('PUT'));
+  assert.deepEqual(log, ['PUT photos/p1.jpg', 'PUT photos/p1-thumb.jpg', 'PUT photos/p2.jpg', 'PUT photos/p2-thumb.jpg', 'PUT photos/p3.jpg', 'PUT photos/p3-thumb.jpg', 'PUT data.json']);
+  assert.deepEqual(remote.data.collections.diary.map(e => [e.id, e.photoIds]), [['e1', ['p1', 'p2', 'p3']]]);
+  assert.deepEqual(remote.data.collections.photos.map(p => [p.id, p.entryId, p.thumb, p.shas.full === remote.files.get(`photos/${p.id}.jpg`).sha, p.shas.thumb === remote.files.get(`photos/${p.id}-thumb.jpg`).sha]),
+    [['p1', 'e1', '', true, true], ['p2', 'e1', '', true, true], ['p3', 'e1', '', true, true]]);
+  assert.match(remote.messages.at(-1), /: save diary \+ photos$/);
+  assert.equal(page.store.pending(), false);
+});
+
+test('a post that fails part way saves nothing and takes back the files it uploaded; posting again works', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.photoPut['photos/p2-thumb.jpg'] = 500;
+  await assert.rejects(post(page, 'e1', ['p1', 'p2', 'p3']), /Photo upload failed/);
+  assert.equal(remote.count(/^PUT photos\/p3/), 0, 'stops at the failure');
+  assert.equal(page.store.pending(), false, 'nothing to save'); assert.deepEqual(page.changes.diary, []); assert.deepEqual(page.changes.photos, []);
+  await waitFor(() => remote.files.size === 0, 'uploaded files deleted'); await settle();
+  assert.equal(remote.count(/^PUT data\.json/), 0);
+  assert.deepEqual(remote.log.filter(l => /^GET photos/.test(l)), ['GET photos', 'GET photos/p2-thumb.jpg'], 'uploaded files go by the shas from the upload; only the one that failed is looked up');
+  assert.ok(![...page.disk.keys()].some(k => /^(thumb|full):p[123]$/.test(k)), 'nothing left on this device');
+  assert.deepEqual(page.disk.get('github-state:test/private-data:main').files, []);
+  delete remote.photoPut['photos/p2-thumb.jpg'];
+  await post(page, 'e2', ['p4', 'p5']); await page.flush();
+  assert.deepEqual(remote.data.collections.diary.map(e => e.id), ['e2']); assert.deepEqual(remote.data.collections.photos.map(p => p.id), ['p4', 'p5']);
+  assert.equal(remote.files.size, 4); assert.equal(remote.count(/^PUT data\.json/), 1);
+});
+
+test('a post that fails because the phone is offline or GitHub is busy says so in the error', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  remote.offline = true;
+  await assert.rejects(post(page, 'e1', ['p1']), e => e.code === 'offline');
+  remote.offline = false; remote.photoPut['photos/p2.jpg'] = [403, { message: 'You have exceeded a secondary rate limit.' }, { 'retry-after': '120' }];
+  await assert.rejects(post(page, 'e2', ['p2']), e => e.code === 'ratelimit' && Math.abs(e.until - (Date.now() + 120000)) < 1000);
+  delete remote.photoPut['photos/p2.jpg']; remote.photoPut['photos/p3.jpg'] = 413; // really too large: no code, the app says so
+  await page.advance(121000);
+  await assert.rejects(post(page, 'e3', ['p3']), e => !e.code);
+  assert.deepEqual(page.changes.diary, []);
+});
+
+test('in local mode a post is one change too, and a failed one leaves no photo behind', async () => {
+  const page = browser(null, { config: {} }); await page.connect();
+  await post(page, 'e1', ['p1', 'p2']);
+  const saved = page.disk.get('data').collections;
+  assert.deepEqual(saved.diary.map(e => [e.id, e.photoIds]), [['e1', ['p1', 'p2']]]); assert.deepEqual(saved.photos.map(p => [p.id, p.thumb]), [['p1', IMG], ['p2', IMG]]);
+  assert.equal(page.disk.get('full:p2').type, 'image/jpeg');
+  let n = 0; const put = page.store.putFull; page.store.putFull = (...a) => (++n === 2 ? Promise.reject(new Error('Could not save on this device.')) : put(...a));
+  await assert.rejects(post(page, 'e2', ['p3', 'p4']));
+  assert.deepEqual(page.disk.get('data').collections.diary.map(e => e.id), ['e1']); assert.ok(!page.disk.has('full:p3'));
 });
 
 // ---------- pictures on the device are Blobs ----------

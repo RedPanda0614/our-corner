@@ -690,7 +690,7 @@
   }
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${esc(p.thumb)}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos ${busy.diary ? 'disabled' : ''}></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
@@ -744,22 +744,24 @@
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
     return { thumb, full };
   }
-  async function savePhotos(list, extra, { keepPartial = false } = {}) {
-    const ids = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
+  // Every photo's files go up first, then the records are saved as one change, with the entry when there is one
+  // (entry: photo ids -> the diary entry); an album upload (keepPartial) saves each photo as it goes, as before.
+  async function savePhotos(list, extra, { keepPartial = false, entry = null } = {}) {
+    const items = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
     try {
       for (const p of list) {
         const id = newId(); tried.push(id);
-        await store.putFull(id, p.full);
-        await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
-        ids.push(id);
+        const item = await store.uploadPhoto({ id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra }, p.full);
+        if (keepPartial) await store.set('photos', item); else items.push(item);
       }
+      if (!keepPartial && (entry || items.length)) await store.saveAll([...(entry ? [{ col: 'diary', item: entry(tried) }] : []), ...items.map(item => ({ col: 'photos', item }))]);
     } catch (err) {
-      // a diary photo is no use without its entry: when a post fails part way, take back what this try stored,
-      // so nothing is left pointing at an entry that was never saved and trying again doesn't add them twice
-      if (!keepPartial) for (const id of tried) await Promise.resolve(store.remove('photos', id)).catch(e => console.error(e));
+      // a diary photo is no use without its entry: when a post fails part way, take back the files this try uploaded,
+      // so nothing is left for an entry that was never saved and trying again doesn't add them twice
+      if (!keepPartial) await Promise.resolve(store.discard(tried)).catch(e => console.error(e));
       throw err;
     }
-    return ids;
+    return tried;
   }
 
   // ---------- lightbox ----------
@@ -1450,14 +1452,18 @@
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
     busy.diary++; render();
     try {
-      const id = newId();
-      const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
+      const id = newId(); // the photos and the entry are saved together, once all the photos are up
+      await savePhotos(diaryDraft.pending, { entryId: id, date }, { entry: photoIds => ({ id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() }) });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = []; dropDraft('diary');
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
       flash('Posted.');
-    } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
+    } catch (e) {
+      console.error(e);
+      flash(e.code === 'offline' ? 'Could not post: you seem to be offline. Your entry is kept; post it again when you are back online.'
+        : e.code === 'ratelimit' ? `Could not post: GitHub is busy. Your entry is kept; try again in ${Math.max(1, Math.ceil((e.until - Date.now()) / 60000))} min.`
+        : 'Could not post. Photos may be too large; try fewer.');
+    }
     busy.diary--; render();
   }
 
