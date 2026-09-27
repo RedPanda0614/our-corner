@@ -1230,6 +1230,17 @@
     for (const [w, c] of Object.entries(obj(all.checkin))) checkinDrafts[w] = { mood: Number(obj(c).mood) || 0, text: str(obj(c).text) };
     const ask = one('ask'); planner.drafts.ask = { text: str(ask.text), date: str(ask.date) };
     const st = one('status'); Object.assign(statusDraft, { owner: ui.me, emoji: str(st.emoji), text: str(st.text), dirty: !!(st.emoji || st.text) });
+    if (diaryDraft.text || diaryDraft.tags) ui.newEntryOpen = true; // an unfinished entry comes back already open
+    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts) }; reopenDraftEdits();
+  }
+  let reopenEdits = null;
+  function reopenDraftEdits() { // a half-finished edit of an answer or check-in already posted reopens in edit mode, once the data is here
+    if (!reopenEdits || !ui.dataReady || !ui.me) return;
+    const { answers, checkins } = reopenEdits; reopenEdits = null;
+    const a = answers.filter(d => { const m = answerOf(d, ui.me); return m && questionDrafts[d] !== m.text; }).sort().pop();
+    if (a) ui.editingAnswer = a;
+    const c = checkins.filter(w => { const m = checkinOf(w, ui.me), d = checkinDrafts[w]; return m && d && (d.mood !== (Number(m.mood) || 0) || d.text !== (m.text || '')); }).sort().pop();
+    if (c) editingCheckin = c;
   }
 
   // ---------- chrome: player card, hero, sync ----------
@@ -1852,7 +1863,7 @@
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
   let holdRenders = 0; // see quietly()
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
   // many changes in a row (undoing an import removes each event): the page renders once at the end instead of after each
   async function quietly(job) { holdRenders++; try { return await job(); } finally { holdRenders--; scheduleRender(); } }
   let lastError = 0;
