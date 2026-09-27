@@ -42,7 +42,7 @@ function server() {
           this.files.delete(file); return response(200);
         }
         this.active++; this.maxActive = Math.max(this.maxActive, this.active);
-        await new Promise(r => setTimeout(r, this.photoDelay)); this.active--;
+        await new Promise(r => (this.gate ? this.gate.push(r) : setTimeout(r, this.photoDelay))); this.active--; // gate: held until the test lets it through
         if (this.photoStatus) return response(this.photoStatus);
         if (this.photoReply) return response(...this.photoReply);
         if (!cur) return response(404);
@@ -97,9 +97,9 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   });
   vm.runInContext(source, context);
   const store = window.CCStore.create(config);
-  const changes = {}, statuses = []; let emits = 0;
-  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, get emits() { return emits; },
-    connect: () => store.start((col, items) => { if (col === 'meta') emits++; changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
+  const changes = {}, statuses = [], photoTimes = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
+  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, get emits() { return emits; },
+    connect: () => store.start((col, items) => { if (col === 'meta') emits++; if (col === 'photos') photoTimes.push(Date.now() + clock.offset); changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
     async flush() { assert.ok(await page.runTimers(700), 'save scheduled'); },
@@ -231,7 +231,7 @@ test('metaKey and mergeMeta also work in local mode', async () => {
 });
 
 // ---------- #8 thumbnails ----------
-test('a new device downloads thumbnails four at a time and redraws once per burst', async () => {
+test('a new device downloads thumbnails four at a time and shows a burst of them as one photo update', async () => {
   const remote = server(); remote.photoDelay = 2;
   remote.data.collections.photos = Array.from({ length: 30 }, (_, i) => ({ id: 'ph' + i, thumb: '' }));
   for (let i = 0; i < 30; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
@@ -239,9 +239,25 @@ test('a new device downloads thumbnails four at a time and redraws once per burs
   await waitFor(() => remote.count(/-thumb\.jpg raw$/) === 30 && remote.active === 0, 'thumbs');
   await settle();
   assert.ok(remote.maxActive <= 4, 'max concurrent ' + remote.maxActive);
-  const before = page.emits, runs = await page.runTimers(50);
-  assert.equal(page.emits - before, runs); assert.ok(runs <= 2, 'emits ' + runs);
+  const full = page.emits, sent = page.photoTimes.length; await page.advance(400);
+  assert.equal(page.photoTimes.length - sent, 1, 'one update for the burst'); assert.equal(page.emits, full, 'only the photo list is sent again');
   assert.ok(page.changes.photos.every(p => p.thumb.startsWith('data:image/jpeg;base64,')));
+});
+
+test('thumbnails arriving one after another update the photo list at most every 0.4 s, the first ones quickly', async () => {
+  const remote = server(); remote.gate = [];
+  remote.data.collections.photos = Array.from({ length: 12 }, (_, i) => ({ id: 'ph' + i, thumb: '' }));
+  for (let i = 0; i < 12; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
+  const page = browser(remote); await page.start();
+  await waitFor(() => remote.gate.length === 4, 'first four asked for');
+  const t0 = Date.now() + page.clock.offset, sent = page.photoTimes.length;
+  for (let i = 0; i < 12; i++) { await waitFor(() => remote.gate.length, 'next thumb'); remote.gate.shift()(); await settle(); await page.advance(100); } // one arrives every 0.1 s
+  await page.advance(400);
+  const times = page.photoTimes.slice(sent);
+  assert.equal(times[0] - t0, 50, 'the first one shows after 50 ms');
+  times.slice(1).forEach((t, i) => assert.ok(t - times[i] >= 400, `updates ${t - times[i]} ms apart`));
+  assert.ok(times.length <= 4, times.length + ' updates for 1.2 s of arrivals');
+  assert.ok(page.changes.photos.every(p => p.thumb), 'every thumb is shown in the end');
 });
 
 test('failed thumbnails wait before trying again instead of being requested on every change', async () => {
@@ -254,7 +270,7 @@ test('failed thumbnails wait before trying again instead of being requested on e
   assert.equal(remote.count(/-thumb/), 10);
   remote.photoStatus = null; for (let i = 0; i < 10; i++) remote.files.set(`photos/ph${i}-thumb.jpg`, { content: 'YQ==', sha: 's' + i });
   page.clock.offset = 16000; await page.intervals[0].fn(); // next poll after the wait
-  await waitFor(() => remote.count(/-thumb/) === 20 && remote.active === 0, 'retry'); await settle(); await page.runTimers(50);
+  await waitFor(() => remote.count(/-thumb/) === 20 && remote.active === 0, 'retry'); await settle(); await page.advance(400);
   assert.ok(page.changes.photos.every(p => p.thumb));
 });
 
@@ -364,7 +380,7 @@ test('thumbnails skipped while GitHub is busy load after the wait, without count
   await waitFor(() => remote.active === 0 && remote.count(/-thumb/) >= 1, 'first tries'); await settle();
   const tries = remote.count(/-thumb/); assert.ok(tries <= 4, 'stopped after the first answers: ' + tries);
   remote.photoReply = null;
-  await page.advance(60000); await waitFor(() => remote.count(/-thumb/) === tries + 8 && remote.active === 0, 'after the wait'); await settle(); await page.runTimers(50);
+  await page.advance(60000); await waitFor(() => remote.count(/-thumb/) === tries + 8 && remote.active === 0, 'after the wait'); await settle(); await page.advance(400);
   assert.ok(page.changes.photos.every(p => p.thumb));
 });
 

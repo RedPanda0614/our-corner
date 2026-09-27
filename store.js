@@ -153,7 +153,7 @@
     const thumbs = new Map(); // photo id -> object URL / data URL
     const loadingThumbs = new Set();
     const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
-    const thumbQueue = []; let thumbActive = 0, thumbEmit = null;
+    const thumbQueue = []; let thumbActive = 0, thumbEmit = null, thumbLast = 0, shown = null; // shown: the photo list of the last full update
     const superseded = new Map(); // data.json shas our own saves replaced -> when; GitHub can briefly serve those again
     const fullShas = new Map(); // photo id -> sha of the full file uploaded in this session
     let fileDeletes = []; // photo files still to delete on GitHub, [{ path, sha }]; kept across reloads, retried until done
@@ -213,16 +213,13 @@
     const keepFull = id => { fullCache = [...fullCache.filter(x => x !== id), id]; };
     const persist = () => cachePut(stateKey, clean({ base, sha, pending, files: fileDeletes, fullCache }));
     const view = () => applyAll(base, pending);
+    const withThumbs = list => list.map(p => ({ ...p, thumb: thumbs.get(p.id) || '' }));
     function emit() {
       if (!onChange) return;
-      const v = view();
-      COLLECTIONS.forEach(c => {
-        let items = v.collections[c] || [];
-        if (c === 'photos') items = items.map(p => ({ ...p, thumb: thumbs.get(p.id) || '' }));
-        onChange(c, items);
-      });
+      const v = view(); shown = v.collections.photos || [];
+      COLLECTIONS.forEach(c => onChange(c, c === 'photos' ? withThumbs(shown) : v.collections[c] || []));
       onChange('meta', v.meta || {});
-      (v.collections.photos || []).forEach(p => { if (!thumbs.has(p.id)) loadThumb(p.id); });
+      shown.forEach(p => { if (!thumbs.has(p.id)) loadThumb(p.id); });
     }
 
     async function pull(force) {
@@ -394,7 +391,12 @@
         });
       }
     }
-    function thumbReady(id, url) { thumbs.set(id, url); thumbEmit ||= setTimeout(() => { thumbEmit = null; emit(); }, 50); } // one update for a burst of thumbs
+    // Arriving thumbnails go out together, as the photo list alone (nothing else changed): at most one update every 0.4 s,
+    // and the first ones after a quiet spell 50 ms after they arrive
+    function thumbReady(id, url) {
+      thumbs.set(id, url);
+      thumbEmit ||= setTimeout(() => { thumbEmit = null; thumbLast = Date.now(); if (shown && onChange) onChange('photos', withThumbs(shown)); else emit(); }, Math.max(50, thumbLast + 400 - Date.now()));
+    }
     function retryThumbs() { // missing thumbs: failed ones once their wait is over, and any skipped while GitHub was busy (emit only runs when data changes)
       const ids = new Set();
       (base.collections.photos || []).forEach(p => { ids.add(p.id); if (!thumbs.has(p.id)) loadThumb(p.id); });
