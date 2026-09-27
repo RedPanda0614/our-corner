@@ -1,0 +1,105 @@
+# Readable backup for the private data repository (our-corner-data).
+# Copy it to .github/workflows/ in that repository: GitHub runs workflows only from there, not from this folder.
+# The site saves its data compressed (data/*.json.gz). Once a day, and whenever you press
+# "Run workflow" on the Actions tab, this writes plain, indented copies to the
+# `readable-backup` branch, one commit per change, so the history there shows what changed.
+# The site only reads the main branch, so this never touches what the site uses.
+name: Readable backup
+
+on:
+  schedule:
+    - cron: '17 19 * * *' # 03:17 in Beijing
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readable-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: readable-backup
+    steps:
+      - name: Open the backup branch
+        run: |
+          git init -q backup && cd backup
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin "$BRANCH"; then git checkout -q -b "$BRANCH" FETCH_HEAD; else git checkout -q --orphan "$BRANCH"; fi
+
+      - name: Write readable copies
+        run: |
+          python3 - backup <<'PY'
+          import gzip, json, os, sys, urllib.error, urllib.request
+
+          API, REPO, TOKEN = os.environ.get('GITHUB_API_URL', 'https://api.github.com'), os.environ['GITHUB_REPOSITORY'], os.environ['GH_TOKEN']
+          OUT = os.path.join(sys.argv[1], 'readable')
+
+          def get(path, raw=False):  # a file or folder on the main branch; None if it isn't there
+              req = urllib.request.Request(f'{API}/repos/{REPO}/contents/{path}', headers={
+                  'Authorization': f'Bearer {TOKEN}', 'X-GitHub-Api-Version': '2022-11-28',
+                  'Accept': 'application/vnd.github.raw' if raw else 'application/vnd.github+json'})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as res: return res.read()
+              except urllib.error.HTTPError as err:
+                  if err.code == 404: return None
+                  raise
+
+          def load(name, blob):
+              return json.loads((gzip.decompress(blob) if name.endswith('.gz') else blob).decode('utf-8'))
+
+          def merge(parts):  # the whole picture, as the site sees it
+              out = {'meta': {}, 'collections': {}}
+              for part in parts:
+                  for key, value in (part.get('meta') or {}).items():
+                      if key == 'legacy': continue  # each file's record of the data.json it came from; the site doesn't show it
+                      cur = out['meta'].get(key)
+                      out['meta'][key] = {**cur, **value} if isinstance(cur, dict) and isinstance(value, dict) else value
+                  for col, items in (part.get('collections') or {}).items():
+                      out['collections'].setdefault(col, []).extend(items or [])
+              return out
+
+          files = {}
+          listing = get('data')
+          for f in json.loads(listing) if listing else []:
+              if f.get('type') == 'file' and f['name'].endswith(('.json', '.json.gz')):
+                  files[f['name'].removesuffix('.gz')] = load(f['name'], get(f['path'], raw=True))
+          legacy = get('data.json', raw=True)
+          if legacy is not None: files['data.json' if not files else 'old-data.json'] = load('data.json', legacy)
+          if not files: sys.exit('No data files found on the main branch.')
+
+          order = lambda name: (name != 'main.json', name != 'imported.json', name)
+          shards = [files[n] for n in sorted(files, key=order) if n not in ('data.json', 'old-data.json')]
+          files['everything.json'] = merge(shards) if shards else files['data.json']
+
+          os.makedirs(OUT, exist_ok=True)
+          for name in os.listdir(OUT):
+              if name.endswith('.json') and name not in files: os.remove(os.path.join(OUT, name))
+          for name, value in files.items():
+              with open(os.path.join(OUT, name), 'w', encoding='utf-8') as fh:
+                  json.dump(value, fh, ensure_ascii=False, indent=2); fh.write('\n')
+          with open(os.path.join(sys.argv[1], 'README.md'), 'w', encoding='utf-8') as fh:
+              fh.write('# Readable backup\n\n'
+                       'Plain copies of the site data, written by the "Readable backup" workflow on the main branch.\n'
+                       'The site never reads this branch. Each commit is one backup, so the history shows what changed.\n\n'
+                       '- `readable/everything.json`: all of it together, the way the site shows it.\n'
+                       '- `readable/main.json`, `imported.json` and one file per person: the same data, file by file.\n'
+                       '- `readable/old-data.json`: the single data file from before the split, kept as it was.\n\n'
+                       'To put a file back, gzip it (`gzip -k main.json`) and upload it to `data/` on the main branch.\n')
+          print('\n'.join(f'{n}: {os.path.getsize(os.path.join(OUT, n)):,} bytes' for n in sorted(files)))
+          PY
+
+      - name: Save the backup
+        working-directory: backup
+        run: |
+          git add -A
+          if git diff --cached --quiet; then echo 'Nothing changed since the last backup.'; exit 0; fi
+          git commit -q -m "Readable backup $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
+          git push -q origin "$BRANCH"
