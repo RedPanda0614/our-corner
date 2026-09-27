@@ -299,14 +299,14 @@
       + (isSpecial ? `<label class="cc-inline-check"><input name="repeat" type="checkbox" ${planner.drafts.event.repeat ? 'checked' : ''}><span>Repeat every year</span></label>` : '')
       + notesField('event');
     const form = planner.forms.event ? formShell('event', 'Add to calendar', eventFields, '+ Add to calendar', '<button type="button" class="cc-button" data-show-form="event">Cancel</button>') : '';
-    $('[data-home-calendar]').innerHTML = panelShell('calendar', '▦ CALENDAR', '共同日历',
+    fill($('[data-home-calendar]'), panelShell('calendar', '▦ CALENDAR', '共同日历',
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
-      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`);
+      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`));
   }
 
   // ---------- special days + memory ----------
@@ -326,7 +326,7 @@
     $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${esc(it.next)}"><span class="cc-plan-tag"><i class="cc-dot k-${safeKind(it.kind)}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
     const editor = $('[data-special-dialog]');
     if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
-    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
+    fill(editor, planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '');
   }
   const entryDisplayDate = entry => entry.updatedAt ? currentDayFor(entry.updatedAt) : (entry.date || today);
   const currentDayFor = timestamp => { const d = new Date(timestamp); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -432,7 +432,7 @@
     if (!text) { field.setCustomValidity('Write an answer first.'); field.reportValidity(); return; }
     const mine = answerOf(date, ui.me), theirs = answerOf(date, partnerKey());
     const job = mine ? store.update('answers', mine.id, { text }) : store.set('answers', { id: `${date}:${ui.me}`, date, q: questionFor(date), author: meName(), text, createdAt: Date.now() });
-    run(job.then(() => { delete questionDrafts[date]; if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
+    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
   }
 
@@ -512,23 +512,23 @@
     const text = String(field.value || '').trim().slice(0, 600), mood = draft.mood;
     const mine = checkinOf(week, ui.me), theirs = checkinOf(week, partnerKey()), partner = PEOPLE[partnerKey()];
     const job = mine ? store.update('checkins', mine.id, { mood, text }) : store.set('checkins', { id: `${week}:${ui.me}`, week, mood, text, q: checkinPromptFor(week), author: meName(), createdAt: Date.now() });
-    run(job.then(() => { delete checkinDrafts[week]; if (editingCheckin === week) editingCheckin = null; render(); }));
+    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); }));
     flash(mine ? 'Saved.' : theirs ? `Checked in. Now you can see how ${partner}’s week went ♡` : `Checked in. You’ll see ${partner}’s once they check in.`);
   }
-  root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') checkinDraft(f.dataset.checkinForm).text = e.target.value; });
+  root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') { checkinDraft(f.dataset.checkinForm).text = e.target.value; keepDraft('checkin', f.dataset.checkinForm); } });
   root.addEventListener('submit', e => { if (e.target.matches('[data-checkin-form]')) { e.preventDefault(); submitCheckin(e.target); } });
   root.addEventListener('click', e => {
     const el = e.target.closest('button'); if (!el || el.disabled) return;
     const ds = el.dataset;
     if (ds.checkinMood) { // picking a mood only flips the tiles, so focus and the half-typed text stay put
       const f = el.closest('[data-checkin-form]'); if (!f) return;
-      checkinDraft(f.dataset.checkinForm).mood = Number(ds.checkinMood);
+      checkinDraft(f.dataset.checkinForm).mood = Number(ds.checkinMood); keepDraft('checkin', f.dataset.checkinForm);
       f.querySelectorAll('[data-checkin-mood]').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
     } else if (ds.checkinEdit) {
       const mine = checkinOf(ds.checkinEdit, ui.me); if (!mine) return;
       editingCheckin = ds.checkinEdit; checkinDrafts[ds.checkinEdit] = { mood: Number(mine.mood) || 0, text: mine.text || '' };
       render(); $(`[data-checkin-form="${ds.checkinEdit}"] textarea`)?.focus();
-    } else if (ds.checkinCancel) { delete checkinDrafts[ds.checkinCancel]; editingCheckin = null; render(); }
+    } else if (ds.checkinCancel) { delete checkinDrafts[ds.checkinCancel]; dropDraft('checkin', ds.checkinCancel); editingCheckin = null; render(); }
   });
 
   // ---------- achievements: earned from what is already in the data; nothing resets, nothing is counted elsewhere ----------
@@ -624,7 +624,7 @@
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
-    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`);
+    fill($('[data-panel="todo"]'), panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`));
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
@@ -632,7 +632,7 @@
     const page = pageList('wishlist', wishes);
     const cards = page.items.map(i => `<article class="cc-plan-card cc-wish-note cc-wish-note-${wishNoteStyle(i)} ${i.got ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
     const fields = formField('wish', 'title', 'Something we would love', 'text', true) + selectField('wish', 'who', 'Who is it for?', [['both', 'Both of us'], ['sijie', '斯婕'], ['zhenzhen', '真真']]) + notesField('wish');
-    $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `${pageToolbar(`${wishes.length} wishes`, `<button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button>`)}${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid" data-page-list="wishlist">${cards}</div>${pageNav('wishlist', page)}`);
+    fill($('[data-panel="wishlist"]'), panelShell('wishlist', '♡ WISHLIST', '愿望清单', `${pageToolbar(`${wishes.length} wishes`, `<button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button>`)}${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid" data-page-list="wishlist">${cards}</div>${pageNav('wishlist', page)}`));
   }
 
   // ---------- diary ----------
@@ -692,7 +692,7 @@
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
       return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
-    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
+    fill($('[data-panel="diary"]'), panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page)));
   }
 
   // ---------- album ----------
@@ -722,8 +722,8 @@
     const title = selected?.title || (ui.album === 'unsorted' ? 'Unsorted' : 'All photos');
     const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
     const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${thumbOf(p) ? `<img class="cc-photo-img" src="${esc(thumbOf(p))}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
-    $('[data-panel="album"]').innerHTML = panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`);
+    fill($('[data-panel="album"]'), panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
@@ -1022,9 +1022,9 @@
   function renderHeroCaption() {
     const cap = data.meta.heroCaption || 'SUNFLOWER GARDEN', custom = !!data.meta.hero;
     loadHero(data.meta.hero);
-    $('[data-hero-caption]').innerHTML = ui.editCaption
-      ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
-      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${busy.hero ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
+    fill($('[data-hero-caption]'), ui.editCaption
+      ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(ui.captionDraft ?? cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
+      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${busy.hero ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`);
   }
 
   // ---------- status ----------
@@ -1145,14 +1145,14 @@
     const p = STATUS_PRESETS[i]; if (!p) return;
     const t = statusDraft.text.trim(); // replace the words only while they are still a preset's label
     if (!t || STATUS_PRESETS.some(x => [x.zh, x.en, `${x.zh} ${x.en}`].includes(t))) statusDraft.text = p.zh;
-    Object.assign(statusDraft, { emoji: p.emoji, dirty: true });
+    Object.assign(statusDraft, { emoji: p.emoji, dirty: true }); keepDraft('status');
     renderStatus(false);
   }
   function saveStatus(form) {
     const field = form.elements.text, text = String(field.value || '').trim().slice(0, STATUS_MAX), pick = statusPreset(statusDraft.emoji);
     if (!statusDraft.emoji) { flash('Pick an emoji for your status first.'); $('[data-status-preset]')?.focus(); return; }
     const value = { emoji: statusDraft.emoji, text: text || pick?.zh || '', at: Date.now() };
-    Object.assign(statusDraft, { emoji: value.emoji, text: value.text, dirty: false });
+    Object.assign(statusDraft, { emoji: value.emoji, text: value.text, dirty: false }); dropDraft('status');
     setMyStatus(value);
     flash('Status saved.');
   }
@@ -1163,9 +1163,9 @@
       if (el.hasAttribute('data-status-toggle')) openStatus(!ui.statusOpen);
       else if (el.hasAttribute('data-status-close')) openStatus(false);
       else if (el.dataset.statusPreset != null) pickStatusPreset(+el.dataset.statusPreset);
-      else if (el.hasAttribute('data-status-clear')) { Object.assign(statusDraft, { emoji: '', text: '', dirty: false }); setMyStatus(null); flash('Status cleared.'); }
+      else if (el.hasAttribute('data-status-clear')) { Object.assign(statusDraft, { emoji: '', text: '', dirty: false }); dropDraft('status'); setMyStatus(null); flash('Status cleared.'); }
     });
-    root.addEventListener('input', e => { if (e.target.name === 'text' && e.target.closest('[data-status-form]')) Object.assign(statusDraft, { text: e.target.value, dirty: true }); });
+    root.addEventListener('input', e => { if (e.target.name === 'text' && e.target.closest('[data-status-form]')) { Object.assign(statusDraft, { text: e.target.value, dirty: true }); keepDraft('status'); } });
     root.addEventListener('submit', e => { if (e.target.matches('[data-status-form]')) { e.preventDefault(); saveStatus(e.target); } });
     // tapping anywhere else closes it (composedPath: a re-render may already have detached the target)
     document.addEventListener('click', e => {
@@ -1198,6 +1198,38 @@
     // the click that ends a swipe must not toggle it straight back (or count as an outside tap)
     document.addEventListener('click', e => { if (performance.now() - statusSwipedAt < 400) { statusSwipedAt = -1e9; e.stopPropagation(); e.preventDefault(); } }, true);
     setInterval(() => { if (ui.statusOpen && !document.hidden) renderStatus(true); }, 60000); // keep "2h ago" fresh
+  }
+
+  // ---------- drafts: typed but not sent yet, kept on this device per person (localStorage), so a reload or iOS
+  // closing the app loses nothing; sending, cancelling or closing the form forgets them. Picked photos are not kept (too big).
+  let draftsOwner = null;
+  const draftNow = { // each kind as it is in memory now, or null when there is nothing to keep
+    diary: () => (diaryDraft.text || diaryDraft.tags || diaryDraft.date !== today ? { text: diaryDraft.text, tags: diaryDraft.tags, date: diaryDraft.date !== today ? diaryDraft.date : '' } : null),
+    reply: id => commentDrafts[id] || null,
+    answer: id => questionDrafts[id] || null,
+    checkin: id => { const c = checkinDrafts[id]; return c && (c.mood || c.text) ? { mood: c.mood, text: c.text } : null; },
+    ask: () => (planner.drafts.ask.text ? { text: planner.drafts.ask.text, date: planner.drafts.ask.date || '' } : null),
+    status: () => (statusDraft.dirty ? { emoji: statusDraft.emoji, text: statusDraft.text } : null)
+  };
+  const obj = v => (v && typeof v === 'object' ? v : {}), str = v => (typeof v === 'string' ? v : '');
+  function keepDraft(kind, id = '', drop = false) { // written straight away (a few hundred bytes), so nothing waits on a timer when iOS closes the app
+    if (!draftsOwner || draftsOwner !== ui.me) return;
+    const all = obj(ls.get('drafts:' + draftsOwner, {})), box = all[kind] = obj(all[kind]), v = drop ? null : draftNow[kind](id);
+    if (v) box[id] = v; else delete box[id];
+    if (!Object.keys(box).length) delete all[kind];
+    ls.set('drafts:' + draftsOwner, all);
+  }
+  const dropDraft = (kind, id) => keepDraft(kind, id, true);
+  function loadDrafts() { // on start, and when someone else starts playing on this device
+    if (!ui.me || draftsOwner === ui.me) return;
+    draftsOwner = ui.me;
+    const all = obj(ls.get('drafts:' + ui.me, {})), one = k => obj(obj(all[k])['']);
+    const dy = one('diary'); Object.assign(diaryDraft, { text: str(dy.text), tags: str(dy.tags), date: validDay(str(dy.date)) ? dy.date : today });
+    for (const [mem, kind] of [[commentDrafts, 'reply'], [questionDrafts, 'answer']]) { for (const k in mem) delete mem[k]; for (const [k, v] of Object.entries(obj(all[kind]))) if (str(v)) mem[k] = v; }
+    for (const k in checkinDrafts) delete checkinDrafts[k];
+    for (const [w, c] of Object.entries(obj(all.checkin))) checkinDrafts[w] = { mood: Number(obj(c).mood) || 0, text: str(obj(c).text) };
+    const ask = one('ask'); planner.drafts.ask = { text: str(ask.text), date: str(ask.date) };
+    const st = one('status'); Object.assign(statusDraft, { owner: ui.me, emoji: str(st.emoji), text: str(st.text), dirty: !!(st.emoji || st.text) });
   }
 
   // ---------- chrome: player card, hero, sync ----------
@@ -1237,16 +1269,80 @@
 
   // ---------- render with focus preservation ----------
   let frame = 0, passive = false; // passive: a background sync or timer, not something the user just did
+  let ime = null, imeWaiting = false; // ime: the field with an open IME composition (pinyin not yet turned into 你)
+  root.addEventListener('compositionstart', e => { ime = e.target; });
+  root.addEventListener('compositionend', () => { ime = null; if (imeWaiting) { imeWaiting = false; scheduleRender(); } }); // next frame: Safari sends the last input after compositionend
+  // the text field being typed in stays the same element through a re-render (caret, IME and the phone keyboard carry on):
+  // everything around it is swapped for the fresh markup; if the markup around it changed shape, the box is rebuilt as before
+  const typing = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password)$/.test(el.type)));
+  const idOf = el => [...el.attributes].filter(x => x.name === 'id' || x.name.startsWith('data-')).map(x => x.name + '=' + x.value).join();
+  function keepField(box, html, field) {
+    const t = document.createElement('template'); t.innerHTML = html;
+    const path = [], pairs = []; for (let n = field; n !== box; n = n.parentNode) path.unshift(n);
+    let fresh = t.content;
+    for (const node of path) { // its twin: same id / data-* if it has some (entries can move), else same position
+      const kids = [...fresh.childNodes], id = idOf(node);
+      const twin = id ? kids.find(k => k.nodeName === node.nodeName && idOf(k) === id) : kids[[...node.parentNode.childNodes].indexOf(node)];
+      if (!twin || twin.nodeName !== node.nodeName || idOf(twin) !== id) return false;
+      pairs.push([node, twin]); fresh = twin;
+    }
+    if (fresh.value !== field.value || fresh.type !== field.type) return false; // the render means to change what is typed
+    for (const [node, twin] of pairs) {
+      const kids = [...twin.parentNode.childNodes], at = kids.indexOf(twin);
+      for (const k of [...node.parentNode.childNodes]) if (k !== node) k.remove();
+      node.before(...kids.slice(0, at)); node.after(...kids.slice(at + 1));
+      for (const x of [...node.attributes]) if (!twin.hasAttribute(x.name)) node.removeAttribute(x.name);
+      for (const x of twin.attributes) if (x.name !== 'value' && node.getAttribute(x.name) !== x.value) node.setAttribute(x.name, x.value);
+    }
+    return true;
+  }
+  function fill(box, html) { const a = document.activeElement; if (!(typing(a) && box.contains(a) && keepField(box, html, a))) box.innerHTML = html; }
+  // a keyboard user on a button / select / checkbox that a render replaces lands on its twin (same data-* or same label,
+  // in the same box), not on <body>; mouse clicks keep today's behaviour
+  const STATEFUL = /^data-(today|selected|key)$/; // data-* that follow state, not which control it is
+  const keysOf = el => [...el.attributes].filter(x => (x.name === 'id' || x.name.startsWith('data-')) && !STATEFUL.test(x.name)).map(x => x.name + '=' + x.value).join();
+  const boxOf = el => { for (let p = el.parentElement; p && p !== root; p = p.parentElement) { const k = keysOf(p); if (k) return p.tagName + k; } return ''; };
+  const twins = (s, same) => [...root.getElementsByTagName(s.tag)].filter(x => same(x) && !x.disabled && boxOf(x) === s.box && x.getClientRects().length);
+  let pointerLast = false; // a <select> shows :focus-visible even when clicked, so it also needs the last input to be a key
+  document.addEventListener('pointerdown', () => { pointerLast = true; }, true);
+  document.addEventListener('keydown', () => { pointerLast = false; }, true);
+  function focusSpot() {
+    const a = document.activeElement;
+    try { if (!a || !root.contains(a) || !a.matches('button, select, input[type=checkbox], input[type=radio]') || !a.matches(':focus-visible') || (a.tagName === 'SELECT' && pointerLast)) return null; } catch { return null; }
+    const s = { el: a, tag: a.tagName, keys: keysOf(a), label: a.getAttribute('aria-label'), box: boxOf(a) };
+    s.same = x => keysOf(x) === s.keys && x.getAttribute('aria-label') === s.label;
+    const list = twins(s, s.same); s.i = list.indexOf(a); s.n = list.length;
+    return s;
+  }
+  function refocus(s) {
+    const now = document.activeElement;
+    if (!s || s.el.isConnected || (now && now !== document.body)) return;
+    const label = x => x.getAttribute('aria-label'), names = x => keysOf(x).replace(/=[^,]*/g, ''), only = m => (m.length === 1 ? m[0] : null);
+    const same = twins(s, s.same), gone = s.label && ![...root.getElementsByTagName(s.tag)].some(x => label(x) === s.label && boxOf(x) === s.box);
+    const el = (same.length === s.n ? same[s.i] : only(same)) // the same control, e.g. a calendar day or a filter
+      || (s.label && only(twins(s, x => label(x) === s.label && names(x) === names(s.el)))) // same job, new data: "Next page"
+      || (gone && s.keys && only(twins(s, x => keysOf(x) === s.keys))); // same data, new label: Minimize ↔ Expand
+    if (el) el.focus({ preventScroll: true });
+  }
+  const keepFocus = fn => { const s = focusSpot(); fn(); refocus(s); };
   function render() {
     cancelAnimationFrame(frame); frame = 0;
-    const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
-    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form'].find(n => fa.hasAttribute(n));
+    // a field replaced mid-composition commits the raw letters ("ni你"): wait for the composition to end, then render once
+    if (ime && ime.isConnected && ime === document.activeElement) { imeWaiting = true; return; }
+    ime = null; imeWaiting = false;
+    const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null, spot = focusSpot();
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form', 'data-caption-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderStatus(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    const on = p => ui.page === p; // only the page on screen is rebuilt; the others are rebuilt when you go to them
+    renderChrome(); if (on('home')) renderCalendar(); renderSpecialDays(); if (on('home')) renderQuestion(); renderStatus(); if (on('home')) renderMemory();
+    if (on('todo')) renderTodo(); if (on('wishlist')) renderWishlist(); if (on('diary')) renderDiary(); if (on('album')) renderAlbum();
+    renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
+    refocus(spot);
+    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
   }
   const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(() => { passive = true; try { render(); } finally { passive = false; } }); };
 
@@ -1286,7 +1382,7 @@
       if (!validDay(d.date || '') || d.date < tomorrow) { form.elements.date.setCustomValidity('Pick tomorrow or later.'); form.elements.date.reportValidity(); return; }
       const on = Q.nextFreeDay(d.date, data.questions), partner = PEOPLE[partnerKey()];
       run(store.set('questions', { id: newId(), date: on, text, by: meName(), createdAt: Date.now() }).then(() => render()));
-      planner.drafts.ask = { text: '', date: '' };
+      planner.drafts.ask = { text: '', date: '' }; dropDraft('ask');
       flash(on === d.date ? `Scheduled for ${niceDate(on)}. ${partner} won’t see it until then.` : `${niceDate(d.date)} already has a question, so yours is on ${niceDate(on)}.`);
       render(); return;
     }
@@ -1331,7 +1427,7 @@
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
       await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
-      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
+      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = []; dropDraft('diary');
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
       flash('Posted.');
@@ -1342,16 +1438,19 @@
   // ---------- events ----------
   root.addEventListener('input', e => {
     const el = e.target; el.setCustomValidity?.('');
+    if (e.isComposing) ime = el; // also caught here in case compositionstart was missed
     if (el.closest('[data-album-form]') && el.name === 'albumName') ui.albumDraft = el.value;
+    if (el.closest('[data-caption-form]')) ui.captionDraft = el.value; // a sync while editing the caption keeps what you typed
     const pf = el.closest('[data-planner-form]');
-    if (pf) planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value;
-    if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) diaryDraft[el.name] = el.value;
-    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
-    const cf = el.closest('[data-comment-form]'); if (cf) commentDrafts[cf.dataset.commentForm] = el.value;
-    const qf = el.closest('[data-question-form]'); if (qf) questionDrafts[qf.dataset.questionForm] = el.value;
+    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (pf.dataset.plannerForm === 'ask') keepDraft('ask'); }
+    if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) { diaryDraft[el.name] = el.value; keepDraft('diary'); }
+    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); } // the box itself is kept (fill), only the results change
+    const cf = el.closest('[data-comment-form]'); if (cf) { commentDrafts[cf.dataset.commentForm] = el.value; keepDraft('reply', cf.dataset.commentForm); }
+    const qf = el.closest('[data-question-form]'); if (qf) { questionDrafts[qf.dataset.questionForm] = el.value; keepDraft('answer', qf.dataset.questionForm); }
   });
-  root.addEventListener('change', async e => {
+  root.addEventListener('change', e => {
     const el = e.target;
+    if (el.type === 'file') return; // file inputs have their own listener: filesPicked
     if (el.matches('[data-photo-album]')) {
       const albumId = el.value;
       if (albumId && !data.albums.some(a => a.id === albumId)) return;
@@ -1362,7 +1461,6 @@
       flash('Photo moved.');
       return;
     }
-    if (el.matches('[data-calendar-file]')) { calendarImport.file = el.files[0] || null; calendarImport.name = calendarImport.file?.name || ''; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-import-date]')) { calendarImport[el.dataset.importDate] = el.value; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-export-kind]')) { planner.exportKind = el.value; ls.set('exportKind', el.value); }
     if (el.matches('[data-task-id]')) run(store.update('tasks', el.dataset.taskId, { done: el.checked }));
@@ -1372,44 +1470,50 @@
     if (el.name === 'kind' && el.closest('[data-planner-form="event"]')) { planner.drafts.event.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="todo"]')) { planner.drafts.todo.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="dayedit"]')) { planner.drafts.dayedit.kind = el.value; planner.drafts.dayedit.repeat = el.value !== 'holiday' || planner.drafts.dayedit.repeat; render(); }
+  });
+  // Every file input gets this as its own listener (render() adds it): a sync can rebuild the page while the photo
+  // picker is open, and a change on an input that has left the page never bubbles up to root.
+  async function filesPicked(e) {
+    const el = e.target, picked = [...el.files]; el.value = ''; // so the same photo can be picked again
+    if (el.matches('[data-calendar-file]')) { calendarImport.file = picked[0] || null; calendarImport.name = calendarImport.file?.name || ''; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-entry-edit-photos]')) {
       const draft = planner.drafts.entryedit;
-      const files = [...el.files].slice(0, 9 - draft.photoIds.length - draft.pending.length);
-      if (el.files.length > files.length) flash('Up to 9 photos per entry.');
+      const files = picked.slice(0, 9 - draft.photoIds.length - draft.pending.length);
+      if (picked.length > files.length) flash('Up to 9 photos per entry.');
       busy.entry++; render();
       for (const file of files) { try { draft.pending.push(await makePhoto(file)); } catch (err) { flash(err.message); } }
       busy.entry--; render();
     }
     if (el.matches('[data-diary-photos]')) {
-      const files = [...el.files].slice(0, 9 - diaryDraft.pending.length);
-      if (el.files.length > files.length) flash('Up to 9 photos per entry.');
+      const files = picked.slice(0, 9 - diaryDraft.pending.length);
+      if (picked.length > files.length) flash('Up to 9 photos per entry.');
       busy.diary++; render();
       for (const f of files) { try { diaryDraft.pending.push(await makePhoto(f)); } catch (err) { flash(err.message); } }
       busy.diary--; render();
     }
-    if (el.matches('[data-avatar-file]') && el.files[0]) {
+    if (el.matches('[data-avatar-file]') && picked[0]) {
       ui.busy = 'avatar'; render();
-      try { const img = await CCStore.resizeImage(el.files[0], 160, 0.8, true); run(store.metaKey('avatars', ui.me, img)); flash('Picture updated.'); }
+      try { const img = await CCStore.resizeImage(picked[0], 160, 0.8, true); run(store.metaKey('avatars', ui.me, img)); flash('Picture updated.'); }
       catch (err) { flash(err.message); }
       ui.busy = false; render();
     }
-    if (el.matches('[data-hero-file]') && el.files[0]) {
+    if (el.matches('[data-hero-file]') && picked[0]) {
       busy.hero++; render();
       try {
-        const img = await CCStore.resizeImage(el.files[0], 1400, 0.85);
+        const img = await CCStore.resizeImage(picked[0], 1400, 0.85);
         const id = 'hero-' + newId(); ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
       busy.hero--; render();
     }
     if (el.matches('[data-album-photos]')) {
-      const files = [...el.files].slice(0, 20);
+      const files = picked.slice(0, 20);
       busy.album++; render();
       try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }, { keepPartial: true }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
       busy.album--; render();
     }
-  });
+  }
   root.addEventListener('submit', e => {
     const f = e.target; e.preventDefault();
     if (f.matches('[data-album-form]')) {
@@ -1432,7 +1536,7 @@
     else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
-      commentDrafts[id] = ''; run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
+      commentDrafts[id] = ''; dropDraft('reply', id); run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
     }
     else if (f.matches('[data-login-form]')) {
       const err = $('[data-login-error]'); err.textContent = '';
@@ -1457,7 +1561,7 @@
       run(store.remove('albums', album.id).then(() => flash('Album deleted. Photos are in Unsorted.')));
       render(); return;
     }
-    if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
+    if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; if (!ui.newEntryOpen) dropDraft('diary'); render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
     if (ds.pageKey && ds.pageNumber) {
       ui.pages[ds.pageKey] = +ds.pageNumber;
       render();
@@ -1469,7 +1573,7 @@
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
     if (ds.openInbox) { openInbox(ds.openInbox); return; }
     if (el.hasAttribute('data-close-inbox')) { closeInbox(); return; }
-    if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
+    if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; keepFocus(renderInbox); return; }
     if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
     if (ds.questionOpen) { openQuestions(true, ds.questionOpen); return; }
     if (el.hasAttribute('data-ach-open')) { openAchievements(true); return; }
@@ -1477,9 +1581,9 @@
     if (ds.achGo) { const a = achievements().find(x => x.id === ds.achGo), t = a && achTarget(a); openAchievements(false); if (t) goToTarget(t); return; }
     if (el.hasAttribute('data-question-close')) { openQuestions(false); return; }
     if (ds.answerEdit) { const mine = answerOf(ds.answerEdit, ui.me); if (mine) { ui.editingAnswer = ds.answerEdit; questionDrafts[ds.answerEdit] = mine.text; render(); $(`[data-question-form="${ds.answerEdit}"] textarea`)?.focus(); } return; }
-    if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; ui.editingAnswer = null; render(); return; }
+    if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; dropDraft('answer', ds.answerCancel); ui.editingAnswer = null; render(); return; }
     if (el.hasAttribute('data-enable-badge')) { Promise.resolve(Notification.requestPermission()).catch(() => {}).finally(() => { iconBadge = -1; render(); }); return; }
-    if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
+    if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); loadDrafts(); render(); return; }
     if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
@@ -1523,7 +1627,7 @@
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
     if (el.hasAttribute('data-tear')) { tear(); return; }
     if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
-    if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; render(); $('[data-caption-form] input')?.focus(); return; }
+    if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; ui.captionDraft = null; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
     if (ds.remove) {
@@ -1537,7 +1641,7 @@
     if (el.hasAttribute('data-import-preview')) { previewImport(); return; }
     if (el.hasAttribute('data-import-confirm')) { confirmImport(); return; }
     // memory / diary / photos
-    if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); renderMemory(); return; }
+    if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); keepFocus(renderMemory); return; }
     if (ds.openEntry) { closePhoto(); diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), ds.openEntry); ui.highlight = ds.openEntry; go('diary'); document.getElementById('entry-' + ds.openEntry)?.scrollIntoView({ block: 'center' }); setTimeout(() => { ui.highlight = null; scheduleRender(); }, 2500); return; }
     if (ds.pendingRemove) { diaryDraft.pending.splice(+ds.pendingRemove, 1); render(); return; }
     if (ds.entryDelete) {
@@ -1758,7 +1862,7 @@
     if (ui.sync !== s || s === 'ratelimited') { ui.sync = s; scheduleRender(); }
   };
   history.replaceState(null, '', '#' + ui.page);
-  render();
+  loadDrafts(); render();
   if (store.mode === 'local') {
     showApp(true);
     seedIfNeeded().then(() => store.start(onChange)).then(syncInboxState);
@@ -1767,7 +1871,7 @@
     store.onAuth(async (user, err) => {
       ui.user = user;
       if (!user) { if (err) $('[data-login-error]').textContent = err.message; ui.sync = 'signedout'; showApp(false); render(); return; }
-      ui.me = nameToKey(user.name || '斯婕');
+      ui.me = nameToKey(user.name || '斯婕'); loadDrafts();
       showApp(true); render();
       try { await store.start(onChange, onStatus); await seedIfNeeded(); syncInboxState(); }
       catch (e) {
