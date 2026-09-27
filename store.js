@@ -89,6 +89,7 @@
       case 'setMany': op.items.forEach(item => { const i = list.findIndex(x => x.id === item.id); if (i >= 0) list[i] = item; else list.push(item); }); break;
       case 'update': if (idx >= 0) list[idx] = { ...list[idx], ...op.patch }; break;
       case 'remove': if (idx >= 0) list.splice(idx, 1); break;
+      case 'removeMany': { const gone = new Set(op.ids || []); for (let i = list.length - 1; i >= 0; i--) if (gone.has(list[i].id)) list.splice(i, 1); break; } // one change, e.g. undoing an import
       case 'addComment': if (idx >= 0) { const c = list[idx].comments || []; if (!c.some(x => x.id === op.comment.id)) list[idx] = { ...list[idx], comments: [...c, op.comment] }; } break;
       case 'removeComment': if (idx >= 0) list[idx] = { ...list[idx], comments: (list[idx].comments || []).filter(x => x.id !== op.commentId) }; break;
       case 'meta': data.meta = { ...data.meta, ...op.patch }; break;
@@ -124,6 +125,7 @@
       set: (col, item) => op({ type: 'set', col, id: item.id, item }),
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
       remove: async (col, id) => { await op({ type: 'remove', col, id }); if (col === 'photos') await db.del('full:' + id); },
+      async removeMany(col, ids) { if (col === 'photos') { for (const id of ids) await this.remove(col, id); return; } return op({ type: 'removeMany', col, ids: [...ids] }); },
       addComment: (id, comment) => op({ type: 'addComment', col: 'diary', id, comment }),
       removeComment: (id, commentId) => op({ type: 'removeComment', col: 'diary', id, commentId }),
       batchSet: (col, items) => op({ type: 'setMany', col, items }),
@@ -301,7 +303,7 @@
     }
     function describe(ops) {
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
+      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
       return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
     function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, Math.max(700, busyUntil - Date.now())); }
@@ -462,6 +464,10 @@
         await op({ type: 'remove', col, id }); // saved on this device together with the files to delete
         thumbs.delete(id); thumbFails.delete(id); fullCache = fullCache.filter(x => x !== id);
         await Promise.all([db.del('thumb:' + id), db.del('full:' + id)]);
+      },
+      async removeMany(col, ids) { // photos keep their one-by-one path (their files need deleting too)
+        if (col === 'photos') { for (const id of ids) await this.remove(col, id); return; }
+        return op({ type: 'removeMany', col, ids: [...ids] });
       },
       addComment: (id, comment) => op({ type: 'addComment', col: 'diary', id, comment }),
       removeComment: (id, commentId) => op({ type: 'removeComment', col: 'diary', id, commentId }),
