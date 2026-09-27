@@ -56,7 +56,8 @@ function server({ legacy = false } = {}) {
   const s = {
     seed: { version: 1, meta: { seeded: true }, collections: { events: [], dates: [], trips: [], tasks: [], wishes: [], diary: [], photos: [] } },
     legacy, // true: the repo has only the single data.json, as before the split
-    ready: false, tree: new Map(), blobs: new Map(), // path -> sha for data.json and data/*.json.gz; sha -> bytes, every version ever saved
+    ready: false, tree: new Map(), blobs: new Map(), history: new Map(), // path -> sha for data.json and data/*.json.gz; sha -> bytes, every version ever saved; path -> commits (kept after a delete)
+    commitsReply: null, commitsOffline: false,
     files: new Map(), fileSeq: 0, log: [], messages: [], puts: [], offline: false, conflict: null, beforePut: null,
     verify: { status: 200, body: {}, headers: {} }, publicRepo: false, dataReply: null, lagOnce: null, rejectWrites: false,
     deleteStatus: [], photoPut: {}, photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0, putActive: 0, putMaxActive: 0,
@@ -71,7 +72,7 @@ function server({ legacy = false } = {}) {
       if (this.legacy) this.write('data.json', Buffer.from(JSON.stringify(this.seed, null, 1)));
       else { const parts = split(this.seed); for (const n of PARTS) this.write(`data/${n}.json.gz`, gz(parts[n])); }
     },
-    write(p, buf) { const sha = gitSha(buf); this.blobs.set(sha, buf); this.tree.set(p, sha); return sha; },
+    write(p, buf) { const sha = gitSha(buf); this.blobs.set(sha, buf); this.tree.set(p, sha); this.history.set(p, (this.history.get(p) || 0) + 1); return sha; },
     drop(p) { this.setup(); this.tree.delete(p); },
     bytes(p) { this.setup(); return this.blobs.get(this.tree.get(p)); },
     json(p) { const b = this.bytes(p); return b == null ? null : p.endsWith('.gz') ? ungz(b) : JSON.parse(b.toString('utf8')); },
@@ -96,6 +97,13 @@ function server({ legacy = false } = {}) {
       if (p === 'contents/') { this.log.push(`${method} contents/ (not canonical)`); return response(400, { message: 'Request path could not be canonicalized' }); } // the root is /contents, never /contents/
       this.log.push(`${method} ${p === '' ? '(repo)' : blobSha ? 'blob ' + blobSha : file === '' ? '/' : file}${raw ? ' raw' : ''}`);
       if (this.offline) throw new TypeError('Failed to fetch');
+      if (p === 'commits') { // commits touching a path, newest first; a deleted file's path still has its commits
+        const q = new URL(url).searchParams, file = q.get('path'); this.log[this.log.length - 1] = `GET commits ${file}`;
+        if (this.commitsOffline) throw new TypeError('Failed to fetch');
+        if (this.commitsReply) return response(...this.commitsReply);
+        const n = Math.min(this.history.get(file) || 0, Number(q.get('per_page')) || 30);
+        return response(200, Array.from({ length: n }, (_, i) => ({ sha: gitSha(Buffer.from(file + i)), commit: { message: 'save ' + file } })));
+      }
       if (p === '') return this.verify.status === 200 ? response(200, { private: !this.publicRepo, permissions: { push: true } }) : response(this.verify.status, this.verify.body, this.verify.headers);
       if (file === 'photos') return response(200, [...this.files].map(([fp, f]) => ({ name: fp.slice(7), path: fp, sha: f.sha, type: 'file' })));
       if (file && file.startsWith('photos/')) {

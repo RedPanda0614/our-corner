@@ -63,8 +63,8 @@ test('two phones moving at the same moment: each file is made once, the second p
   await b.store.markInboxRead('zhenzhen', 150, 0, [{ key: 'dy:new', at: 400 }]);
   await Promise.all([a.flush(), b.flush()]); await settle();
   for (const n of PARTS) assert.equal(remote.part(n).version, 2, n);
-  assert.equal(remote.count(/^PUT data\/main/), 4, 'one creates main, the other is turned down and takes it; then each task is saved on top');
-  assert.equal(remote.messages.filter(m => m.endsWith('move data.json into data/main.json.gz')).length, 2);
+  assert.equal(remote.count(/^PUT data\/main/), 4, 'one creates main, the other takes it; then each task is saved on top (one replayed)');
+  assert.equal(remote.messages.filter(m => m.endsWith('move data.json into data/main.json.gz')).length, 1, 'the second phone sees main was made (its history) and takes it, without a create');
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id).sort(), ['from-a', 'from-b', 't1', 't2', 't3']);
   assert.deepEqual(remote.data.meta.inboxReads.zhenzhen.read.map(r => r.key), ['qa:x', 'dy:new']);
   assert.ok(!a.store.pending() && !b.store.pending());
@@ -123,7 +123,7 @@ test('two phones moving from different versions of data.json (an older app saved
   const blobs = remote.count(/^GET blob/);
   await a.advance(16000); await a.poll(); await settle(50); // a tries again: main is there now (taken as it is), nothing of its own to add
   assert.equal(remote.count(/^GET blob/) - blobs, 3, 'the three files b changed; no version of data.json is read again');
-  assert.equal(remote.count(/^PUT data\/main/), 2, "b's create, and a's turned down (422)"); assert.equal(remote.count(/^PUT data\/sijie/), 2);
+  assert.equal(remote.count(/^PUT data\/main/), 1, "b's create; a finds main in its history and takes it"); assert.equal(remote.count(/^PUT data\/sijie/), 2);
   assert.equal(a.store.pending(), false);
   assert.deepEqual(seen(a), seen(b));
 });
@@ -343,6 +343,7 @@ test('a move stopped part way is finished by a phone without a copy: the files m
   remote.fetch = fetch;
   const c = browser(remote); await c.start('真真'); await c.flush(); // another phone, with no copy, finishes the move
   assert.ok(remote.part('main')); assert.equal(c.statuses.at(-1).state, 'synced'); assert.equal(remote.count(/^PUT data\/(imported|sijie)/), 2, 'taken as they are');
+  assert.ok(remote.count(/^GET commits data\/main\.json\.gz$/) >= 1, 'main\'s history was asked: no commits, so a move that stopped part way');
   await a.advance(16000); await settle(); // a is back: its changes go on top
   assert.deepEqual(remote.part('sijie').meta.inboxReads.sijie.read.map(r => r.key), ['dy:d1', 'dy:late']);
   assert.deepEqual(remote.part('imported').collections.events.map(e => e.id), ['i1', 'i2', 'i8']);
@@ -370,6 +371,38 @@ test('a main.json.gz deleted after later changes is never made again: phones wit
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1', 't2', 't3', 'a2', 'planned']);
   assert.deepEqual(remote.part('sijie').meta.inboxReads.sijie.read.map(r => r.key), ['dy:d1', 'dy:after']);
   for (const page of [a, fresh, again]) assert.equal(page.statuses.at(-1).state, 'synced');
+});
+
+test('a main.json.gz deleted right after the move, before anything else changed, is not made again: its history shows it was there', async () => {
+  const remote = legacyServer();
+  const p = browser(remote); await p.start(); await p.store.set('tasks', { id: 'planned', title: 'waits on p' }); // p plans the move, then is closed
+  const a = browser(remote); await a.start(); await a.flush(); await settle(); // a moves; nothing else changes
+  const mainBytes = remote.bytes('data/main.json.gz'); remote.drop('data/main.json.gz');
+  const tree = JSON.stringify([...remote.tree]), puts0 = remote.puts.length;
+  const fresh = browser(remote); await fresh.start(); // no copy: the other files are exactly as split, like a move that stopped part way
+  const again = browser(remote, { disk: p.disk, local: p.local }); await again.start(); await again.runTimers(700); // a copy from a planned move
+  for (const [who, page] of [['no copy', fresh], ['planned move', again]]) { assert.equal(page.statuses.at(-1).state, 'error', who); assert.equal(page.statuses.at(-1).error.message, MISSING, who); }
+  assert.ok(remote.count(/^GET commits data\/main\.json\.gz$/) >= 2);
+  assert.equal(remote.puts.length, puts0, 'nothing written'); assert.equal(JSON.stringify([...remote.tree]), tree);
+  const asked = remote.count(/^GET commits/); await fresh.poll(); await fresh.poll(); assert.equal(remote.count(/^GET commits/), asked, 'a commit once seen is enough');
+  remote.write('data/main.json.gz', mainBytes); await fresh.poll(); await again.poll(); await again.runTimers(700); // put back: carries on
+  assert.equal(fresh.statuses.at(-1).state, 'synced'); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1', 't2', 't3', 'planned']);
+});
+
+test('when main\'s history can\'t be read, nothing is made, and the next check asks again', async () => {
+  for (const fail of [r => { r.commitsReply = [500, {}]; }, r => { r.commitsReply = [403, { message: 'Resource not accessible by personal access token' }]; }, r => { r.commitsReply = [200, { not: 'a list' }]; }, r => { r.commitsOffline = true; }]) {
+    const remote = legacyServer(); fail(remote);
+    const page = browser(remote), starting = page.start(); await settle(50);
+    assert.equal(page.statuses.at(-1).state, 'error'); assert.equal(remote.count(/^PUT/), 0); assert.equal(remote.part('main'), null);
+    remote.commitsReply = null; remote.commitsOffline = false; await page.poll(); await starting; await page.flush();
+    assert.ok(remote.part('main')); assert.equal(page.statuses.at(-1).state, 'synced');
+  }
+  const remote = legacyServer(), page = browser(remote); await page.start(); // asked again right before main is made
+  remote.commitsReply = [502, {}]; await page.flush();
+  assert.equal(remote.part('main'), null); assert.match(page.statuses.at(-1).error.message, /Could not check whether data\/main\.json\.gz was there before/);
+  await page.advance(16000); assert.equal(remote.part('main'), null, 'the retry of the save waits for a check that works');
+  remote.commitsReply = null; await page.poll(); await page.advance(1000); await settle(); // the next check asks again
+  assert.ok(remote.part('main')); assert.equal(page.store.pending(), false); assert.equal(page.statuses.at(-1).state, 'synced');
 });
 
 test('in a new data repo main is always made first; a file there without main is refused', async () => {

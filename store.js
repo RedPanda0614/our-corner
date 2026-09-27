@@ -487,9 +487,12 @@
       const d = await listData();
       if (d.same) return false;
       const listing = d.list || new Map(), main = files.main;
-      if (!listing.has('main') && !main.sha && listing.size) { // files without main.json.gz, on a device that never saw it
-        if (!(await unfinishedMove(listing))) { main.broken = missing('main'); dirEtag = null; return false; } // nothing is made
-        if (main.broken?.code === 'missing') main.broken = null;
+      if (!listing.has('main') && !main.sha) { // no main.json.gz, on a device that never saw it: made from data.json only when it never was there
+        let ok;
+        try { ok = await mayMakeMain(listing); }
+        catch (err) { main.broken = unsure(); dirEtag = null; if (err.code === 'unsure') return false; throw err; } // in doubt: nothing is made, the next check asks again
+        if (!ok) { main.broken = missing('main'); dirEtag = null; return false; }
+        if (main.broken && (main.broken.code === 'missing' || main.broken.code === 'unsure')) main.broken = null;
       }
       if (listing.has('main') || main.sha || main.create || all().every(f => f.synced)) return applyListing(listing, d.etag); // known (or being made): the files are what there is
       return moveIn(listing);
@@ -498,10 +501,25 @@
     // there is exactly the split of the data.json version its record names. Anything else (main deleted after later changes)
     // stops all saving and makes nothing. Files this device made itself in the move are known; a verdict holds for its listing.
     const canon = v => JSON.stringify(v, (k, x) => (isPlain(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x));
-    const pureShas = new Set(); let guard = null;
-    async function unfinishedMove(listing) {
+    const pureShas = new Set(); let guard = null, mainWasThere = false;
+    async function mayMakeMain(listing) { // a verdict holds for its listing; a doubt is asked again
       const key = JSON.stringify([...listing].sort());
       if (guard && guard.key === key) return guard.ok;
+      const ok = (await unfinishedMove(listing)) && (await mainIsNew());
+      guard = { key, ok }; return ok;
+    }
+    // Whether data/main.json.gz was ever there: a deleted file's path keeps its commits. Asked only before main is made from
+    // data.json (by a device that never saw it); any commit, or any answer that isn't a list, and nothing is made.
+    const unsure = () => Object.assign(new Error('Could not check whether data/main.json.gz was there before, so nothing was changed. Trying again.'), { code: 'unsure' });
+    async function mainIsNew() {
+      if (mainWasThere) return false;
+      const res = await gh$(`/commits?path=data/main.json.gz&sha=${encodeURIComponent(branch)}&per_page=1`);
+      const list = res.ok ? await res.json().catch(() => null) : null;
+      if (!Array.isArray(list)) throw unsure();
+      if (list.length) mainWasThere = true; // commits don't go away
+      return !list.length;
+    }
+    async function unfinishedMove(listing) {
       let ok = true; const olds = new Map();
       for (const [name, sha] of listing) {
         if (pureShas.has(sha)) continue;
@@ -512,7 +530,7 @@
         if (!olds.get(stamp.sha) || canon(splitData(olds.get(stamp.sha), stamp)[name]) !== canon(part)) { ok = false; break; }
         pureShas.add(sha);
       }
-      guard = { key, ok }; return ok;
+      return ok;
     }
     async function applyListing(listing, etag) {
       let changed = false, complete = true; const touched = [];
@@ -653,6 +671,10 @@
         if (!f.create && text === JSON.stringify(f.base)) { ok = true; break; } // nothing changes (e.g. already taken in): no save
         checkPart(f.name, next);
         if (!f.sha && !files.main.sha && !isPlain(f.base.meta?.legacy)) await stillNew(); // a new repo's first file: data.json still not there?
+        if (f === files.main && !f.sha) { // making main: only if it never was there (asked again here, a listing can be unchanged)
+          let isNew; try { isNew = await mainIsNew(); } catch (err) { f.broken = unsure(); throw err.code === 'unsure' ? f.broken : err; }
+          if (!isNew) { await reread(f); if (!f.sha) throw (f.broken = missing('main')); emit(); continue; } // there now (the other phone made it): taken; else deleted
+        }
         const zipped = await gzip(text);
         if (await gunzip(zipped) !== text) throw new Error('The data could not be compressed, so it was not saved. Please try again.');
         const res = await gh$(`/contents/${f.path}`, { method: 'PUT', body: JSON.stringify({ message: `${auth.name || 'someone'}: ${describe(f, ops)}`, content: bytesToB64(zipped), branch, ...(f.sha ? { sha: f.sha } : {}) }) });
