@@ -1761,7 +1761,7 @@
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
-    flash(`${entries.length} events imported.`, () => quietly(async () => { for (const x of entries) await store.remove('events', x.id); }));
+    flash(`${entries.length} events imported.`, () => store.removeMany('events', entries.map(x => x.id))); // Undo is one change
     render();
   }
 
@@ -1862,10 +1862,7 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  let holdRenders = 0; // see quietly()
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
-  // many changes in a row (undoing an import removes each event): the page renders once at the end instead of after each
-  async function quietly(job) { holdRenders++; try { return await job(); } finally { holdRenders--; scheduleRender(); } }
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown

@@ -324,6 +324,12 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-meta .cc-plan-actions .cc-button::after { inset: -12px -4px; } /* Edit / Delete: 24px tall, taps 44 */
   #couple-corner .cc-x::after { inset: -12px; } /* reply ×: 18px, taps 40 */
   #couple-corner .cc-tag::after { inset: -7px -3px; } /* tags: 21px tall, taps 33 */
+  /* iPod volume (about 15x12) and the picture caption (16px tall); volume only grows away from the play button */
+  #couple-corner .cc-caption-text { position: relative; }
+  #couple-corner .cc-ipod-btn.up::after, #couple-corner .cc-ipod-btn.down::after, #couple-corner .cc-caption-text::after { content: ''; position: absolute; }
+  #couple-corner .cc-ipod-btn.up::after { inset: -12px -10px 0; }
+  #couple-corner .cc-ipod-btn.down::after { inset: 0 -10px -12px; }
+  #couple-corner .cc-caption-text::after { inset: -12px -4px; }
 }
 /* iPhones zoom into any text field under 16px, so the small ones grow to 16px on phones */
 @media (max-width: 600px) { #couple-corner .cc-comment-form input, #couple-corner .cc-photo-album select, #couple-corner select.cc-plan-status { font-size: 16px; } }
@@ -768,4 +774,14 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-status:not(.cc-open) .cc-status-tab-emoji { width: 16px; overflow: hidden; display: flex; justify-content: flex-start; }
   #couple-corner .cc-status:not(.cc-open) .cc-status-tab-emoji .cc-px { margin-left: 1px; }
   #couple-corner .cc-status:not(.cc-open) .cc-status-tab::before { content: ''; position: absolute; top: -6px; bottom: -6px; left: -10px; right: 0; } /* a slightly wider invisible tap area */
+}
+
+/* small phones: the Special Days tile was too short to show a day. Its row grows a little, and the category shows as the
+   coloured dot beside the name (the label stays readable to screen readers), so the first day's name and countdown fit */
+@media (max-width: 560px) {
+  #couple-corner .cc-special-side .cc-upcoming-entry { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  #couple-corner .cc-special-side .cc-upcoming-entry > .cc-plan-tag { font-size: 0; line-height: 0; }
+  #couple-corner .cc-special-side .cc-upcoming-entry > strong { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #couple-corner .cc-special-side .cc-upcoming-entry > .cc-upcoming-bottom { grid-column: 1 / -1; margin-top: 2px; }
+  #couple-corner .cc-special-side { min-height: 146px; } /* the row of three tiles is a little taller, so the first day fits whole */
 }

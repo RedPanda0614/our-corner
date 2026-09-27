@@ -455,3 +455,11 @@ test('a save conflict still reloads whatever GitHub has, even the content from b
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
   assert.equal(page.store.pending(), false);
 });
+
+test('removeMany also works in local mode', async () => {
+  const page = browser(null, { config: {} }); await page.connect();
+  await page.store.batchSet('events', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  await page.store.removeMany('events', ['a', 'c']);
+  assert.deepEqual(page.disk.get('data').collections.events.map(e => e.id), ['b']);
+  assert.deepEqual(page.changes.events.map(e => e.id), ['b']);
+});

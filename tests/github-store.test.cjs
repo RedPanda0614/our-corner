@@ -166,3 +166,12 @@ test('older shared data accepts daily answers and custom questions', async () =>
   assert.equal(remote.data.collections.answers[0].text, 'Dumplings');
   assert.equal(remote.data.collections.questions[0].date, '2026-09-28');
 });
+
+test('undoing an import removes its events in one change and keeps a concurrent save', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.batchSet('events', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]); await page.flush();
+  remote.conflict = data => data.collections.events.push({ id: 'theirs' }); // the other person saves first
+  await page.store.removeMany('events', ['a', 'b']); await page.flush();
+  assert.deepEqual(remote.data.collections.events.map(e => e.id).sort(), ['c', 'theirs']);
+  assert.equal(page.store.pending(), false);
+});

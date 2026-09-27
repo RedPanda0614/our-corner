@@ -51,3 +51,13 @@ test('empty and unknown categories do not produce a download', () => {
   assert.equal(build('plan', { events: [] }, '2026-09-26'), null);
   assert.throws(() => build('unknown', data, '2026-09-26'), /Unknown calendar category/);
 });
+
+test('a yearly Feb 29 day exports so calendars show it on Mar 1 in other years', () => {
+  const leap = build('birthday', { dates: [{ id: 'leap', title: 'Leap birthday', kind: 'birthday', date: '2024-02-29', repeat: true }] }, '2026-09-26', Date.UTC(2026, 8, 26));
+  assert.match(leap.ics, /DTSTART;VALUE=DATE:20240229/);
+  assert.match(leap.ics, /RRULE:FREQ=YEARLY;BYYEARDAY=60/);
+  assert.match(read('birthday').ics, /RRULE:FREQ=YEARLY\r\n/, 'other yearly days keep the plain rule');
+  globalThis.ICAL = ICAL; // round-trip through the site's own calendar reader (ICAL.js)
+  const { events } = globalThis.CoupleCalendarImport.parse(leap.ics, { from: '2027-01-01', to: '2028-12-31' });
+  assert.deepEqual(events.map(e => e.date), ['2027-03-01', '2028-02-29']);
+});
