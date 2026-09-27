@@ -1,7 +1,7 @@
 /* Keep the dotted accent on Latin characters; all Chinese falls through to Songti. */
 @font-face {
   font-family: 'Bibo Neon Dots';
-  src: url('assets/doto.ttf') format('truetype');
+  src: url('assets/doto.woff2') format('woff2');
   font-display: swap;
   font-weight: 100 900;
   unicode-range: U+0000-024F, U+1E00-1EFF;
