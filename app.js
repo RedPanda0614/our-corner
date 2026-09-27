@@ -1433,11 +1433,8 @@
     if (ds.albumDelete) {
       const album = data.albums.find(a => a.id === ds.albumDelete); if (!album) return;
       ui.confirm = null; ui.album = 'unsorted'; ui.albumForm = ''; ui.pages.album = 1;
-      run((async () => {
-        for (const photo of data.photos.filter(p => p.albumId === album.id)) await store.update('photos', photo.id, { albumId: '' });
-        await store.remove('albums', album.id);
-        flash('Album deleted. Photos are in Unsorted.');
-      })());
+      // one change, however big the album: a photo whose album is gone already counts as Unsorted everywhere
+      run(store.remove('albums', album.id).then(() => flash('Album deleted. Photos are in Unsorted.')));
       render(); return;
     }
     if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
@@ -1629,7 +1626,7 @@
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
-    flash(`${entries.length} events imported.`, async () => { for (const x of entries) await store.remove('events', x.id); });
+    flash(`${entries.length} events imported.`, () => quietly(async () => { for (const x of entries) await store.remove('events', x.id); }));
     render();
   }
 
@@ -1730,7 +1727,10 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
+  let holdRenders = 0; // see quietly()
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
+  // many changes in a row (undoing an import removes each event): the page renders once at the end instead of after each
+  async function quietly(job) { holdRenders++; try { return await job(); } finally { holdRenders--; scheduleRender(); } }
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
