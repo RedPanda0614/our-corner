@@ -187,7 +187,7 @@
     return op;
   }
   function applyFold(data, op) { // only onto the version it was worked out against, so it is made once however often it is replayed
-    const stamp = isPlain(data.meta?.legacy) ? data.meta.legacy : null;
+    const stamp = isPlain(data.meta?.legacy) ? data.meta.legacy : null, fresh = op.from == null; // fresh: taken in from nothing, additions only
     if ((stamp ? stamp.sha : null) !== op.from) return data;
     for (const [c, d] of Object.entries(op.cols || {})) {
       const gone = new Set(d.del || []), list = (data.collections[c] || []).filter(x => !gone.has(x.id)), at = new Map(list.map((x, i) => [x.id, i]));
@@ -197,17 +197,17 @@
         for (const [k, l] of Object.entries(p.lists || {})) next[k] = applyList(next[k], l);
         list[i] = next;
       }
-      for (const item of d.put || []) { const i = at.get(item.id); if (i != null) list[i] = item; else { at.set(item.id, list.length); list.push(item); } }
+      for (const item of d.put || []) { const i = at.get(item.id); if (i != null) { if (!fresh) list[i] = item; } else { at.set(item.id, list.length); list.push(item); } }
       data.collections[c] = list;
     }
-    const meta = { ...data.meta, ...op.meta };
+    const meta = { ...data.meta };
+    for (const [k, v] of Object.entries(op.meta || {})) if (!fresh || !(k in meta)) meta[k] = v; // from nothing: only settings not set here
     (op.unset || []).forEach(k => delete meta[k]);
     for (const [k, s] of Object.entries(op.sub || {})) { const next = { ...(isPlain(meta[k]) ? meta[k] : {}), ...s.set }; (s.unset || []).forEach(x => delete next[x]); meta[k] = next; }
     data.meta = meta;
     for (const r of op.reads || []) applyOp(data, { type: 'inboxRead', who: r.who, since: r.since, cutoff: r.since, items: r.read });
     for (const m of op.merge || []) applyOp(data, { type: 'mergeMeta', key: m.key, value: m.value, num: m.num });
-    const seen = [...(Array.isArray(stamp?.seen) ? stamp.seen : []), ...(op.from ? [op.from] : [])].slice(-50); // the versions taken in before: never gone back to by a lagging listing
-    data.meta = { ...data.meta, legacy: { sha: op.to, at: op.at, ...(seen.length ? { seen } : {}) } };
+    data.meta = { ...data.meta, legacy: { sha: op.to, at: op.at } };
     return data;
   }
 
@@ -435,7 +435,7 @@
     // full device) never lands over a newer one
     let copying = Promise.resolve();
     function persist(names = SPLIT, gone) {
-      const job = copying.then(() => cacheSave(() => [[stateKey, { files: fileDeletes, fullCache, dirEtag, rootEtag }], ...names.map(n => [fileKey(n), fileCopy(files[n])])], gone));
+      const job = copying.then(() => cacheSave(() => [[stateKey, { files: fileDeletes, fullCache, dirEtag, rootEtag, back }], ...names.map(n => [fileKey(n), fileCopy(files[n])])], gone));
       copying = job.catch(() => {}); return job;
     }
     const fileView = name => applyAll(files[name].base, files[name].pending);
@@ -519,7 +519,7 @@
       try { d = bytes.length ? JSON.parse(utf8(bytes)) : emptyData(); const inner = unwrap(d, sha); if (inner) d = inner.length ? JSON.parse(utf8(inner)) : emptyData(); } catch {}
       return checkOld(d);
     }
-    function take(f, base, sha) { if (f.sha !== sha) passed(f, f.sha); f.base = base; f.sha = sha; f.synced = true; f.create = false; f.broken = null; f.badSha = null; f.badTries = null; f.held = false; f.revision++; }
+    function take(f, base, sha) { if (f.sha !== sha) passed(f, f.sha); f.base = base; f.sha = sha; f.savedAt = Date.now(); f.synced = true; f.create = false; f.broken = null; f.badSha = null; f.badTries = null; f.held = false; f.revision++; }
     // A version a file moved past (our own save, or a newer one read): a listing lagging behind can name it for a while, and it is
     // not taken again within 30 s. (Later it can be real: the same content always has the same sha, e.g. a change undone.)
     function passed(f, sha) {
@@ -579,19 +579,22 @@
     async function mainIsNew() {
       if (mainWasThere) return false;
       const res = await gh$(`/commits?path=data/main.json.gz&sha=${encodeURIComponent(branch)}&per_page=1`);
+      if (res.status === 409 && /empty/i.test((await res.json().catch(() => null))?.message || '')) return true; // an empty repository: no commits at all
       const list = res.ok ? await res.json().catch(() => null) : null;
       if (!Array.isArray(list)) throw unsure();
       if (list.length) mainWasThere = true; // commits don't go away
       return !list.length;
     }
+    const guardTries = new Map(); // sha -> reads that failed while checking a stopped move
+    const doubt = sha => { const n = (guardTries.get(sha) || 0) + 1; guardTries.set(sha, n); if (n < 3) throw unsure(); }; // a cut-off download: asked again (twice), then a no
     async function unfinishedMove(listing) {
       let ok = true; const olds = new Map();
       for (const [name, sha] of listing) {
         if (pureShas.has(sha)) continue;
-        let part = null; try { part = await parsePart(name, await blob(sha), sha); } catch (err) { if (err.code !== 'invalid') throw err; }
+        let part = null; try { part = await parsePart(name, await blob(sha), sha); } catch (err) { if (err.code !== 'invalid') throw err; doubt(sha); }
         const stamp = isPlain(part) && isPlain(part.meta) ? part.meta.legacy : null;
         if (!isPlain(stamp) || typeof stamp.sha !== 'string') { ok = false; break; }
-        if (!olds.has(stamp.sha)) olds.set(stamp.sha, await readOld(stamp.sha).catch(err => { if (err.code === 'invalid' || err.status === 404) return null; throw err; }));
+        if (!olds.has(stamp.sha)) olds.set(stamp.sha, await readOld(stamp.sha).catch(err => { if (err.status === 404) return null; if (err.code !== 'invalid') throw err; doubt(stamp.sha); return null; }));
         if (!olds.get(stamp.sha) || canon(splitData(olds.get(stamp.sha), stamp)[name]) !== canon(part)) { ok = false; break; }
         pureShas.add(sha);
       }
@@ -605,7 +608,7 @@
         try {
           if (remote && remote === f.sha) { f.broken = null; f.held = false; continue; }
           if (!remote) { // gone, or a listing lagging behind our own new file: nothing is saved to it until a listing shows it again
-            if (f.sha) { if (Date.now() - f.savedAt < 30000) { f.held = true; complete = false; continue; } throw missing(f.name); }
+            if (f.sha) { if (Date.now() - f.savedAt < 30000) { f.held = true; complete = false; continue; } throw missing(f.name); } // (savedAt: saved or taken here)
             if (!f.synced && !f.create) { f.base = emptyPart(f.name); f.synced = true; changed = true; touched.push(f.name); } // not made yet: it is empty
             continue;
           }
@@ -652,7 +655,7 @@
     async function stillNew() {
       const root = await list('', null);
       if (!root.list || !root.list.has('data.json')) return;
-      all().forEach(f => { if (!f.sha) f.synced = false; }); dirEtag = null;
+      all().forEach(f => { if (!f.sha) { f.synced = false; f.create = false; } }); dirEtag = null; // the next check moves data.json in
       throw new Error('Found data.json from an older version of the app: moving it into the new files first.');
     }
 
@@ -662,9 +665,10 @@
     // on top of that same version only: two phones doing it at once take it in once. A file that never took data.json in (a new
     // repo that an older app then saved data.json in) takes it in from nothing: additions only. Checked on start and every
     // 10 minutes for as long as the app runs (one listing of the repository root, small, and a 304 when nothing changed).
-    // A version already taken in (the record keeps the last 50) is gone back to only when a check 5 minutes later still names it:
-    // a listing lagging behind is never followed backwards, while data.json really back at an earlier content still is.
-    let back = null;
+    // A root listing can lag behind and name an older version (even one from before the move), so a new version is taken in only
+    // once a check about 5 minutes later still names it; the wait is kept on this device, so short sessions still get there. If
+    // data.json keeps changing, it is taken in as it is once it has differed for 30 minutes (no listing lags that long).
+    let back = null; // { sha, since, first }: the version a check named, when, and since when data.json has differed
     function foldIn(force) {
       if (folding) return folding;
       if (!started || !auth.token || stopped() || all().some(f => !f.synced || f.create)) return Promise.resolve();
@@ -676,10 +680,11 @@
         const entry = root.list.get('data.json'), to = entry && entry.type === 'file' ? entry.sha : null;
         const stamps = all().map(f => { const s = fileView(f.name).meta.legacy; return [f, isPlain(s) && typeof s.sha === 'string' ? s : null]; });
         const todo = to ? stamps.filter(([, s]) => (s ? s.sha : null) !== to) : []; // gone: nothing more to take in (never read as "everything removed")
-        if (todo.some(([, s]) => s && Array.isArray(s.seen) && s.seen.includes(to))) { // named again: a lagging listing, or really back
-          if (!back || back.sha !== to) back = { sha: to, since: Date.now() };
-          if (Date.now() - back.since < 300000) return 0; // wait for a later check (the listing is asked again in full)
-        } else back = null;
+        if (todo.length) {
+          const now = Date.now(), first = back ? back.first : now;
+          if (!back || back.sha !== to) back = { sha: to, since: now, first };
+          if (now - back.since < 300000 && now - first < 1800000) { legacyAt = now - 300000; await persist([]); return 0; } // asked again in 5 minutes
+        }
         let n = 0;
         if (todo.length) {
           const now = await readOld(to), after = splitData(now), before = new Map(), at = Date.now();
@@ -752,7 +757,7 @@
           checkPart(f.name, next);
           if (!sha && !files.main.sha && !isPlain(base.meta?.legacy)) await stillNew(); // a new repo's first file: data.json still not there?
           if (f === files.main && !sha) { // making main: only if it never was there (asked again here, a listing can be unchanged)
-            let isNew; try { isNew = await mainIsNew(); } catch (err) { f.broken = unsure(); throw err.code === 'unsure' ? f.broken : err; }
+            let isNew; try { isNew = await mainIsNew(); } catch (err) { f.broken = unsure(); dirEtag = null; throw err.code === 'unsure' ? f.broken : err; } // the next check asks again
             if (!isNew) { tries++; await reread(f); if (!f.sha) throw (f.broken = missing('main')); emit(); continue; } // there now (the other phone made it): taken; else deleted
           }
           const zipped = await gzip(text);
@@ -791,7 +796,7 @@
       const shared = await db.get(stateKey), old = await db.get(oldKey);
       let any = false;
       if (isPlain(shared)) {
-        fileDeletes = shared.files || []; fullCache = shared.fullCache || []; dirEtag = shared.dirEtag || null; rootEtag = shared.rootEtag || null;
+        fileDeletes = shared.files || []; fullCache = shared.fullCache || []; dirEtag = shared.dirEtag || null; rootEtag = shared.rootEtag || null; back = isPlain(shared.back) ? shared.back : null;
         const copies = []; for (const f of all()) copies.push(await db.get(fileKey(f.name)));
         const valid = (c, name) => { try { return isPlain(c) && Array.isArray(c.pending) && !!checkPart(name, c.base); } catch { return false; } };
         const whole = all().every((f, i) => valid(copies[i], f.name));

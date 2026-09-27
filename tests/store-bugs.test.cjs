@@ -356,7 +356,9 @@ test('a data repo without data files starts empty and the first save creates the
 
 test('a data file disappearing after it was loaded is reported as an error, and nothing is saved over it', async () => {
   const remote = server(), page = browser(remote); await page.start();
-  remote.drop('data/main.json.gz'); await page.intervals[0].fn();
+  remote.drop('data/main.json.gz'); await page.intervals[0].fn(); // within 30 s of reading it, a listing may just lag: saves to it wait
+  await page.store.set('tasks', { id: 't0', title: 'waits' }); await page.flush(); assert.equal(remote.count(/^PUT/), 0);
+  page.clock.offset += 31000; await page.intervals[0].fn(); // still gone
   assert.equal(page.statuses.at(-1).state, 'error'); assert.match(page.statuses.at(-1).error.message, /data\/main\.json\.gz is missing/);
   assert.ok(page.changes.meta.seeded);
   await page.store.set('tasks', { id: 't1', title: 'kept on this device' }); await page.flush();

@@ -115,7 +115,7 @@ test('two phones moving from different versions of data.json (an older app saved
   await b.start('真真'); // b finds the files a made (from the first version) and makes main from the second
   await b.flush();
   assert.equal(remote.part('main').meta.legacy.sha, s2); assert.notEqual(remote.part('imported').meta.legacy.sha, s2);
-  await b.poll(); await settle(50); await b.flush(); await settle(); // b's first check after the move takes the difference into imported and zhenzhen
+  await b.poll(); await settle(50); await confirm(b); await b.flush(); await settle(); // b's first check after the move names the new data.json, the next confirms it: the difference goes into imported and zhenzhen
   assert.deepEqual(remote.part('imported').collections.events.map(e => e.id), ['i1', 'i2', 'i3']);
   assert.equal(remote.part('zhenzhen').meta['status:zhenzhen'].emoji, '🍜');
   for (const n of PARTS) assert.equal(remote.part(n).meta.legacy.sha, s2, n + ': the record moves on, even with nothing new (sijie)');
@@ -264,7 +264,9 @@ test('a check with nothing new is one request (a 304); one changed file is one d
 
 // ---------- an older app still saving in data.json ----------
 async function moved(data = LEGACY()) { const remote = legacyServer(data), page = browser(remote); await page.start(); await page.flush(); await settle(); return { remote, page }; }
-const later = async page => { page.clock.offset += 601000; await page.poll(); await settle(50); await page.runTimers(700); await settle(); }; // the next check of data.json, and the save it leads to
+const check = async page => { page.clock.offset += 601000; await page.poll(); await settle(50); }; // the next check of data.json (10 minutes on)
+const confirm = async page => { page.clock.offset += 301000; await page.poll(); await settle(50); }; // the check 5 minutes after a new version was first named
+const later = async page => { await check(page); await confirm(page); await page.runTimers(700); await settle(); }; // a new data.json version, confirmed and saved
 
 test('what an older app adds, edits and removes in data.json is taken in once; what the new version removed never comes back', async () => {
   const { remote, page } = await moved();
@@ -299,8 +301,8 @@ test('two updated phones taking in the same older-app change do it once (a repla
   const { remote, page: a } = await moved();
   const b = browser(remote); await b.start('真真');
   remote.editOld(d => { d.collections.tasks.push({ id: 'x', title: 'from the old app' }); });
-  a.clock.offset += 601000; await a.poll(); await settle(50); // a works it out ...
-  b.clock.offset += 601000; await b.poll(); await settle(50); // ... and so does b, before either saves
+  await check(a); await confirm(a); // a works it out ...
+  await check(b); await confirm(b); // ... and so does b, before either saves
   await a.flush(); await a.store.remove('tasks', 'x'); await a.flush(); // a saves it, then the new version removes it
   await b.flush(); await settle(); // b's copy of the same change: GitHub has moved on, it is not made again
   assert.ok(!remote.data.collections.tasks.some(t => t.id === 'x'));
@@ -477,7 +479,7 @@ test('the saved files are gzip and the page gets the same view as the one-file v
   assert.deepEqual(seen(page), oldView(LEGACY()));
   const cached = browser(remote, { disk: page.disk, local: page.local }); await cached.start();
   assert.deepEqual(seen(cached), oldView(LEGACY())); assert.deepEqual(join(Object.fromEntries(PARTS.map(n => [n, remote.part(n)]))).meta, LEGACY().meta);
-  assert.deepEqual(Object.keys(page.disk.get(SHARED)).sort(), ['dirEtag', 'files', 'fullCache', 'rootEtag']);
+  assert.deepEqual(Object.keys(page.disk.get(SHARED)).sort(), ['back', 'dirEtag', 'files', 'fullCache', 'rootEtag']);
   for (const n of PARTS) assert.deepEqual(page.disk.get(FILE(n)).base, remote.part(n), n);
   void clone;
 });
@@ -570,8 +572,8 @@ test('H1: data.json really back at an earlier version (an older app undid its ch
   remote.editOld(d => { d.collections.tasks.push({ id: 'x', title: 'added, then undone, on the older app' }); });
   await later(page); assert.ok(remote.data.collections.tasks.some(t => t.id === 'x'));
   remote.write('data.json', s1); // the same content as before, so the same sha
-  await later(page); assert.ok(remote.data.collections.tasks.some(t => t.id === 'x'), 'not at the first sighting');
-  await later(page); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1'], 'a check 10 minutes later still names it: taken in');
+  await check(page); await page.runTimers(700); assert.ok(remote.data.collections.tasks.some(t => t.id === 'x'), 'not at the first sighting');
+  await confirm(page); await page.runTimers(700); await settle(); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1'], 'a check 5 minutes later still names it: taken in');
 });
 
 test('M1 (r6): an older-app write on day 29, first seen by an updated phone on day 31, is taken in', async () => {
@@ -579,7 +581,7 @@ test('M1 (r6): an older-app write on day 29, first seen by an updated phone on d
   const page = browser(remote); await page.start(); await page.flush(); await settle();
   remote.editOld(d => { d.collections.tasks.push({ id: 'day29', title: 'written by the older app on day 29' }); });
   const again = browser(remote, { disk: page.disk, local: page.local }); again.clock.offset = 31 * DAY;
-  await again.start(); await settle(50); await again.runTimers(700); await settle();
+  await again.start(); await settle(50); await confirm(again); await again.runTimers(700); await settle(); // named on start, confirmed 5 minutes later
   assert.ok(remote.data.collections.tasks.some(t => t.id === 'day29'));
 });
 
@@ -622,4 +624,117 @@ test('the copy on this device is written in order: a retry after making room on 
   await first; await new Promise(r => setTimeout(r, 80)); await settle();
   const copy = page.file('main');
   assert.deepEqual(copy.pending.map(o => o.id), ['b'], 'the change made last is in the copy'); assert.equal(copy.sha, remote.tree.get('data/main.json.gz'));
+});
+
+// ---------- from the second data-safety review (repros n1-n9, ported; all but n7 failed before their fix) ----------
+test('N1: in a new repo, data.json appearing before the first save (to a person file) is moved in, and the save follows', async () => {
+  const remote = server(); remote.data = null;
+  const page = browser(remote); await page.start();
+  remote.write('data.json', Buffer.from(JSON.stringify({ version: 1, meta: {}, collections: { tasks: [{ id: 'old', title: 'old app' }] } })));
+  await page.store.markInboxRead('sijie', 1, 0, [{ key: 'k', at: 5 }]);
+  for (let i = 0; i < 6; i++) { page.clock.offset += 20000; await page.poll(); await settle(50); await page.advance(16000); await settle(20); }
+  assert.ok(remote.part('main')); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['old']);
+  assert.deepEqual(remote.part('sijie').meta.inboxReads.sijie.read.map(r => r.key), ['k']); assert.equal(page.store.pending(), false);
+});
+
+test('N2: an empty repository (its commits list answers 409 "Git Repository is empty") gets main made by the first save', async () => {
+  const remote = server(); remote.data = null;
+  const fetch = remote.fetch.bind(remote);
+  remote.fetch = (url, o = {}) => (/\/commits\?/.test(url) && ![...remote.tree.keys()].length ? (remote.log.push('GET commits (409 empty)'), Promise.resolve({ status: 409, ok: false, headers: { get: () => null }, json: async () => ({ message: 'Git Repository is empty.' }) })) : fetch(url, o));
+  const page = browser(remote); await page.start();
+  await page.store.set('tasks', { id: 'first', title: 'first' }); await page.flush();
+  assert.ok(remote.count(/commits \(409 empty\)/) >= 1); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['first']); assert.equal(page.statuses.at(-1).state, 'synced');
+});
+
+test('N3: an older-app undo (data.json back at an earlier sha) is taken in even when every session is under 10 minutes', async () => {
+  const remote = server({ legacy: true }); remote.data = { version: 1, meta: { seeded: true }, collections: { tasks: [{ id: 't1', done: false }] } };
+  const page = browser(remote); await page.start(); await page.flush(); await settle();
+  const s1 = remote.tree.get('data.json');
+  remote.editOld(d => { d.collections.tasks[0].done = true; }); await later(page); // the older app ticks t1: taken in
+  assert.equal(remote.data.collections.tasks[0].done, true);
+  remote.editOld(d => { d.collections.tasks[0].done = false; }); assert.equal(remote.tree.get('data.json'), s1, '... and un-ticks it: the same sha as before');
+  let offset = page.clock.offset;
+  for (let day = 0; day < 2; day++) { // one 8-minute session a day
+    const p = browser(remote, { disk: page.disk, local: page.local }); p.clock.offset = offset += 864e5;
+    await p.start(); await settle(50);
+    for (let m = 0; m < 8; m++) { p.clock.offset += 60000; await p.poll(); await settle(20); if (p.timers.size) await p.advance(1000); }
+    offset = p.clock.offset;
+  }
+  assert.equal(remote.data.collections.tasks[0].done, false); assert.equal(remote.part('main').meta.legacy.sha, s1);
+});
+
+test('N4: a root listing lagging behind to a data.json from before the move never folds backwards', async () => {
+  const remote = server({ legacy: true }); remote.data = { version: 1, meta: { seeded: true }, collections: { diary: [], tasks: [{ id: 't1', title: 'Buy milk' }] } };
+  remote.setup(); const s0 = remote.entries('');
+  remote.editOld(d => { d.collections.diary.push({ id: 'd9', text: 'posted on the older app just before the move', comments: [] }); }); // S1
+  const page = browser(remote); await page.start(); await page.flush(); await settle(); // moved from S1
+  await page.store.addComment('d9', { id: 'c-new', text: '回复' }); await page.flush();
+  const puts = remote.puts.length; staleRoot(remote, s0);
+  await page.poll(); await settle(50); await page.runTimers(700); // the first check after the move names S0
+  for (let i = 0; i < 3; i++) { await check(page); await page.runTimers(700); await settle(); }
+  assert.equal(remote.puts.length, puts, 'nothing taken back');
+  assert.deepEqual(remote.data.collections.diary.find(e => e.id === 'd9').comments.map(c => c.id), ['c-new']);
+});
+
+test('N5: a cut-off download while checking a move another phone left part way is asked again, never a "missing" refusal', async () => {
+  const remote = server({ legacy: true }); remote.data = { version: 1, meta: { seeded: true }, collections: { tasks: [{ id: 't1' }], events: [{ id: 'i1', importKey: 'k' }] } };
+  const a = browser(remote); await a.start();
+  let cut = 2; const fetch = remote.fetch.bind(remote);
+  remote.fetch = (url, o = {}) => (o.method === 'PUT' && /contents\/data\//.test(url) && --cut < 0 ? Promise.reject(new TypeError('Failed to fetch')) : fetch(url, o));
+  await a.flush(); remote.fetch = fetch; // a made imported and sijie, then went offline for good
+  remote.cutOnce.add(remote.tree.get('data/imported.json.gz')); // b's first download of imported is cut off
+  const b = browser(remote); const starting = b.start('真真'); await settle(80);
+  assert.ok(b.statuses.every(st => st.error?.code !== 'missing'), 'never "missing, restore it"');
+  for (let i = 0; i < 3; i++) { await b.poll(); await settle(50); if (b.timers.size) await b.advance(16000); await settle(20); }
+  await starting; await b.store.set('tasks', { id: 'from-b', title: 'b' }); await b.advance(16000); await settle(50);
+  assert.ok(remote.part('main')); assert.ok(remote.data.collections.tasks.some(t => t.id === 'from-b')); assert.ok(b.statuses.every(st => st.error?.code !== 'missing'));
+});
+
+test('N6: a lagging listing right after taking the other phone\'s new file holds saves to it instead of "missing, restore"', async () => {
+  const remote = server({ legacy: true }); remote.data = { version: 1, meta: { seeded: true }, collections: { tasks: [{ id: 't1' }] } };
+  const a = browser(remote), b = browser(remote);
+  await Promise.all([a.start('斯婕'), b.start('真真')]);
+  await a.flush(); const before = remote.entries('data'); // a made all four files
+  await b.flush(); await settle(); // b's creates meet a's files: taken
+  remote.lagOnce = before.filter(e => e.name !== 'main.json.gz'); // a listing from before main was made
+  await b.poll(); await settle(20);
+  assert.notEqual(b.statuses.at(-1).state, 'error');
+  await b.store.set('tasks', { id: 'x', title: 'x' }); await b.flush(); assert.ok(!remote.data.collections.tasks.some(t => t.id === 'x'), 'held meanwhile');
+  await b.poll(); await b.runTimers(700); await settle();
+  assert.ok(remote.data.collections.tasks.some(t => t.id === 'x')); assert.equal(b.statuses.at(-1).state, 'synced');
+});
+
+test('N7: the other phone reverting main to earlier content within 30 s is only delayed, and a save meanwhile keeps it', async () => {
+  const remote = server(); remote.data = { version: 1, meta: {}, collections: { tasks: [{ id: 't1', done: false }] } };
+  const a = browser(remote), b = browser(remote); await a.start(); await b.start('真真');
+  await a.store.update('tasks', 't1', { done: true }); await a.flush(); await b.poll(); const s2 = remote.tree.get('data/main.json.gz');
+  await a.store.update('tasks', 't1', { done: false }); await a.flush(); await b.poll(); assert.equal(b.changes.tasks[0].done, false);
+  await a.store.update('tasks', 't1', { done: true }); await a.flush(); assert.equal(remote.tree.get('data/main.json.gz'), s2, 'byte-identical: same sha');
+  await b.poll(); await b.store.set('tasks', { id: 'b1' }); await b.flush(); // a save inside the window
+  b.clock.offset += 31000; await b.poll();
+  assert.equal(remote.data.collections.tasks.find(t => t.id === 't1').done, true); assert.equal(b.changes.tasks.find(t => t.id === 't1').done, true);
+});
+
+test('N8: taking data.json in from nothing adds records and settings that are not there, and changes none that are', async () => {
+  const remote = server(); remote.data = null;
+  const page = browser(remote); await page.start();
+  await page.store.setMeta({ heroCaption: 'NEW CAPTION' }); await page.store.metaKey('mode', 'dark', true); await page.store.set('tasks', { id: 'same', title: 'new version' }); await page.flush();
+  remote.write('data.json', Buffer.from(JSON.stringify({ version: 1, meta: { heroCaption: 'OLD', mode: { dark: false }, kindColors: { plan: '#111' } }, collections: { tasks: [{ id: 'old' }, { id: 'same', title: 'older app' }] } })));
+  for (let i = 0; i < 3; i++) { await check(page); if (page.timers.size) await page.advance(1000); await settle(); }
+  const m = remote.part('main').meta;
+  assert.equal(m.heroCaption, 'NEW CAPTION'); assert.equal(m.mode.dark, true); assert.deepEqual(m.kindColors, { plan: '#111' }, 'a setting not set here is added');
+  assert.deepEqual(remote.data.collections.tasks.map(t => [t.id, t.title]), [['same', 'new version'], ['old', undefined]]);
+});
+
+test('N9: a failed history check while making main is asked again on the next check, and the move finishes', async () => {
+  const remote = server({ legacy: true }); remote.data = { version: 1, meta: { seeded: true }, collections: { tasks: [{ id: 't1' }] } };
+  const page = browser(remote); await page.start();
+  let drop = true; const fetch = remote.fetch.bind(remote);
+  remote.fetch = (url, o = {}) => (drop && o.method === 'PUT' && /main\.json\.gz/.test(url) ? (drop = false, Promise.reject(new TypeError('Failed to fetch'))) : fetch(url, o));
+  await page.flush(); // imported, sijie, zhenzhen made; main's PUT is cut
+  await page.poll(); await settle(20); // the listing (3 files) is seen and its ETag kept
+  await page.store.set('tasks', { id: 'during', title: 'made during the move' });
+  remote.commitsOffline = true; await page.advance(16000); await settle(20); remote.commitsOffline = false; // one blip on the history check
+  for (let i = 0; i < 3; i++) { await page.poll(); await settle(20); await page.advance(16000); await settle(20); }
+  assert.ok(remote.part('main')); assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1', 'during']); assert.equal(page.statuses.at(-1).state, 'synced');
 });
