@@ -748,11 +748,12 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner :is(.cc-status-emoji, .cc-status-preset, .cc-ck-mood) .cc-px { width: 32px; height: 32px; vertical-align: middle; }
 #couple-corner .cc-ach-glyph .cc-px { width: 32px; height: 32px; vertical-align: 0; }
 
-/* phones: the closed status tab is a slim sliver on the edge (the partner's emoji peeks out, plus the new-status dot) */
+/* phones: the closed status tab is a slim sliver on the edge (the partner's picture and emoji, plus the new-status dot) */
 @media (max-width: 600px) {
-  #couple-corner .cc-status:not(.cc-open) .cc-status-tab { width: 16px; min-height: 44px; padding: 8px 0; gap: 0; overflow: visible; }
-  #couple-corner .cc-status:not(.cc-open) .cc-status-tab > .cc-mini-avatar, #couple-corner .cc-status:not(.cc-open) .cc-status-chev { display: none; }
-  #couple-corner .cc-status:not(.cc-open) .cc-status-tab-emoji { width: 14px; overflow: hidden; display: flex; justify-content: flex-start; }
+  #couple-corner .cc-status:not(.cc-open) .cc-status-tab { width: 18px; min-height: 44px; padding: 6px 0; gap: 4px; overflow: visible; }
+  #couple-corner .cc-status:not(.cc-open) .cc-status-chev { display: none; }
+  #couple-corner .cc-status:not(.cc-open) .cc-status-tab > .cc-mini-avatar { width: 16px; height: 16px; margin: 0 0 0 1px; font-size: 9px; }
+  #couple-corner .cc-status:not(.cc-open) .cc-status-tab-emoji { width: 16px; overflow: hidden; display: flex; justify-content: flex-start; }
   #couple-corner .cc-status:not(.cc-open) .cc-status-tab-emoji .cc-px { margin-left: 1px; }
   #couple-corner .cc-status:not(.cc-open) .cc-status-tab::before { content: ''; position: absolute; top: -6px; bottom: -6px; left: -10px; right: 0; } /* a slightly wider invisible tap area */
 }
