@@ -553,8 +553,8 @@
   const achKey = key => 'achievements:' + key;
   const mergeKept = (...all) => { const out = {}; for (const k of all) for (const [id, at] of Object.entries(k || {})) if (typeof at === 'number' && !(out[id] <= at)) out[id] = at; return out; };
   function achState() { // this person's seen list, plus "kept": once earned, never taken back even if the item is deleted
-    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null;
-    return { seen: [...new Set([...(synced?.seen || []), ...(local?.seen || [])])], kept: mergeKept(local?.kept, synced?.kept) };
+    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null, seen = x => (Array.isArray(x?.seen) ? x.seen : []);
+    return { seen: [...new Set([...seen(synced), ...seen(local)])], kept: mergeKept(local?.kept, synced?.kept) };
   }
   function saveAchState(st) {
     const key = achKey(ui.me); ls.set(key, st);
@@ -837,11 +837,12 @@
     if (st) return st;
     const fresh = { since: Date.now(), read: [] }; ls.set(inboxKey(), fresh); return fresh;
   }
+  const sharedReadKeys = shared => (Array.isArray(shared?.read) ? shared.read : []).map(item => item?.key).filter(k => k && typeof k === 'string'); // synced, so it may be odd
   function inboxState() {
     const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
     if (!shared) return local;
     return { since: Math.max(Number(shared.since) || 0, Date.now() - 30 * 86400000),
-      read: [...new Set([...(local.read || []), ...(shared.read || []).map(item => item.key).filter(Boolean)])] };
+      read: [...new Set([...(local.read || []), ...sharedReadKeys(shared)])] };
   }
   function ago(ms) { // "5m ago", "2h ago", "3d ago", then a date
     const sec = Math.max(0, (Date.now() - ms) / 1000);
@@ -925,11 +926,12 @@
   function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !isRead(m.key, read)); }
   function syncInboxState() {
     if (!ui.me) return;
-    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
-    const known = new Set((shared?.read || []).map(item => item.key));
-    const times = new Map(allMessages().map(m => [m.key, m.at]));
-    const items = (local.read || []).filter(key => !known.has(key) && times.has(key)).map(key => ({ key, at: times.get(key) }));
-    if (!shared || items.length) run(store.markInboxRead(ui.me, local.since, Date.now() - 30 * 86400000, items));
+    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me], cutoff = Date.now() - 30 * 86400000;
+    const known = new Set(sharedReadKeys(shared)), times = new Map(allMessages().map(m => [m.key, m.at]));
+    // the shared list only keeps what is newer than its "since" (applyOp in store.js), so older keys would be sent on every start for nothing
+    const since = Math.max(Number(shared?.since) || Number(local.since) || 0, cutoff);
+    const items = (local.read || []).filter(key => !known.has(key) && times.get(key) > since).map(key => ({ key, at: times.get(key) }));
+    if (!shared || items.length) run(store.markInboxRead(ui.me, local.since, cutoff, items));
   }
   function markRead(keys) { // Persist per-person receipts, so another device does not alert again.
     if (!keys.length || !ui.me) return;
@@ -1372,15 +1374,16 @@
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form', 'data-caption-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     const on = p => ui.page === p; // only the page on screen is rebuilt; the others are rebuilt when you go to them
-    renderChrome(); if (on('home')) renderCalendar(); renderSpecialDays(); if (on('home')) renderQuestion(); renderStatus(); if (on('home')) renderMemory();
-    if (on('todo')) renderTodo(); if (on('wishlist')) renderWishlist(); if (on('diary')) renderDiary(); if (on('album')) renderAlbum();
-    renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    const parts = [renderChrome, on('home') && renderCalendar, renderSpecialDays, on('home') && renderQuestion, renderStatus, on('home') && renderMemory,
+      on('todo') && renderTodo, on('wishlist') && renderWishlist, on('diary') && renderDiary, on('album') && renderAlbum,
+      renderQuestionDialog, renderAchievementsDialog, renderMessage, decorateStaticWindows, renderBadges];
+    for (const part of parts) if (part) try { part(); } catch (err) { console.error(err); } // odd synced data that trips one part leaves the rest (and the photo pickers) working
+    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
     refocus(spot);
-    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
   }
   const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(() => { passive = true; try { render(); } finally { passive = false; } }); };
 
