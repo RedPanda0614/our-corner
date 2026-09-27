@@ -343,8 +343,12 @@
   }
   const qaBlock = date => `<div class="cc-q-answers">${myAnswerCell(date)}<div class="cc-q-cell" data-q-partner="${date}">${partnerAnswerCell(date)}</div></div>`;
   function renderQuestion() {
-    const body = $('[data-question]'); if (!body) return;
-    if (!ui.me) { body.innerHTML = ''; body.dataset.key = ''; return; }
+    const win = $('[data-question]'); if (!win) return;
+    if (!ui.me) { win.innerHTML = ''; return; }
+    // the weekly check-in and the daily question get a box each, so a sync that rebuilds one never touches the other
+    if (!win.querySelector(':scope > [data-q-daily]')) win.innerHTML = '<div class="cc-checkin" data-checkin></div><div data-q-daily></div>';
+    renderCheckin(win.querySelector(':scope > [data-checkin]'));
+    const body = win.querySelector(':scope > [data-q-daily]');
     const date = qDay(), q = questionFor(date), mine = answerOf(date, ui.me);
     const key = [date, !!mine, ui.editingAnswer === date, q?.qid].join('|'), a = document.activeElement;
     // a sync while typing only refreshes the partner's side, so the keyboard and IME stay put
@@ -358,7 +362,7 @@
   function questionArchive() {
     const day = qDay();
     const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on)];
-    return [...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id }));
+    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id })));
   }
   function renderQuestionDialog() {
     const dlg = $('[data-question-dialog]');
@@ -370,19 +374,19 @@
     const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
     const scheduled = waiting.length ? `<h3 class="cc-q-sub">Waiting to be asked</h3>${waiting.map(({ q, on }) => `<div class="cc-q-sched"><span><b>${esc(niceDate(on))}</b> ${esc(q.text)}</span>${removeButton('questions', q.id, 'Cancel')}</div>`).join('')}` : '';
     const page = pageList('questions', questionArchive());
-    const past = page.items.map(({ id: date }) => `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
+    const past = page.items.map(({ id: date }) => date.startsWith('wk:') ? checkinArticle(date.slice(3)) : `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>? DAILY QUESTIONS</span><button type="button" class="cc-min" data-question-close aria-label="Close">×</button></div><div class="cc-body">${askForm}${scheduled}<h3 class="cc-q-sub" id="cc-q-past">Past questions</h3><div data-page-list="questions">${past}</div>${pageNav('questions', page)}</div></section>`;
   }
   function openQuestions(open, target = '') {
     ui.questionOpen = open;
-    const day = validDay(target) ? target : '';
+    const day = validDay(target) || isWeekItem(target) ? target : ''; // a day, or 'wk:<monday>' for a past check-in
     if (open && day) { ui.pages.questions = pageForItem(questionArchive(), day); ui.highlight = day; setTimeout(() => { ui.highlight = null; scheduleRender(); }, 3000); }
     render();
     const dlg = $('[data-question-dialog]');
     if (!open) return;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     if (target === 'ask') $('[data-planner-form="ask"] textarea')?.focus();
-    else $(day ? '#qday-' + day : '#cc-q-past')?.scrollIntoView({ block: 'start' });
+    else $(day ? archiveAnchor(day) : '#cc-q-past')?.scrollIntoView({ block: 'start' });
   }
   function showTodayQuestion() {
     if (ui.collapsed.delete('question')) ls.set('collapsed', [...ui.collapsed]);
@@ -398,6 +402,101 @@
     run(job.then(() => { delete questionDrafts[date]; if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
   }
+
+  // ---------- weekly check-in ----------
+  // One card per Monday-to-Sunday week, above the daily question: how the week feels (a weather mood) and a few
+  // words if you like. Same no-spoiler rule as the daily question, but kept apart from it: answering one never
+  // unlocks the other. Not part of the icon badge's "+1" or of achievements.
+  // every emoji on the page goes through here (pixel art when pixel-emoji.js is loaded); labels live on the element around it
+  const moodHtml = ch => (window.CCPixelEmoji ? CCPixelEmoji.html(ch, { decorative: true }) : `<span class="cc-emoji">${esc(ch)}</span>`);
+  const checkinDrafts = {}; // week -> { mood, text }, so a re-render never loses what you picked or typed
+  let editingCheckin = null;
+  const thisWeek = () => Q.weekOf(qDay());
+  const checkinOf = (week, key) => data.checkins.find(c => c.id === `${week}:${key}`);
+  const checkinDraft = week => (checkinDrafts[week] ||= { mood: 0, text: '' });
+  const moodOf = v => Q.MOODS.find(m => m.v === Number(v));
+  const isWeekItem = id => /^wk:/.test(id || '') && validDay(id.slice(3));
+  const archiveAnchor = id => (isWeekItem(id) ? '#qweek-' + id.slice(3) : '#qday-' + id);
+  const weekLabel = (week, withYear) => 'WEEK OF ' + niceDate(week, withYear ? undefined : { month: 'short', day: 'numeric' }).toUpperCase();
+  function checkinPromptFor(week) { // the first check-in keeps its prompt, like questionFor
+    const first = data.checkins.filter(c => c.week === week && c.q).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+    return first ? first.q : Q.forWeek(week);
+  }
+  function moodLine(c, withLabel) {
+    const m = moodOf(c.mood); if (!m) return '';
+    const name = `${esc(m.en)} ${esc(m.zh)}`;
+    return `<p class="cc-ck-mood-line"><span class="cc-ck-glyph" role="img" aria-label="${name}" title="${name}">${moodHtml(m.glyph)}</span>${withLabel ? `<span aria-hidden="true">${esc(m.en)} <span lang="zh-CN">${esc(m.zh)}</span></span>` : ''}</p>`;
+  }
+  function myCheckinCell(week) {
+    const mine = checkinOf(week, ui.me);
+    if (mine && editingCheckin !== week) return `<div class="cc-q-answer cc-ck-answer ${ui.me}"><div class="cc-q-row">${answerHead(ui.me)}<button type="button" class="cc-link" data-checkin-edit="${week}">Edit</button></div>${moodLine(mine, false)}${mine.text ? `<p class="cc-feed-text">${esc(mine.text)}</p>` : ''}</div>`;
+    const draft = checkinDrafts[week] || { mood: 0, text: '' };
+    const moods = Q.MOODS.map(m => `<button type="button" class="cc-button cc-ck-mood" data-checkin-mood="${m.v}" aria-pressed="${draft.mood === m.v}" aria-label="${esc(m.en)} ${esc(m.zh)}" title="${esc(m.en)} ${esc(m.zh)}"><span class="cc-ck-glyph" aria-hidden="true">${moodHtml(m.glyph)}</span>${esc(m.en)}</button>`).join(''); // a bare label keeps the button's typewriter font
+    return `<form class="cc-q-answer cc-q-form cc-ck-form ${ui.me}" data-checkin-form="${week}"><div class="cc-q-row">${answerHead(ui.me)}<span class="cc-small">How was your week?</span></div><div class="cc-ck-moods" role="group" aria-label="How was your week? Pick one">${moods}</div><textarea name="text" maxlength="600" rows="2" placeholder="A few words, if you like…" aria-label="A few words about your week (optional)">${esc(draft.text)}</textarea><div class="cc-form-footer"><button class="cc-button" type="submit">${mine ? 'Save' : 'Check in'}</button>${mine ? `<button type="button" class="cc-button" data-checkin-cancel="${week}">Cancel</button>` : ''}</div></form>`;
+  }
+  function partnerCheckinCell(week) {
+    const key = partnerKey(), theirs = checkinOf(week, key);
+    if (!theirs) return `<div class="cc-q-answer cc-q-waiting ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-small">${week < thisWeek() ? 'No check-in that week.' : 'Hasn’t checked in yet.'}</p></div>`;
+    // their mood and words never reach the page until you have checked in for that week too
+    if (!checkinOf(week, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>${moodHtml('🔒')} ${esc(PEOPLE[key])} checked in. Check in to see how they’re doing.</p></div>`;
+    return `<div class="cc-q-answer cc-ck-answer ${key}"><div class="cc-q-row">${answerHead(key)}</div>${moodLine(theirs, true)}${theirs.text ? `<p class="cc-feed-text">${esc(theirs.text)}</p>` : ''}</div>`;
+  }
+  const checkinBlock = week => `<div class="cc-q-answers cc-ck-answers">${myCheckinCell(week)}<div class="cc-q-cell" data-ck-partner="${week}">${partnerCheckinCell(week)}</div></div>`;
+  function renderCheckin(box) { // this week's card, at the top of the daily question window
+    if (!box) return;
+    const week = thisWeek(), q = checkinPromptFor(week), mine = checkinOf(week, ui.me);
+    const key = [week, !!mine, editingCheckin === week, q?.qid].join('|'), a = document.activeElement;
+    // like the daily question: a sync while you type or pick a mood only refreshes the partner's side
+    if (passive && box.dataset.key === key && a && box.contains(a) && a.closest('[data-checkin-form]')) {
+      const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(week);
+      return;
+    }
+    box.dataset.key = key;
+    box.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week))}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${checkinBlock(week)}`;
+  }
+  function withCheckinWeeks(items) { // past weeks with a check-in join the Past questions list, just above their Monday
+    const current = thisWeek(), weeks = [...new Set(data.checkins.map(c => c.week))].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current);
+    const at = it => (isWeekItem(it.id) ? it.id.slice(3) + '~' : it.id);
+    return [...items, ...weeks.map(w => ({ id: 'wk:' + w }))].sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0));
+  }
+  const checkinArticle = week => `<article class="cc-q-day cc-ck-day ${ui.highlight === 'wk:' + week ? 'cc-highlight' : ''}" id="qweek-${week}"><div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week, true))}</span></div>${questionHtml(checkinPromptFor(week))}${checkinBlock(week)}</article>`;
+  function checkinMessages(add, edited) { // for allMessages: nothing about their week shows before you check in for it
+    const current = thisWeek();
+    for (const c of data.checkins) {
+      if (!validDay(c.week || '')) continue;
+      const open = !!checkinOf(c.week, ui.me), target = { type: 'checkin', week: c.week };
+      const which = c.week === current ? 'for the week' : `for the week of ${niceDate(c.week, { month: 'short', day: 'numeric' })}`;
+      const said = [moodOf(c.mood)?.glyph, clip(c.text)].filter(Boolean).join(' ');
+      add('home', 'wk:' + c.id, c.author, c.createdAt, `checked in ${which} · ${open ? said : 'your turn 🔒'}`, target);
+      if (open && edited(c)) add('home', `wk-u:${c.id}:${c.updatedAt}`, c.updatedBy, c.updatedAt, `updated their check-in${c.week === current ? '' : ' ' + which} · ${said}`, target);
+    }
+  }
+  function submitCheckin(form) {
+    const week = form.dataset.checkinForm, draft = checkinDraft(week), field = form.elements.text;
+    if (!ui.me || !validDay(week) || Q.weekOf(week) !== week || week > thisWeek()) return;
+    draft.text = field.value;
+    if (!moodOf(draft.mood)) { flash('Pick a mood for your week first.'); form.querySelector('[data-checkin-mood]')?.focus(); return; }
+    const text = String(field.value || '').trim().slice(0, 600), mood = draft.mood;
+    const mine = checkinOf(week, ui.me), theirs = checkinOf(week, partnerKey()), partner = PEOPLE[partnerKey()];
+    const job = mine ? store.update('checkins', mine.id, { mood, text }) : store.set('checkins', { id: `${week}:${ui.me}`, week, mood, text, q: checkinPromptFor(week), author: meName(), createdAt: Date.now() });
+    run(job.then(() => { delete checkinDrafts[week]; if (editingCheckin === week) editingCheckin = null; render(); }));
+    flash(mine ? 'Saved.' : theirs ? `Checked in. Now you can see how ${partner}’s week went ♡` : `Checked in. You’ll see ${partner}’s once they check in.`);
+  }
+  root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') checkinDraft(f.dataset.checkinForm).text = e.target.value; });
+  root.addEventListener('submit', e => { if (e.target.matches('[data-checkin-form]')) { e.preventDefault(); submitCheckin(e.target); } });
+  root.addEventListener('click', e => {
+    const el = e.target.closest('button'); if (!el || el.disabled) return;
+    const ds = el.dataset;
+    if (ds.checkinMood) { // picking a mood only flips the tiles, so focus and the half-typed text stay put
+      const f = el.closest('[data-checkin-form]'); if (!f) return;
+      checkinDraft(f.dataset.checkinForm).mood = Number(ds.checkinMood);
+      f.querySelectorAll('[data-checkin-mood]').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
+    } else if (ds.checkinEdit) {
+      const mine = checkinOf(ds.checkinEdit, ui.me); if (!mine) return;
+      editingCheckin = ds.checkinEdit; checkinDrafts[ds.checkinEdit] = { mood: Number(mine.mood) || 0, text: mine.text || '' };
+      render(); $(`[data-checkin-form="${ds.checkinEdit}"] textarea`)?.focus();
+    } else if (ds.checkinCancel) { delete checkinDrafts[ds.checkinCancel]; editingCheckin = null; render(); }
+  });
 
   // ---------- achievements: earned from what is already in the data; nothing resets, nothing is counted elsewhere ----------
   const achKey = key => 'achievements:' + key;
@@ -681,6 +780,7 @@
       add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
       if (open && edited(a)) add('home', `qa-u:${a.id}:${a.updatedAt}`, a.updatedBy, a.updatedAt, `edited their answer · ${clip(a.text)}`, target);
     }
+    checkinMessages(add, edited);
     for (const { q, on } of Q.schedule(data.questions)) if (on <= day) add('home', 'cq:' + q.id, q.by, localMidnight(on), `asked you ${on === day ? 'today’s' : 'a'} question · ${clip(q.text)}`, { type: 'question', date: on });
     return out.sort((a, b) => b.at - a.at);
   }
@@ -749,6 +849,7 @@
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
     else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
+    else if (t.type === 'checkin') { if (t.week === thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
     else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
     else {
       ui.highlight = t.id;
@@ -1031,7 +1132,7 @@
   function render() {
     cancelAnimationFrame(frame); frame = 0;
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
-    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form'].find(n => fa.hasAttribute(n));
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderStatus(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {

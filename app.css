@@ -712,3 +712,23 @@ body { padding: 0; min-height: 100vh; }
 @media (prefers-reduced-motion: reduce) {
   #couple-corner .cc-status, #couple-corner .cc-status > .cc-status-panel.cc-window { transition: none; }
 }
+
+/* weekly check-in: this week's card at the top of the daily question window, past weeks in Past questions */
+#couple-corner .cc-checkin { margin: 0 0 14px; padding: 8px 10px 2px; background: hsl(calc(273deg + var(--p-dh)) calc(28% * var(--p-s)) calc(var(--lo) + 92.4% * var(--lk))); border: 2px solid hsl(calc(266deg + var(--l-dh)) calc(21% * var(--l-s)) calc(var(--lo) + 72.2% * var(--lk))); box-shadow: 2px 2px 0 hsl(calc(276deg + var(--l-dh)) calc(13% * var(--l-s)) calc(var(--lo) + 58.6% * var(--lk))); }
+#couple-corner .cc-checkin:empty { display: none; }
+#couple-corner .cc-ck-answers { margin: 10px 0 8px; }
+#couple-corner .cc-ck-form .cc-q-row .cc-small { font-size: 11px; }
+#couple-corner .cc-ck-moods { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+#couple-corner .cc-button.cc-ck-mood { flex: 1 1 0; min-width: 54px; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px 2px 3px; border-radius: 0; font-size: 9px; line-height: 1.15; letter-spacing: 0; white-space: nowrap; }
+#couple-corner .cc-button.cc-ck-mood[aria-pressed=true] { background: hsl(calc(32deg + var(--a-dh)) calc(80% * var(--a-s)) calc(var(--lo) + 83.9% * var(--lk))); border-style: inset; box-shadow: inset 1px 1px hsl(calc(27deg + var(--a-dh)) calc(49% * var(--a-s)) calc(var(--lo) + 66.7% * var(--lk))); color: hsl(calc(27deg + var(--a-dh)) calc(40% * var(--a-s)) calc(var(--lo) + 40.2% * var(--lk))); }
+#couple-corner .cc-ck-glyph { display: inline-grid; place-items: center; font-size: 18px; line-height: 1; }
+#couple-corner .cc-ck-mood-line { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+#couple-corner .cc-ck-mood-line .cc-ck-glyph { font-size: 20px; }
+#couple-corner .cc-ck-form textarea { min-height: 48px; }
+@media (max-width: 600px) {
+  #couple-corner .cc-checkin { padding: 8px 8px 2px; }
+  #couple-corner .cc-ck-moods { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
+  #couple-corner .cc-button.cc-ck-mood { min-width: 0; min-height: 52px; }
+  #couple-corner .cc-button.cc-ck-mood { white-space: normal; text-align: center; }
+  #couple-corner .cc-ck-form textarea { font-size: 16px; }
+}
