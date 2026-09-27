@@ -99,13 +99,14 @@
   const SWATCHES = [['#e0506a', 'Red'], ['#f06a8f', 'Pink'], ['#d85fb0', 'Magenta'], ['#9a7ad8', 'Purple'], ['#6c6fd8', 'Indigo'], ['#4a9fd8', 'Blue'], ['#3fae9c', 'Teal'], ['#6fa35a', 'Green'], ['#a8c43c', 'Lime'], ['#e8b33c', 'Yellow'], ['#f08a4b', 'Orange'], ['#b0714a', 'Brown'], ['#8a8f98', 'Grey'], ['#3d4a5c', 'Slate']]; // [colour, name read out]
   const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
   const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
+  let heroArt = null; // the top picture's link as last set
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
-    const hero = data.meta.hero && safeImage(ui.heroImages[data.meta.hero]);
-    if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
+    const hero = linkOf('hero', data.meta.hero ? ui.heroImages[data.meta.hero] : '');
+    if (hero !== heroArt) { heroArt = hero; if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art'); }
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
   }
@@ -684,8 +685,22 @@
   }
 
   // ---------- diary ----------
-  const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
-  const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  // Pictures go into the page as short blob: links this page makes when a picture is first shown, one per picture and place,
+  // not as data URLs pasted into every row (an avatar ~10 KB, the top picture ~500 KB). A place's old link is let go
+  // when its picture changes, a thumbnail's when its photo is gone. Synced strings still have to pass safeImage.
+  const links = new Map(); // place -> { v: the picture, url }
+  function linkOf(place, v) {
+    const cur = links.get(place); if (cur && cur.v === v) return cur.url;
+    if (cur?.url) URL.revokeObjectURL(cur.url);
+    const blob = v instanceof Blob ? v : safeImage(v, false) && CCStore.toBlob(v), url = blob ? URL.createObjectURL(blob) : '';
+    links.set(place, { v, url }); return url;
+  }
+  let linksFor = null; // the photo list the thumbnail links were last checked against
+  const thumbOf = p => { // '' shows the ▧ placeholder
+    if (linksFor !== data.photos) { linksFor = data.photos; const ids = new Set(data.photos.map(x => 't:' + x.id)); for (const [k, l] of links) if (k.startsWith('t:') && !ids.has(k)) { if (l.url) URL.revokeObjectURL(l.url); links.delete(k); } }
+    return p ? linkOf('t:' + p.id, p.thumb) : '';
+  };
+  const avatarOf = key => linkOf('a:' + key, (data.meta.avatars || {})[key]);
   let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
   function entryPhotoIds(entry) {
     // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
@@ -719,7 +734,7 @@
   }
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${esc(p.thumb)}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos ${busy.diary ? 'disabled' : ''}></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
@@ -773,22 +788,24 @@
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
     return { thumb, full };
   }
-  async function savePhotos(list, extra, { keepPartial = false } = {}) {
-    const ids = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
+  // Every photo's files go up first, then the records are saved as one change, with the entry when there is one
+  // (entry: photo ids -> the diary entry); an album upload (keepPartial) saves each photo as it goes, as before.
+  async function savePhotos(list, extra, { keepPartial = false, entry = null } = {}) {
+    const items = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
     try {
       for (const p of list) {
         const id = newId(); tried.push(id);
-        await store.putFull(id, p.full);
-        await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
-        ids.push(id);
+        const item = await store.uploadPhoto({ id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra }, p.full);
+        if (keepPartial) await store.set('photos', item); else items.push(item);
       }
+      if (!keepPartial && (entry || items.length)) await store.saveAll([...(entry ? [{ col: 'diary', item: entry(tried) }] : []), ...items.map(item => ({ col: 'photos', item }))]);
     } catch (err) {
-      // a diary photo is no use without its entry: when a post fails part way, take back what this try stored,
-      // so nothing is left pointing at an entry that was never saved and trying again doesn't add them twice
-      if (!keepPartial) for (const id of tried) await Promise.resolve(store.remove('photos', id)).catch(e => console.error(e));
+      // a diary photo is no use without its entry: when a post fails part way, take back the files this try uploaded,
+      // so nothing is left for an entry that was never saved and trying again doesn't add them twice
+      if (!keepPartial) await Promise.resolve(store.discard(tried)).catch(e => console.error(e));
       throw err;
     }
-    return ids;
+    return tried;
   }
 
   // ---------- lightbox ----------
@@ -851,7 +868,7 @@
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
-    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = full; if (img.complete) applyPhotoZoom(); } }
+    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = linkOf('full', full); if (img.complete) applyPhotoZoom(); } } // one full photo's link at a time
   }
   function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; lightbox.pointer = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
 
@@ -1509,14 +1526,18 @@
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
     busy.diary++; render();
     try {
-      const id = newId();
-      const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
+      const id = newId(); // the photos and the entry are saved together, once all the photos are up
+      await savePhotos(diaryDraft.pending, { entryId: id, date }, { entry: photoIds => ({ id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() }) });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = []; dropDraft('diary');
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
       flash('Posted.');
-    } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
+    } catch (e) {
+      console.error(e);
+      flash(e.code === 'offline' ? 'Could not post: you seem to be offline. Your entry is kept; post it again when you are back online.'
+        : e.code === 'ratelimit' ? `Could not post: GitHub is busy. Your entry is kept; try again in ${Math.max(1, Math.ceil((e.until - Date.now()) / 60000))} min.`
+        : 'Could not post. Photos may be too large; try fewer.');
+    }
     busy.diary--; render();
   }
 
@@ -1587,8 +1608,9 @@
       busy.hero++; render();
       try {
         const img = await CCStore.resizeImage(picked[0], 1400, 0.85);
-        const id = 'hero-' + newId(); ui.heroImages[id] = img;
+        const id = 'hero-' + newId(), old = data.meta.hero; ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
+        if (old) { delete ui.heroImages[old]; run(store.dropFull(old)); } // the old picture's file goes once this change is saved
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
       busy.hero--; render();
     }
@@ -1684,7 +1706,7 @@
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
     if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit'); render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
-    if (el.hasAttribute('data-logout')) { store.signOut(); return; }
+    if (el.hasAttribute('data-logout')) { Promise.resolve(store.signOut()).catch(err => flash(err.message)); return; } // refused while changes are still saving
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
     if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve().then(u).then(() => flash('Restored.'), err => { console.error(err); flash('Could not undo. Please try again.', u); }); return; }
     if (ds.confirm) { ui.confirm = ds.confirm; lightbox.id ? openPhoto(lightbox.id) : render(); return; }
@@ -1712,7 +1734,7 @@
     if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
     if (el.hasAttribute('data-tear')) { tear(); return; }
-    if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
+    if (el.hasAttribute('data-hero-reset')) { const old = data.meta.hero; run(store.setMeta({ hero: null }).then(() => old && store.dropFull(old))); return; }
     if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; ui.captionDraft = null; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
@@ -1942,7 +1964,9 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
+  const onChange = (col, items, only) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (only !== 'thumbs' || thumbsWaiting()) scheduleRender(); };
+  // arriving thumbnails are drawn only where one can show: the album page, an open inbox, or a ▧ still waiting on screen
+  const thumbsWaiting = () => ui.page === 'album' || $('[data-inbox]').open || !!root.querySelector('[data-panel]:not([hidden]) .cc-img-wait');
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown
