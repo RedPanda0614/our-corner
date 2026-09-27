@@ -64,7 +64,9 @@
     }
     if (['birthday', 'holiday', 'anniversary'].includes(kind)) for (const item of data.dates || []) {
       if ((item.kind || 'anniversary') !== kind) continue;
-      event('day-' + item.id, '♡ ' + item.title, [...allDay(item.date), ...(item.repeat ? ['RRULE:FREQ=YEARLY'] : [])], labels[kind]);
+      // A yearly Feb 29 repeats on day 60 of the year: Feb 29 in leap years, Mar 1 otherwise (a plain yearly rule skips 3 years in 4).
+      const yearly = item.date.slice(5) === '02-29' ? 'RRULE:FREQ=YEARLY;BYYEARDAY=60' : 'RRULE:FREQ=YEARLY';
+      event('day-' + item.id, '♡ ' + item.title, [...allDay(item.date), ...(item.repeat ? [yearly] : [])], labels[kind]);
       count++;
     }
 
