@@ -605,6 +605,32 @@ test('local mode keeps thumbnails in its data record as data URLs, never a blob:
   assert.equal(bytes(full), 'YQ=='); assert.equal(bytes(page.disk.get('full:old')), 'YQ==');
 });
 
+// ---------- the old top picture ----------
+test('a replaced or reset top picture has its old file deleted, only once the change is saved', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.putFull('hero-1', IMG); await page.store.setMeta({ hero: 'hero-1' }); await page.flush();
+  await page.store.putFull('hero-2', IMG); await page.store.setMeta({ hero: 'hero-2' }); await page.store.dropFull('hero-1'); // app.js: new picture up, saved, then the old one dropped
+  assert.ok(!page.disk.has('full:hero-1'), 'gone from this device');
+  remote.putReply = [500, {}]; await page.flush(); await settle(); // the change didn't reach GitHub yet: the old file stays
+  assert.ok(remote.files.has('photos/hero-1.jpg')); assert.equal(remote.count(/^DELETE/), 0); assert.equal(remote.data.meta.hero, 'hero-1');
+  const from = remote.log.length; await page.runTimers(15000); await page.flush(); await settle(); // the retry
+  assert.deepEqual([...remote.files.keys()], ['photos/hero-2.jpg']); assert.equal(remote.data.meta.hero, 'hero-2');
+  assert.deepEqual(remote.log.slice(from).filter(l => !l.startsWith('GET')), ['PUT data.json', 'DELETE photos/hero-1.jpg'], 'by the sha from the upload, after the save');
+  await page.store.setMeta({ hero: null }); await page.store.dropFull('hero-2'); await page.flush(); await settle(); // Reset
+  assert.equal(remote.files.size, 0); assert.equal(remote.data.meta.hero, null);
+  await post(page, 'e1', ['p1']); await page.store.putFull('hero-3', IMG); await page.store.setMeta({ hero: 'hero-3' }); await page.flush();
+  await page.store.dropFull('p1'); await page.store.dropFull('hero-3'); await page.store.dropFull(null); await settle(); // never a photo's file or the picture in use
+  assert.deepEqual([...remote.files.keys()].sort(), ['photos/hero-3.jpg', 'photos/p1-thumb.jpg', 'photos/p1.jpg']);
+  assert.deepEqual(page.disk.get('github-state:test/private-data:main').files, []);
+});
+
+test('in local mode a replaced top picture is dropped from the device', async () => {
+  const page = browser(null, { config: {} }); await page.connect();
+  await page.store.putFull('hero-1', IMG); await page.store.setMeta({ hero: 'hero-1' });
+  await page.store.putFull('hero-2', IMG); await page.store.setMeta({ hero: 'hero-2' }); await page.store.dropFull('hero-1'); await page.store.dropFull('hero-2');
+  assert.ok(!page.disk.has('full:hero-1')); assert.ok(page.disk.has('full:hero-2'), 'the picture in use stays');
+});
+
 // ---------- logging out ----------
 test('logging out waits until everything is on GitHub, then clears the private data kept on this device', async () => {
   const remote = server(); remote.data.collections.photos = [{ id: 'p1', thumb: '' }, { id: 'p2', thumb: '' }];

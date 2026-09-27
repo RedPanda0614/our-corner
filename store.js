@@ -165,6 +165,10 @@
       saveAll: changes => op({ type: 'setAll', items: changes }),
       async uploadPhoto(item, full) { await this.putFull(item.id, full); return item; },
       discard: ids => Promise.all(ids.map(id => db.del('full:' + id))),
+      dropFull(id) { // an old top picture (see the GitHub mode one)
+        const job = queue.then(async () => { await load(); if (id && data.meta.hero !== id && !data.collections.photos.some(p => p.id === id)) await db.del('full:' + id); });
+        queue = job.catch(() => {}); return job;
+      },
       putFull: (id, dataUrl) => db.put('full:' + id, dataUrlToBlob(dataUrl) || dataUrl),
       getFull: id => readPicture(db, 'full:' + id) // a Blob
     };
@@ -516,6 +520,12 @@
       // a new photo's two files, uploaded before its record is saved; resolves to the record to save (its thumbnail stays on this device)
       async uploadPhoto(item, full) { await this.putFull(item.id, full); return prepare('photos', item); },
       // files uploaded for photos whose records were never saved (a post that failed part way): deleted in the background
+      // a top picture that was replaced or reset: its file is deleted once that change is saved (never one still in use)
+      async dropFull(id) {
+        const v = view(); if (!id || v.meta.hero === id || (v.collections.photos || []).some(p => p.id === id)) return;
+        fileDeletes.push({ path: `photos/${id}.jpg`, sha: fileShas.get(id)?.full || null }); await forget(id);
+        await persist(); deleteFiles();
+      },
       async discard(ids) {
         for (const id of ids) { const s = fileShas.get(id) || {}; fileDeletes.push({ path: `photos/${id}-thumb.jpg`, sha: s.thumb || null }, { path: `photos/${id}.jpg`, sha: s.full || null }); await forget(id); }
         await persist(); deleteFiles();

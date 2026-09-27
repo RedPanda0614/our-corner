@@ -1533,8 +1533,9 @@
       busy.hero++; render();
       try {
         const img = await CCStore.resizeImage(picked[0], 1400, 0.85);
-        const id = 'hero-' + newId(); ui.heroImages[id] = img;
+        const id = 'hero-' + newId(), old = data.meta.hero; ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
+        if (old) { delete ui.heroImages[old]; run(store.dropFull(old)); } // the old picture's file goes once this change is saved
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
       busy.hero--; render();
     }
@@ -1658,7 +1659,7 @@
     if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
     if (el.hasAttribute('data-tear')) { tear(); return; }
-    if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
+    if (el.hasAttribute('data-hero-reset')) { const old = data.meta.hero; run(store.setMeta({ hero: null }).then(() => old && store.dropFull(old))); return; }
     if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; ui.captionDraft = null; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
