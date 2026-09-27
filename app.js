@@ -417,13 +417,21 @@
       const cell = body.querySelector('[data-q-partner]'); if (cell) cell.innerHTML = partnerAnswerCell(date);
       return;
     }
+    // past midnight, the day before stays while you are still writing its answer (until you send or clear it)
+    const held = body.querySelector(`[data-question-form].${ui.me}`)?.dataset.questionForm;
+    heldDay = held && held !== date && (!answerOf(held, ui.me) || ui.editingAnswer === held) && ((a && body.contains(a) && a.closest('[data-question-form]')) || String(questionDrafts[held] || '').trim()) ? held : null;
+    if (heldDay) { const cell = body.querySelector('[data-q-partner]'); if (cell) cell.innerHTML = partnerAnswerCell(heldDay); return; }
     body.dataset.key = key;
     body.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase())}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${qaBlock(date)}<div class="cc-plan-actions"><button type="button" class="cc-button" data-question-open="past">Past questions</button><button type="button" class="cc-button" data-question-open="ask">Ask ${esc(PEOPLE[partnerKey()])} a question</button></div>`;
   }
+  let heldDay = null, heldWeek = null; // still on the home card after midnight (see renderQuestion), so not in the archive yet
+  // an answer or check-in typed but not sent for a day that is over waits here, so it can still be sent
+  const unsentDays = () => Object.keys(questionDrafts).filter(d => String(questionDrafts[d] || '').trim() && !answerOf(d, ui.me));
+  const unsentWeeks = () => Object.keys(checkinDrafts).filter(w => (checkinDrafts[w].mood || checkinDrafts[w].text.trim()) && !checkinOf(w, ui.me));
   function questionArchive() {
     const day = qDay();
-    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on)];
-    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id })));
+    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on), ...unsentDays()];
+    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day && d !== heldDay).sort().reverse().map(id => ({ id })));
   }
   function renderQuestionDialog() {
     const dlg = $('[data-question-dialog]');
@@ -512,11 +520,15 @@
       const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(week);
       return;
     }
+    // like the daily question: past Sunday midnight, last week's card stays while you are still filling it in
+    const held = box.querySelector(`[data-checkin-form].${ui.me}`)?.dataset.checkinForm, dr = held && checkinDrafts[held];
+    heldWeek = held && held !== week && (!checkinOf(held, ui.me) || editingCheckin === held) && ((a && box.contains(a) && a.closest('[data-checkin-form]')) || dr?.mood || dr?.text.trim()) ? held : null;
+    if (heldWeek) { const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(heldWeek); return; }
     box.dataset.key = key;
     box.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week))}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${checkinBlock(week)}`;
   }
   function withCheckinWeeks(items) { // past weeks with a check-in join the Past questions list, just above their Monday
-    const current = thisWeek(), weeks = [...new Set(data.checkins.map(c => c.week))].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current);
+    const current = thisWeek(), weeks = [...new Set([...data.checkins.map(c => c.week), ...unsentWeeks()])].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current && w !== heldWeek);
     const at = it => (isWeekItem(it.id) ? it.id.slice(3) + '~' : it.id);
     return [...items, ...weeks.map(w => ({ id: 'wk:' + w }))].sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0));
   }
