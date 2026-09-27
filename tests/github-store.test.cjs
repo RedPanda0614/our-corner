@@ -128,3 +128,15 @@ test('older shared data accepts albums and preserves photo membership', async ()
   assert.equal(remote.data.collections.albums[0].title, 'Summer');
   assert.equal(remote.data.collections.photos[0].albumId, 'album-1');
 });
+
+test('older shared data accepts daily answers and custom questions', async () => {
+  const remote = server(); // The old data file has no answers or questions collections.
+  const page = browser(remote); await page.start();
+  assert.deepEqual(page.changes.answers, []);
+  assert.deepEqual(page.changes.questions, []);
+  await page.store.set('answers', { id: '2026-09-27:sijie', date: '2026-09-27', text: 'Dumplings', createdAt: 1 });
+  await page.store.set('questions', { id: 'q-1', date: '2026-09-28', text: 'Best trip so far?', createdAt: 2 });
+  await page.flush();
+  assert.equal(remote.data.collections.answers[0].text, 'Dumplings');
+  assert.equal(remote.data.collections.questions[0].date, '2026-09-28');
+});

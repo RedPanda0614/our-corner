@@ -1,6 +1,6 @@
 # Our Little Corner
 
-Retro shared calendar, diary, album, to-do list and wishlist.
+Retro shared calendar, diary, album, to-do list, wishlist and a daily question for the two of us.
 
 Website: https://redpanda0614.github.io/our-corner/
 

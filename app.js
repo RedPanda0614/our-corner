@@ -23,7 +23,7 @@
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  let today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const currentDay = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   const utcDay = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
   const dayISO = d => d.toISOString().slice(0, 10);
@@ -39,9 +39,14 @@
   const statusLabel = s => ({ dreaming: 'Dreaming', planning: 'Planning', booked: 'Booked', visited: 'Visited' })[s];
   const newId = CCStore.uid;
   const { paginate, pageForItem } = CCPagination;
+  const Q = CCQuestions;
+  // the daily question follows this device's date; the local preview can pretend with ?day=YYYY-MM-DD
+  const previewDay = store.mode === 'local' ? new URLSearchParams(location.search).get('day') : null;
+  const qDay = () => (previewDay && validDay(previewDay) ? previewDay : currentDay());
+  const localMidnight = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
 
   // ---------- state ----------
-  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], meta: {} };
+  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], answers: [], questions: [], meta: {} };
   // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
   // c = contrast (1 normal), dark = invert lightness.
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
@@ -80,8 +85,8 @@
     message: null, undo: null, messageTimer: null,
     confirm: null, // key of a two-step delete button
     memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false, newEntryOpen: false,
-    pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1 },
-    album: 'all', albumForm: '', albumDraft: ''
+    pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1, questions: 1 },
+    album: 'all', albumForm: '', albumDraft: '', questionOpen: false, editingAnswer: null
   };
   function pageList(key, items) {
     const result = paginate(items, ui.pages[key]);
@@ -113,12 +118,14 @@
       wish: { title: '', who: 'both', note: '' },
       special: { title: '', kind: 'anniversary', date: '', repeat: true },
       dayedit: { title: '', kind: 'anniversary', date: '', repeat: true },
-      entryedit: { text: '', tags: '', photoIds: [], pending: [] }
+      entryedit: { text: '', tags: '', photoIds: [], pending: [] },
+      ask: { text: '', date: '' }
     }
   };
   const diaryDraft = { text: '', date: today, tags: '', pending: [] };
   const diaryFilter = { q: '', tag: '' };
   const commentDrafts = {};
+  const questionDrafts = {};
   const calendarImport = { open: false, file: null, name: '', from: today, to: shiftDay(today, 365), preview: null, error: '', busy: false };
 
   const meName = () => PEOPLE[ui.me] || '';
@@ -306,6 +313,91 @@
     body.innerHTML = `<div class="cc-memory-label"><span>${esc(niceDate(entryDisplayDate(e)))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
 
+  // ---------- daily question ----------
+  const partnerKey = () => (ui.me === 'zhenzhen' ? 'sijie' : 'zhenzhen');
+  const answerOf = (date, key) => data.answers.find(a => a.id === `${date}:${key}`);
+  function questionFor(date) { // the first answer keeps its question, so later bank or schedule changes never rewrite a day
+    const first = data.answers.filter(a => a.date === date && a.q).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+    return first ? first.q : Q.forDay(date, data.questions);
+  }
+  function questionHtml(q) {
+    if (!q) return '';
+    const cat = Q.CATEGORIES[q.cat] || Q.CATEGORIES.fun;
+    const tag = `<div class="cc-plan-tag cc-q-cat">${esc(cat.en)} · <span lang="zh-CN">${esc(cat.zh)}</span>${q.cat === 'custom' && q.by ? ` · asked by ${esc(q.by)}` : ''}</div>`;
+    return q.cat === 'custom' ? `${tag}<p class="cc-q-text">${esc(q.text)}</p>` : `${tag}<p class="cc-q-text">${esc(q.en)}</p><p class="cc-q-zh" lang="zh-CN">${esc(q.zh)}</p>`;
+  }
+  const answerHead = key => `<span class="cc-q-who">${mini(key)}<b>${esc(PEOPLE[key])}</b></span>`;
+  function myAnswerCell(date) {
+    const mine = answerOf(date, ui.me);
+    if (mine && ui.editingAnswer !== date) return `<div class="cc-q-answer ${ui.me}"><div class="cc-q-row">${answerHead(ui.me)}<button type="button" class="cc-link" data-answer-edit="${date}">Edit</button></div><p class="cc-feed-text">${esc(mine.text)}</p></div>`;
+    const draft = questionDrafts[date] ?? '';
+    return `<form class="cc-q-answer cc-q-form ${ui.me}" data-question-form="${date}"><div class="cc-q-row">${answerHead(ui.me)}</div><textarea name="answer" maxlength="1000" rows="3" placeholder="Your answer…" aria-label="Your answer">${esc(draft)}</textarea><div class="cc-form-footer"><button class="cc-button" type="submit">${mine ? 'Save' : 'Answer ♡'}</button>${mine ? `<button type="button" class="cc-button" data-answer-cancel="${date}">Cancel</button>` : ''}</div></form>`;
+  }
+  function partnerAnswerCell(date) {
+    const key = partnerKey(), theirs = answerOf(date, key);
+    if (!theirs) return `<div class="cc-q-answer cc-q-waiting ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-small">${date < qDay() ? 'No answer that day.' : 'Hasn’t answered yet.'}</p></div>`;
+    // the partner's text never reaches the page until you have answered too
+    if (!answerOf(date, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>🔒 ${esc(PEOPLE[key])} answered. Answer to unlock.</p></div>`;
+    return `<div class="cc-q-answer ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-feed-text">${esc(theirs.text)}</p></div>`;
+  }
+  const qaBlock = date => `<div class="cc-q-answers">${myAnswerCell(date)}<div class="cc-q-cell" data-q-partner="${date}">${partnerAnswerCell(date)}</div></div>`;
+  function renderQuestion() {
+    const body = $('[data-question]'); if (!body) return;
+    if (!ui.me) { body.innerHTML = ''; body.dataset.key = ''; return; }
+    const date = qDay(), q = questionFor(date), mine = answerOf(date, ui.me);
+    const key = [date, !!mine, ui.editingAnswer === date, q?.qid].join('|'), a = document.activeElement;
+    // a sync while typing only refreshes the partner's side, so the keyboard and IME stay put
+    if (passive && body.dataset.key === key && a && body.contains(a) && a.closest('[data-question-form]')) {
+      const cell = body.querySelector('[data-q-partner]'); if (cell) cell.innerHTML = partnerAnswerCell(date);
+      return;
+    }
+    body.dataset.key = key;
+    body.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase())}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${qaBlock(date)}<div class="cc-plan-actions"><button type="button" class="cc-button" data-question-open="past">Past questions</button><button type="button" class="cc-button" data-question-open="ask">Ask ${esc(PEOPLE[partnerKey()])} a question</button></div>`;
+  }
+  function questionArchive() {
+    const day = qDay();
+    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on)];
+    return [...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id }));
+  }
+  function renderQuestionDialog() {
+    const dlg = $('[data-question-dialog]');
+    if (!ui.questionOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
+    const a = document.activeElement;
+    if (passive && a && dlg.contains(a) && a.matches('input, textarea')) return;
+    const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask;
+    const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, data.questions))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
+    const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
+    const scheduled = waiting.length ? `<h3 class="cc-q-sub">Waiting to be asked</h3>${waiting.map(({ q, on }) => `<div class="cc-q-sched"><span><b>${esc(niceDate(on))}</b> ${esc(q.text)}</span>${removeButton('questions', q.id, 'Cancel')}</div>`).join('')}` : '';
+    const page = pageList('questions', questionArchive());
+    const past = page.items.map(({ id: date }) => `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
+    dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>? DAILY QUESTIONS</span><button type="button" class="cc-min" data-question-close aria-label="Close">×</button></div><div class="cc-body">${askForm}${scheduled}<h3 class="cc-q-sub" id="cc-q-past">Past questions</h3><div data-page-list="questions">${past}</div>${pageNav('questions', page)}</div></section>`;
+  }
+  function openQuestions(open, target = '') {
+    ui.questionOpen = open;
+    const day = validDay(target) ? target : '';
+    if (open && day) { ui.pages.questions = pageForItem(questionArchive(), day); ui.highlight = day; setTimeout(() => { ui.highlight = null; scheduleRender(); }, 3000); }
+    render();
+    const dlg = $('[data-question-dialog]');
+    if (!open) return;
+    if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+    if (target === 'ask') $('[data-planner-form="ask"] textarea')?.focus();
+    else $(day ? '#qday-' + day : '#cc-q-past')?.scrollIntoView({ block: 'start' });
+  }
+  function showTodayQuestion() {
+    if (ui.collapsed.delete('question')) ls.set('collapsed', [...ui.collapsed]);
+    go('home');
+    $('[data-win="question"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  function submitAnswer(form) {
+    const date = form.dataset.questionForm, field = form.elements.answer, text = String(field.value || '').trim();
+    if (!ui.me || !validDay(date) || date > qDay()) return;
+    if (!text) { field.setCustomValidity('Write an answer first.'); field.reportValidity(); return; }
+    const mine = answerOf(date, ui.me), theirs = answerOf(date, partnerKey());
+    const job = mine ? store.update('answers', mine.id, { text }) : store.set('answers', { id: `${date}:${ui.me}`, date, q: questionFor(date), author: meName(), text, createdAt: Date.now() });
+    run(job.then(() => { delete questionDrafts[date]; if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
+    flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
+  }
+
   // ---------- todo + wishlist ----------
   function todoSorted() {
     return [...data.trips.map(i => ({ ...i, kind: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity' }))]
@@ -491,10 +583,23 @@
       for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
     }
     for (const p of data.photos) if (!p.entryId) add('album', 'ph:' + p.id, p.author, p.createdAt, 'added a photo to the album', { type: 'photo', id: p.id, thumb: p.thumb });
+    const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
+    const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
+    for (const a of data.answers) {
+      const open = answered.has(a.date), target = { type: 'question', date: a.date }; // no spoilers before you answer
+      add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
+      if (open && edited(a)) add('home', `qa-u:${a.id}:${a.updatedAt}`, a.updatedBy, a.updatedAt, `edited their answer · ${clip(a.text)}`, target);
+    }
+    for (const { q, on } of Q.schedule(data.questions)) if (on <= day) add('home', 'cq:' + q.id, q.by, localMidnight(on), `asked you ${on === day ? 'today’s' : 'a'} question · ${clip(q.text)}`, { type: 'question', date: on });
     return out.sort((a, b) => b.at - a.at);
   }
   function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
-  function markRead(keys) { const st = inboxState(); st.read = [...new Set([...st.read, ...keys])].slice(-400); ls.set(inboxKey(), st); }
+  function markRead(keys) { // anything older than 30 days counts as read, so the list stays short without old messages coming back
+    const st = inboxState(), at = new Map(allMessages().map(m => [m.key, m.at]));
+    st.since = Math.max(st.since, Date.now() - 30 * 86400000);
+    st.read = [...new Set([...st.read, ...keys])].filter(k => (at.get(k) || 0) > st.since);
+    ls.set(inboxKey(), st);
+  }
   function ago(ms) {
     const s = Math.max(0, (Date.now() - ms) / 1000);
     if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago';
@@ -508,6 +613,14 @@
     const here = unread.filter(m => m.tab === ui.page);
     $('[data-inbox-pill]').innerHTML = here.length ? `<button type="button" class="cc-inbox-pill" data-open-inbox="${ui.page}">${mini(nameToKey(here[0].who))}<span>${here.length} new message${here.length === 1 ? '' : 's'}</span><span aria-hidden="true">›</span></button>` : '';
     if (ui.inboxOpen) renderInbox();
+    setIconBadge(ui.me && !$('[data-app]').hidden ? unread.length + (answerOf(qDay(), ui.me) ? 0 : 1) : 0);
+  }
+  // number on the installed app's icon: new messages, plus one while today's question is unanswered
+  let iconBadge = -1;
+  function setIconBadge(n) {
+    if (n === iconBadge || !('setAppBadge' in navigator)) return;
+    iconBadge = n;
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
   function renderInbox() {
     const dlg = $('[data-inbox]'), filter = ui.inboxFilter || 'all';
@@ -533,6 +646,7 @@
     const t = m.target;
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
+    else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
     else {
       ui.highlight = t.id;
       if (t.type === 'entry') { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), t.id); }
@@ -611,7 +725,8 @@
     const avatars = data.meta.avatars || {};
     const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
     const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span></span>`;
-    const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}</div>`;
+    const canBadge = 'setAppBadge' in navigator && 'Notification' in window && Notification.permission === 'default' && (matchMedia('(display-mode: standalone)').matches || navigator.standalone);
+    const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}${canBadge ? '<button type="button" class="cc-link" data-enable-badge>Show a count on the app icon</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
       ? `<div class="cc-avatar" role="group" aria-label="Who is writing on this device">${['sijie', 'zhenzhen'].map(k => `<button type="button" class="cc-avatar-btn" data-me="${k}" aria-pressed="${ui.me === k}">${playerAvatar(k)}<small>${PLAYER_NICKNAMES[k]}</small></button>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div><div class="cc-player-label">Playing as ${esc(meName())}</div>`
       : `<div class="cc-avatar">${['sijie', 'zhenzhen'].map(k => `<span class="cc-avatar-static ${ui.me === k ? 'me' : ''}">${playerAvatar(k)}<small>${PLAYER_NICKNAMES[k]}</small></span>`).join('<span class="cc-avatar-heart" aria-hidden="true">♥</span>')}</div>`) + picture;
@@ -636,19 +751,19 @@
   }
 
   // ---------- render with focus preservation ----------
-  let frame = 0;
+  let frame = 0, passive = false; // passive: a background sync or timer, not something the user just did
   function render() {
     cancelAnimationFrame(frame); frame = 0;
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
-    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form'].find(n => fa.hasAttribute(n));
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderMessage(); decorateStaticWindows(); renderBadges();
+    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
-      if (el && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
+      if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
   }
-  const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(render); };
+  const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(() => { passive = true; try { render(); } finally { passive = false; } }); };
 
   // ---------- navigation ----------
   function go(page) { if (!PAGES.includes(page)) return; ui.page = page; ui.confirm = null; if (location.hash.slice(1) !== page) history.pushState(null, '', '#' + page); render(); }
@@ -678,6 +793,16 @@
         flash('Saved.');
       } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
       ui.busy = false; render(); return;
+    }
+    if (name === 'ask') {
+      const text = String(d.text || '').trim().slice(0, 200), tomorrow = shiftDay(qDay(), 1);
+      if (!text) { form.elements.text.setCustomValidity('Write a question first.'); form.elements.text.reportValidity(); return; }
+      if (!validDay(d.date || '') || d.date < tomorrow) { form.elements.date.setCustomValidity('Pick tomorrow or later.'); form.elements.date.reportValidity(); return; }
+      const on = Q.nextFreeDay(d.date, data.questions), partner = PEOPLE[partnerKey()];
+      run(store.set('questions', { id: newId(), date: on, text, by: meName(), createdAt: Date.now() }).then(() => render()));
+      planner.drafts.ask = { text: '', date: '' };
+      flash(on === d.date ? `Scheduled for ${niceDate(on)}. ${partner} won’t see it until then.` : `${niceDate(d.date)} already has a question, so yours is on ${niceDate(on)}.`);
+      render(); return;
     }
     const title = String(d.title || '').trim();
     if (!title) { form.elements.title.setCustomValidity('Please add a name.'); form.elements.title.reportValidity(); return; }
@@ -736,6 +861,7 @@
     if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) diaryDraft[el.name] = el.value;
     if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
     const cf = el.closest('[data-comment-form]'); if (cf) commentDrafts[cf.dataset.commentForm] = el.value;
+    const qf = el.closest('[data-question-form]'); if (qf) questionDrafts[qf.dataset.questionForm] = el.value;
   });
   root.addEventListener('change', async e => {
     const el = e.target;
@@ -814,6 +940,7 @@
     }
     if (f.matches('[data-planner-form]')) submitPlanner(f);
     else if (f.matches('[data-diary-form]')) submitDiary(f);
+    else if (f.matches('[data-question-form]')) submitAnswer(f);
     else if (f.matches('[data-diary-search]')) { diaryFilter.q = f.elements.q.value; ui.pages.diary = 1; render(); }
     else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
@@ -860,6 +987,11 @@
     if (el.hasAttribute('data-close-inbox')) { closeInbox(); return; }
     if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
     if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
+    if (ds.questionOpen) { openQuestions(true, ds.questionOpen); return; }
+    if (el.hasAttribute('data-question-close')) { openQuestions(false); return; }
+    if (ds.answerEdit) { const mine = answerOf(ds.answerEdit, ui.me); if (mine) { ui.editingAnswer = ds.answerEdit; questionDrafts[ds.answerEdit] = mine.text; render(); $(`[data-question-form="${ds.answerEdit}"] textarea`)?.focus(); } return; }
+    if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; ui.editingAnswer = null; render(); return; }
+    if (el.hasAttribute('data-enable-badge')) { Promise.resolve(Notification.requestPermission()).catch(() => {}).finally(() => { iconBadge = -1; render(); }); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
     if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
@@ -951,7 +1083,12 @@
   $('[data-inbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closeInbox(); });
   $('[data-comment-confirm-dialog]').addEventListener('close', () => { pendingCommentDelete = null; });
   $('[data-comment-confirm-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
-  setInterval(() => { if (!document.hidden) renderBadges(); }, 60000);
+  $('[data-question-dialog]').addEventListener('close', () => { if (ui.questionOpen) { ui.questionOpen = false; render(); } });
+  $('[data-question-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openQuestions(false); });
+  let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
+  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; scheduleRender(); return true; };
+  setInterval(() => { if (!document.hidden && !checkDay()) renderBadges(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDay(); });
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
   $('[data-special-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openSpecial(false); });
 

@@ -607,3 +607,30 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble { top: auto; bottom: calc(100% + 9px); left: 36%; transform: none; }
 #couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble::after { left: 12px; }
 #couple-corner .cc-ipod-body.cc-floating .cc-ipod-bubble[data-playing=true] { animation-name: cc-float2; }
+
+/* daily question: today's card on home, the past questions / ask dialog */
+#couple-corner .cc-q-head { margin-bottom: 4px; }
+#couple-corner .cc-q-new { padding: 1px 6px; letter-spacing: 1px; background: hsl(calc(29deg + var(--a-dh)) calc(83% * var(--a-s)) calc(var(--lo) + 84.1% * var(--lk))); border: 1px solid hsl(calc(30deg + var(--a-dh)) calc(38% * var(--a-s)) calc(var(--lo) + 71.2% * var(--lk))); color: hsl(calc(25deg + var(--a-dh)) calc(29% * var(--a-s)) calc(var(--lo) + 41.6% * var(--lk))); }
+#couple-corner .cc-q-text { margin: 6px 0 0; font-size: 15px; line-height: 1.6; font-weight: 600; }
+#couple-corner .cc-q-zh { margin: 2px 0 0; font-size: 13px; line-height: 1.6; color: hsl(calc(79deg + var(--g-dh)) calc(10% * var(--g-s)) calc(var(--lo) + 43.1% * var(--lk))); }
+#couple-corner .cc-q-answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; align-items: start; }
+#couple-corner .cc-q-answer { padding: 8px 10px; font-size: 12px; background: hsl(calc(77deg + var(--g-dh)) calc(35% * var(--g-s)) calc(var(--lo) + 92.2% * var(--lk))); border-left: 3px solid hsl(calc(97deg + var(--g-dh)) calc(22% * var(--g-s)) calc(var(--lo) + 58% * var(--lk))); }
+#couple-corner .cc-q-answer.zhenzhen { border-left-color: hsl(calc(22deg + var(--a-dh)) calc(70% * var(--a-s)) calc(var(--lo) + 69% * var(--lk))); }
+#couple-corner .cc-q-answer p { margin: 6px 0 0; }
+#couple-corner .cc-q-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#couple-corner .cc-q-who b { font-weight: 600; }
+#couple-corner .cc-q-row .cc-link { font-size: 11px; }
+#couple-corner .cc-q-locked, #couple-corner .cc-q-waiting { background: none; border: 1px dashed hsl(calc(81deg + var(--g-dh)) calc(21% * var(--g-s)) calc(var(--lo) + 73.3% * var(--lk))); border-left-width: 3px; }
+#couple-corner .cc-q-locked p { color: hsl(calc(79deg + var(--g-dh)) calc(10% * var(--g-s)) calc(var(--lo) + 43.1% * var(--lk))); }
+#couple-corner .cc-q-form textarea { display: block; width: 100%; min-height: 64px; margin-top: 6px; padding: 6px; resize: vertical; font-size: 13px; line-height: 1.5; color: hsl(calc(99deg + var(--g-dh)) calc(15% * var(--g-s)) calc(var(--lo) + 33.3% * var(--lk))); background: hsl(calc(53deg + var(--p-dh)) calc(100% * var(--p-s)) calc(var(--lo) + 98.4% * var(--lk))); border: 1px inset hsl(calc(81deg + var(--g-dh)) calc(21% * var(--g-s)) calc(var(--lo) + 73.3% * var(--lk))); border-radius: 0; }
+#couple-corner .cc-q-form .cc-form-footer { margin-top: 8px; }
+#couple-corner .cc-question-modal { width: min(640px, 94vw); }
+#couple-corner .cc-q-sub { margin: 18px 0 6px; font-size: 13px; font-weight: 600; }
+#couple-corner .cc-q-sched { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12px; border-bottom: 1px dashed hsl(0 0% 50% / .35); }
+#couple-corner .cc-q-sched b { margin-right: 6px; font-weight: 600; }
+#couple-corner .cc-q-day { padding: 10px 8px; border-top: 1px dashed hsl(0 0% 50% / .35); }
+#couple-corner .cc-q-day .cc-q-answers { margin-bottom: 4px; }
+@media (max-width: 600px) {
+  #couple-corner .cc-q-answers { grid-template-columns: minmax(0, 1fr); }
+  #couple-corner .cc-q-form textarea { font-size: 16px; }
+}
