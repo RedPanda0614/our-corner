@@ -645,7 +645,7 @@ test('in local mode a replaced top picture is dropped from the device', async ()
 });
 
 // ---------- logging out ----------
-test('logging out waits until everything is on GitHub, then clears the private data kept on this device', async () => {
+test('logging out waits until every change is on GitHub, then clears the private data kept on this device', async () => {
   const remote = server(); remote.data.collections.photos = [{ id: 'p1', thumb: '' }, { id: 'p2', thumb: '' }];
   for (const id of ['p1', 'p2']) remote.files.set(`photos/${id}-thumb.jpg`, { content: 'YQ==', sha: 't' + id });
   const disk = new Map([['data', { version: 1, meta: {}, collections: {} }], ['full:p1', IMG]]); // 'data': local mode's own record, not this repo's
@@ -656,10 +656,9 @@ test('logging out waits until everything is on GitHub, then clears the private d
   await assert.rejects(page.store.signOut(), refused); // a change still waiting
   remote.deleteStatus = [500]; await page.store.remove('photos', 'p2'); await page.flush();
   assert.equal(page.store.pending(), false); assert.equal(remote.files.size, 2);
-  await assert.rejects(page.store.signOut(), refused); // a photo's files still to delete
   assert.equal(page.reloads.n, 0); assert.ok(page.local.has('olc:github')); assert.ok(disk.has('github-state:test/private-data:main'));
-  assert.ok(await page.runTimers(20000)); await settle(); assert.equal(remote.files.size, 1); // the delete goes through on its retry
-  await page.store.signOut();
+  await page.store.signOut(); // a photo file that could not be deleted yet does not hold it up: it is only a spare file left on GitHub
+  assert.equal(remote.files.size, 2);
   assert.equal(page.reloads.n, 1);
   assert.deepEqual([...page.local.keys()], ['olc:me']);
   assert.deepEqual([...disk.keys()], ['data']);

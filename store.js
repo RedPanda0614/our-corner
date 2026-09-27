@@ -495,10 +495,10 @@
         try { await this.verify(); } catch (e) { auth.token = null; throw e.code === 'ratelimit' ? busyError(e.until, true) : e; }
         localStorage.setItem('olc:github', JSON.stringify({ token: auth.token, name }));
       },
-      // Not while changes or photo deletions are still on their way to GitHub; then this device forgets the token and
-      // the private data it keeps: the saved copy, thumbnails, full photos and drafts
+      // Not while changes are still on their way to GitHub; then this device forgets the token and the private data it
+      // keeps: the saved copy, thumbnails, full photos and drafts. Unsent file deletions only leave spare files behind.
       async signOut() {
-        if (pending.length || flushing || fileDeletes.length || deleting) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
+        if (pending.length || flushing) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
         closed = true; clearInterval(pollTimer); localStorage.removeItem('olc:github');
         for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('olc:drafts:')) localStorage.removeItem(k); }
         await db.drop(k => typeof k === 'string' && /^(github-state:|thumb:|full:)/.test(k));

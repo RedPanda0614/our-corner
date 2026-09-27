@@ -171,6 +171,9 @@
   }
 
   // ---------- messages ----------
+  // an upload or save that failed because the phone is offline or GitHub is busy says so; anything else keeps its own message
+  const failText = (e, what, retry, other) => e?.code === 'offline' ? `Could not ${what}: you seem to be offline. ${retry} when you are back online.`
+    : e?.code === 'ratelimit' ? `Could not ${what}: GitHub is busy. ${retry} in ${Math.max(1, Math.ceil((e.until - Date.now()) / 60000))} min.` : other;
   function flash(text, undo = null) {
     if (undo) { ui.undo = undo; ui.undoText = text; ui.undoUntil = Date.now() + 9000; }
     const left = ui.undo ? ui.undoUntil - Date.now() : 0, end = () => { ui.message = null; ui.undo = null; renderMessage(); };
@@ -1475,7 +1478,7 @@
         planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit');
         ui.pages.diary = 1;
         flash('Saved.');
-      } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
+      } catch (err) { console.error(err); flash(failText(err, 'save edits', 'Your changes are kept; save again', 'Could not save edits. Please try again.')); }
       busy.entry--; render(); return;
     }
     if (name === 'ask') {
@@ -1534,9 +1537,7 @@
       flash('Posted.');
     } catch (e) {
       console.error(e);
-      flash(e.code === 'offline' ? 'Could not post: you seem to be offline. Your entry is kept; post it again when you are back online.'
-        : e.code === 'ratelimit' ? `Could not post: GitHub is busy. Your entry is kept; try again in ${Math.max(1, Math.ceil((e.until - Date.now()) / 60000))} min.`
-        : 'Could not post. Photos may be too large; try fewer.');
+      flash(failText(e, 'post', 'Your entry is kept; post it again', 'Could not post. Photos may be too large; try fewer.'));
     }
     busy.diary--; render();
   }
@@ -1618,7 +1619,7 @@
       const files = picked.slice(0, 20);
       busy.album++; render();
       try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }, { keepPartial: true }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
-      catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
+      catch (err) { console.error(err); flash(failText(err, 'upload', 'Pick the photos again', 'Could not upload. Try a smaller photo.')); }
       busy.album--; render();
     }
   }
