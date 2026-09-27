@@ -338,11 +338,11 @@
   };
   function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
   function renderMemory() {
-    const pool = data.diary.filter(e => (e.text || '').trim() || (e.photoIds || []).length);
+    const pool = data.diary.filter(e => (e.text || '').trim() || entryPhotoIds(e).length);
     const body = $('[data-memory]');
     if (!pool.length) { body.innerHTML = '<div class="cc-memory-label"><span>FROM THE DIARY</span></div><p class="cc-memory">No diary entries yet.</p><button class="cc-button" type="button" data-go="diary">Write the first one</button>'; return; }
     const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
-    const photo = data.photos.find(p => p.id === (e.photoIds || [])[0]), src = thumbOf(photo);
+    const photo = data.photos.find(p => p.id === entryPhotoIds(e)[0]), src = thumbOf(photo);
     const text = (e.text || '').trim();
     body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
@@ -638,6 +638,19 @@
   // ---------- diary ----------
   const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
   const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
+  function entryPhotoIds(entry) {
+    // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
+    // list, so when both of us change one entry's photos at once, the later save can drop the other's new photo from it
+    if (photoIndex?.src !== data.photos) {
+      const ids = new Set(), byEntry = new Map();
+      for (const p of data.photos) { ids.add(p.id); if (p.entryId) { if (!byEntry.has(p.entryId)) byEntry.set(p.entryId, []); byEntry.get(p.entryId).push(p); } }
+      photoIndex = { src: data.photos, ids, byEntry };
+    }
+    const listed = (entry.photoIds || []).filter(id => photoIndex.ids.has(id));
+    const more = (photoIndex.byEntry.get(entry.id) || []).filter(p => !listed.includes(p.id)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return [...listed, ...more.map(p => p.id)];
+  }
   function photoThumbs(ids) {
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
     return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => { const src = thumbOf(p); return `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`; }).join('')}</div>` : '';
@@ -677,7 +690,7 @@
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
     $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
   }
@@ -740,7 +753,7 @@
     if (ui.page === 'album') return albumPhotos(photosSorted()).map(x => x.id);
     if (ui.page === 'diary' && p.entryId) {
       const entry = data.diary.find(x => x.id === p.entryId);
-      if (entry) return (entry.photoIds || []).filter(id => data.photos.some(x => x.id === id));
+      if (entry) return entryPhotoIds(entry);
     }
     return photosSorted().map(x => x.id);
   }
@@ -1243,7 +1256,7 @@
       if (!entry || entry.author !== meName()) return;
       const draft = planner.drafts.entryedit;
       const text = String(d.text || '').trim();
-      const kept = draft.photoIds.filter(id => (entry.photoIds || []).includes(id));
+      const current = entryPhotoIds(entry), kept = draft.photoIds.filter(id => current.includes(id));
       if (!text && !kept.length && !draft.pending.length) {
         form.elements.text.setCustomValidity('Write something or keep a photo.'); form.elements.text.reportValidity(); return;
       }
@@ -1252,7 +1265,7 @@
         const editedDate = currentDay();
         const added = await savePhotos(draft.pending, { entryId: entry.id, date: editedDate });
         await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
-        for (const id of (entry.photoIds || []).filter(id => !kept.includes(id))) await store.remove('photos', id);
+        for (const id of current.filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
         planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
         ui.pages.diary = 1;
@@ -1469,7 +1482,7 @@
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: [...(en.photoIds || [])], pending: [] }; render(); } return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; render(); } return; }
     if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
     if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
