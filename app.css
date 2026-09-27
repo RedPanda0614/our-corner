@@ -227,8 +227,18 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-lightbox { border: 2px solid var(--cc-line); background: var(--cc-paper); padding: 3px; width: min(92vw, 900px); max-height: 92vh; box-shadow: 5px 5px 0 hsl(calc(95deg + var(--g-dh)) calc(18% * var(--g-s)) calc(var(--lo) + 68.0% * var(--lk)) / 0.53); color: var(--cc-ink); }
 #couple-corner .cc-lightbox::backdrop { background: hsl(calc(124deg + var(--g-dh)) calc(9% * var(--g-s)) calc(var(--lo) + 34.1% * var(--lk)) / 0.67); }
 #couple-corner .cc-lightbox-body { padding: 10px; }
-#couple-corner .cc-lightbox-body img { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; object-fit: contain; }
+#couple-corner .cc-lightbox-stage { position: relative; display: flex; align-items: center; justify-content: center; height: min(64vh, 680px); min-height: 220px; overflow: hidden; background: #edf2e9; border: 1px solid var(--cc-line); touch-action: pan-y; cursor: zoom-in; }
+#couple-corner .cc-lightbox-stage.is-zoomed { touch-action: none; cursor: grab; }
+#couple-corner .cc-lightbox-stage img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; user-select: none; -webkit-user-drag: none; will-change: transform; }
+#couple-corner .cc-lightbox-arrow { position: absolute; z-index: 1; top: 50%; transform: translateY(-50%); width: 38px; height: 48px; border: 1px solid var(--cc-line); background: rgb(255 255 250 / .86); color: var(--cc-ink); font: 30px/1 var(--cc-font-ui); box-shadow: 2px 2px rgb(75 100 76 / .2); }
+#couple-corner .cc-lightbox-arrow.previous { left: 8px; }
+#couple-corner .cc-lightbox-arrow.next { right: 8px; }
+#couple-corner .cc-lightbox-arrow:disabled { display: none; }
+#couple-corner .cc-zoom-label { min-width: 42px; text-align: center; font: 12px/1.4 var(--cc-font-ui); }
 #couple-corner .cc-lightbox-meta { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 12px; }
+#couple-corner .cc-reply-time { display: inline-block; margin-left: 7px; color: #788879; font-size: 10px; white-space: nowrap; }
+#couple-corner .cc-meta-who { flex-wrap: wrap; min-width: 0; }
+@media (max-width: 600px) { #couple-corner .cc-lightbox { width: 96vw; } #couple-corner .cc-lightbox-stage { height: min(60vh, 540px); } #couple-corner .cc-lightbox-arrow { width: 30px; height: 42px; } }
 
 /* login */
 #couple-corner .cc-login { display: flex; justify-content: center; padding: 60px 16px; }

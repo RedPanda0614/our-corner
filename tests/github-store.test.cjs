@@ -75,6 +75,31 @@ test('replays a save after another person changes the shared data', async () => 
   assert.equal(page.store.pending(), false);
 });
 
+test('message read receipts merge across devices and remain separate for each person', async () => {
+  const remote = server(), first = browser(remote), second = browser(remote);
+  await first.start(); await second.start();
+  await first.store.markInboxRead('sijie', 100, 0, [{ key: 'one', at: 200 }]);
+  await second.store.markInboxRead('sijie', 150, 0, [{ key: 'two', at: 300 }]);
+  await first.flush(); await second.flush();
+  assert.equal(remote.data.meta.inboxReads.sijie.since, 100);
+  assert.deepEqual(remote.data.meta.inboxReads.sijie.read.map(x => x.key).sort(), ['one', 'two']);
+  await first.store.markInboxRead('zhenzhen', 100, 0, [{ key: 'one', at: 200 }]);
+  await first.flush();
+  assert.deepEqual(remote.data.meta.inboxReads.zhenzhen.read.map(x => x.key), ['one']);
+  const reopened = browser(remote); await reopened.start();
+  assert.deepEqual(reopened.changes.meta.inboxReads.sijie.read.map(x => x.key).sort(), ['one', 'two']);
+});
+
+test('old message receipts are compacted without bringing old alerts back', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.markInboxRead('sijie', 100, 0, [{ key: 'old', at: 200 }, { key: 'recent', at: 300 }]);
+  await page.flush();
+  await page.store.markInboxRead('sijie', 100, 250, [{ key: 'recent', at: 300 }]);
+  await page.flush();
+  assert.equal(remote.data.meta.inboxReads.sijie.since, 250);
+  assert.deepEqual(remote.data.meta.inboxReads.sijie.read.map(x => x.key), ['recent']);
+});
+
 test('failed saves survive reopening and can finish after access is restored', async () => {
   const remote = server(), first = browser(remote); await first.start(); remote.rejectWrites = true;
   await first.store.set('diary', { id: 'draft-1', text: 'A saved draft' }); await first.flush();

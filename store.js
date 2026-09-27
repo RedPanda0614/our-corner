@@ -39,6 +39,17 @@
   function emptyData() { const d = { version: 1, meta: {}, collections: {} }; COLLECTIONS.forEach(c => d.collections[c] = []); return d; }
   function applyOp(data, op) {
     if (op.type === 'meta') { data.meta = { ...data.meta, ...op.patch }; return data; }
+    if (op.type === 'inboxRead') {
+      const reads = data.meta?.inboxReads || {};
+      const current = reads[op.who] || {};
+      const since = Math.max(Number(current.since) || Number(op.since) || 0, Number(op.cutoff) || 0);
+      const items = new Map();
+      for (const item of [...(current.read || []), ...(op.items || [])]) {
+        if (item && typeof item.key === 'string' && Number(item.at) > since) items.set(item.key, { key: item.key, at: Number(item.at) });
+      }
+      data.meta = { ...data.meta, inboxReads: { ...reads, [op.who]: { since, read: [...items.values()] } } };
+      return data;
+    }
     const list = data.collections[op.col] || (data.collections[op.col] = []);
     const idx = op.id != null ? list.findIndex(x => x.id === op.id) : -1;
     switch (op.type) {
@@ -75,6 +86,7 @@
       async isSeeded() { await load(); return !!data.meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       set: (col, item) => op({ type: 'set', col, id: item.id, item }),
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
       remove: async (col, id) => { await op({ type: 'remove', col, id }); if (col === 'photos') await db.del('full:' + id); },
@@ -187,7 +199,7 @@
     }
     function describe(ops) {
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup' }[o.type] || 'update';
+      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', inboxRead: 'read messages' }[o.type] || 'update';
       return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
     function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
@@ -261,6 +273,7 @@
       async isSeeded() { if (!started) await pull(); return !!view().meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       async set(col, item) {
         if (col === 'photos' && item.thumb && item.thumb.startsWith('data:')) {
           const thumb = item.thumb;
