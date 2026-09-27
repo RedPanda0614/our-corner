@@ -5,9 +5,9 @@
   const $$ = sel => [...root.querySelectorAll(sel)];
   const cfg = window.CC_CONFIG || {};
   const store = CCStore.create(cfg);
-  { // stamp every edit so the other person gets a message about it
+  { // stamp every edit so the other person gets a message about it; { quiet: true } is for housekeeping that isn't an edit
     const rawUpdate = store.update;
-    store.update = (col, id, patch) => rawUpdate(col, id, { ...patch, updatedAt: Date.now(), updatedBy: PEOPLE[ui.me] || '', updatedWhat: Object.keys(patch).join(',') });
+    store.update = (col, id, patch, opts = {}) => rawUpdate(col, id, opts.quiet ? patch : { ...patch, updatedAt: Date.now(), updatedBy: PEOPLE[ui.me] || '', updatedWhat: Object.keys(patch).join(',') });
   }
   const PAGES = ['home', 'diary', 'album', 'todo', 'wishlist'];
   const PEOPLE = { sijie: '斯婕', zhenzhen: '真真' };
@@ -40,19 +40,37 @@
   const weekStart = iso => shiftDay(iso, -((utcDay(iso).getUTCDay() + 6) % 7));
   const daysBetween = (a, b) => Math.round((utcDay(b) - utcDay(a)) / 86400000);
   const countdown = d => { const n = daysBetween(today, d); return n === 0 ? 'Today!' : n > 0 ? `In ${n} day${n === 1 ? '' : 's'}` : `${-n} day${n === -1 ? '' : 's'} ago`; };
-  const repeatDate = item => { if (!item.repeat) return item.date; const start = Math.max(+today.slice(0, 4), +item.date.slice(0, 4)); for (let y = start; y < start + 9; y++) { const d = `${y}-${item.date.slice(5)}`; if (validDay(d) && d >= today) return d; } return item.date; };
+  // ---------- pure helpers (tests/app-helpers.test.cjs runs this block on its own, so nothing in it may use page state) ----------
+  // Synced data can come from another device, so a picture from it only goes into src="…" or url("…") if it is a
+  // base64 PNG/JPEG/GIF/WebP data URL (or, where allowBlob, a blob: URL this page made); anything else becomes ''.
+  // What passes holds no quotes, brackets, spaces or backslashes.
+  const safeImage = (url, allowBlob = true) => {
+    if (typeof url !== 'string') return '';
+    const head = /^data:image\/(?:png|jpeg|gif|webp);base64,/.exec(url);
+    if (head) { const bad = /[^A-Za-z0-9+/=]/g; bad.lastIndex = head[0].length; return url.length > head[0].length && !bad.test(url) ? url : ''; }
+    return allowBlob && /^blob:https?:\/\/[\w.:[\]-]+\/[\w-]+$/.test(url) ? url : '';
+  };
+  const safeColor = c => (typeof c === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : ''); // colours go into style values
+  const isLeapYear = y => y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  // where a yearly date (YYYY-MM-DD) falls in a given year: Feb 29 is kept on Mar 1 in years without one
+  const yearlyDay = (date, year) => (date.slice(5) === '02-29' && !isLeapYear(year) ? `${year}-03-01` : `${year}-${date.slice(5)}`);
+  // the next time a valid yearly date comes round, on or after `from`
+  const nextYearly = (date, from) => { const y0 = Math.max(+from.slice(0, 4), +date.slice(0, 4)); for (let y = y0; y < y0 + 9; y++) { const d = yearlyDay(date, y); if (d >= from) return d; } return date; };
+  // ---------- end pure helpers ----------
+  const repeatDate = item => (item.repeat && validDay(item.date || '') ? nextYearly(item.date, today) : item.date);
   const kindLabel = k => ({ plan: 'PLAN', trip: 'TRIP', task: 'LITTLE THING', birthday: 'BIRTHDAY', holiday: 'HOLIDAY', anniversary: 'ANNIVERSARY' })[k] || 'PLAN';
   const statusLabel = s => ({ dreaming: 'Dreaming', planning: 'Planning', booked: 'Booked', visited: 'Visited' })[s];
   const newId = CCStore.uid;
   const { paginate, pageForItem } = CCPagination;
   const Q = CCQuestions;
+  const A = window.CCAchievements || null; // the shelf stays hidden if achievements.js is missing
   // the daily question follows this device's date; the local preview can pretend with ?day=YYYY-MM-DD
   const previewDay = store.mode === 'local' ? new URLSearchParams(location.search).get('day') : null;
   const qDay = () => (previewDay && validDay(previewDay) ? previewDay : currentDay());
   const localMidnight = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
 
   // ---------- state ----------
-  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], answers: [], questions: [], meta: {} };
+  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], answers: [], questions: [], checkins: [], meta: {} };
   // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
   // c = contrast (1 normal), dark = invert lightness.
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
@@ -71,13 +89,14 @@
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
   const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
-  const kindColor = k => (data.meta.kindColors || {})[k] || DEFAULT_KIND_COLORS[k];
+  const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
+  const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
-    const hero = data.meta.hero && ui.heroImages[data.meta.hero];
+    const hero = data.meta.hero && safeImage(ui.heroImages[data.meta.hero]);
     if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
@@ -94,6 +113,9 @@
     pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1, questions: 1 },
     album: 'all', albumForm: '', albumDraft: '', questionOpen: false, editingAnswer: null
   };
+  // work in progress, counted per form, so one upload finishing never re-enables another form's buttons
+  // (ui.busy is left to the profile picture)
+  const busy = { diary: 0, entry: 0, album: 0, hero: 0 };
   function pageList(key, items) {
     const result = paginate(items, ui.pages[key]);
     ui.pages[key] = result.page;
@@ -194,10 +216,10 @@
   // ---------- calendar ----------
   function dayEvents(iso) {
     return [
-      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: e.kind || 'plan', collection: 'events' })),
+      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
       ...data.tasks.filter(e => e.date === iso).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
-      ...data.dates.filter(e => e.repeat ? iso.slice(5) === e.date.slice(5) && iso >= e.date : iso === e.date).map(e => ({ ...e, collection: 'dates' }))
+      ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
   }
   function calendarTitle() {
@@ -277,14 +299,14 @@
       + (isSpecial ? `<label class="cc-inline-check"><input name="repeat" type="checkbox" ${planner.drafts.event.repeat ? 'checked' : ''}><span>Repeat every year</span></label>` : '')
       + notesField('event');
     const form = planner.forms.event ? formShell('event', 'Add to calendar', eventFields, '+ Add to calendar', '<button type="button" class="cc-button" data-show-form="event">Cancel</button>') : '';
-    $('[data-home-calendar]').innerHTML = panelShell('calendar', '▦ CALENDAR', '共同日历',
+    fill($('[data-home-calendar]'), panelShell('calendar', '▦ CALENDAR', '共同日历',
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
       <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
-      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`);
+      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`));
   }
 
   // ---------- special days + memory ----------
@@ -295,16 +317,16 @@
     const cards = page.items.map(it => {
       if (planner.editingDay === it.id) {
         const f = formField('dayedit', 'title', 'Name of the day', 'text', true) + selectField('dayedit', 'kind', 'Category', names.slice(1)) + formField('dayedit', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.dayedit.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
-        return `<article class="cc-plan-card k-${it.kind} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
+        return `<article class="cc-plan-card k-${safeKind(it.kind)} cc-kind-card">${formShell('dayedit', 'Edit special day', f, 'Save', '<button type="button" class="cc-button" data-dayedit-cancel>Cancel</button>')}</article>`;
       }
-      return `<article class="cc-plan-card k-${it.kind} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${it.next}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
+      return `<article class="cc-plan-card k-${safeKind(it.kind)} cc-kind-card"><div class="cc-plan-tag"><i class="cc-dot k-${safeKind(it.kind)}"></i>${kindLabel(it.kind)}</div><h3>${esc(it.title)}</h3><div class="cc-card-meta"><span>${niceDate(it.next)} ${it.repeat ? '↻' : ''}</span><span class="cc-countdown">${countdown(it.next)}</span></div><p class="cc-small">${it.repeat ? 'Repeats yearly' : 'One-time date'}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-edit-day="${esc(it.id)}">Edit</button><button class="cc-button" type="button" data-open-date="${esc(it.next)}">See in calendar</button>${removeButton('dates', it.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">No special days yet.</p>';
     const fields = formField('special', 'title', 'Name of the day', 'text', true) + selectField('special', 'kind', 'Category', names.slice(1)) + formField('special', 'date', 'Date', 'date', true) + `<label class="cc-inline-check" style="align-self:end;padding-bottom:8px"><input name="repeat" type="checkbox" ${planner.drafts.special.repeat ? 'checked' : ''}><span>Repeat every year</span></label>`;
     const upcoming = data.dates.map(it => ({ ...it, next: repeatDate(it) })).filter(it => it.next >= today).sort((a, b) => a.next.localeCompare(b.next)).slice(0, 4);
-    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${it.next}"><span class="cc-plan-tag"><i class="cc-dot k-${it.kind}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
+    $('[data-upcoming-days]').innerHTML = upcoming.map(it => `<button type="button" class="cc-upcoming-entry" data-open-date="${esc(it.next)}"><span class="cc-plan-tag"><i class="cc-dot k-${safeKind(it.kind)}"></i>${kindLabel(it.kind)}</span><strong>${esc(it.title)}</strong><span class="cc-upcoming-bottom"><span>${niceDate(it.next, { month: 'short', day: 'numeric' })}</span><span class="cc-countdown">${countdown(it.next)}</span></span></button>`).join('') || '<p class="cc-empty-plan">No upcoming dates.</p>';
     const editor = $('[data-special-dialog]');
     if (!planner.specialOpen) { if (editor.open) editor.close(); return; }
-    editor.innerHTML = planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '';
+    fill(editor, planner.specialOpen ? panelShell('special-editor', '♡ SPECIAL DAYS', '生日、节日与纪念日', `<div class="cc-add-row"><div class="cc-filter-row" style="margin:0">${names.map(([v, l]) => `<button type="button" class="cc-button" data-date-filter="${v}" aria-pressed="${planner.filter === v}">${l}</button>`).join('')}</div></div><div class="cc-todo-grid" data-page-list="special">${cards}</div>${pageNav('special', page)}${formShell('special', 'Save a special day', fields, '+ Save this day')}`) : '');
   }
   const entryDisplayDate = entry => entry.updatedAt ? currentDayFor(entry.updatedAt) : (entry.date || today);
   const currentDayFor = timestamp => { const d = new Date(timestamp); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -316,13 +338,13 @@
   };
   function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
   function renderMemory() {
-    const pool = data.diary.filter(e => (e.text || '').trim() || (e.photoIds || []).length);
+    const pool = data.diary.filter(e => (e.text || '').trim() || entryPhotoIds(e).length);
     const body = $('[data-memory]');
     if (!pool.length) { body.innerHTML = '<div class="cc-memory-label"><span>FROM THE DIARY</span></div><p class="cc-memory">No diary entries yet.</p><button class="cc-button" type="button" data-go="diary">Write the first one</button>'; return; }
     const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
-    const photo = data.photos.find(p => p.id === (e.photoIds || [])[0]);
+    const photo = data.photos.find(p => p.id === entryPhotoIds(e)[0]), src = thumbOf(photo);
     const text = (e.text || '').trim();
-    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
+    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
 
   // ---------- daily question ----------
@@ -349,13 +371,17 @@
     const key = partnerKey(), theirs = answerOf(date, key);
     if (!theirs) return `<div class="cc-q-answer cc-q-waiting ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-small">${date < qDay() ? 'No answer that day.' : 'Hasn’t answered yet.'}</p></div>`;
     // the partner's text never reaches the page until you have answered too
-    if (!answerOf(date, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>🔒 ${esc(PEOPLE[key])} answered. Answer to unlock.</p></div>`;
+    if (!answerOf(date, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>${emojiHtml('🔒')} ${esc(PEOPLE[key])} answered. Answer to unlock.</p></div>`;
     return `<div class="cc-q-answer ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-feed-text">${esc(theirs.text)}</p></div>`;
   }
   const qaBlock = date => `<div class="cc-q-answers">${myAnswerCell(date)}<div class="cc-q-cell" data-q-partner="${date}">${partnerAnswerCell(date)}</div></div>`;
   function renderQuestion() {
-    const body = $('[data-question]'); if (!body) return;
-    if (!ui.me) { body.innerHTML = ''; body.dataset.key = ''; return; }
+    const win = $('[data-question]'); if (!win) return;
+    if (!ui.me) { win.innerHTML = ''; return; }
+    // the weekly check-in and the daily question get a box each, so a sync that rebuilds one never touches the other
+    if (!win.querySelector(':scope > [data-q-daily]')) win.innerHTML = '<div class="cc-checkin" data-checkin></div><div data-q-daily></div>';
+    renderCheckin(win.querySelector(':scope > [data-checkin]'));
+    const body = win.querySelector(':scope > [data-q-daily]');
     const date = qDay(), q = questionFor(date), mine = answerOf(date, ui.me);
     const key = [date, !!mine, ui.editingAnswer === date, q?.qid].join('|'), a = document.activeElement;
     // a sync while typing only refreshes the partner's side, so the keyboard and IME stay put
@@ -369,31 +395,31 @@
   function questionArchive() {
     const day = qDay();
     const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on)];
-    return [...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id }));
+    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id })));
   }
   function renderQuestionDialog() {
     const dlg = $('[data-question-dialog]');
     if (!ui.questionOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
     const a = document.activeElement;
-    if (passive && a && dlg.contains(a) && a.matches('input, textarea')) return;
+    if (passive && a && dlg.contains(a) && (a.matches('input, textarea') || a.closest('[data-checkin-form], [data-question-form]'))) return;
     const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask;
     const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, data.questions))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
     const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
     const scheduled = waiting.length ? `<h3 class="cc-q-sub">Waiting to be asked</h3>${waiting.map(({ q, on }) => `<div class="cc-q-sched"><span><b>${esc(niceDate(on))}</b> ${esc(q.text)}</span>${removeButton('questions', q.id, 'Cancel')}</div>`).join('')}` : '';
     const page = pageList('questions', questionArchive());
-    const past = page.items.map(({ id: date }) => `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
+    const past = page.items.map(({ id: date }) => date.startsWith('wk:') ? checkinArticle(date.slice(3)) : `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>? DAILY QUESTIONS</span><button type="button" class="cc-min" data-question-close aria-label="Close">×</button></div><div class="cc-body">${askForm}${scheduled}<h3 class="cc-q-sub" id="cc-q-past">Past questions</h3><div data-page-list="questions">${past}</div>${pageNav('questions', page)}</div></section>`;
   }
   function openQuestions(open, target = '') {
     ui.questionOpen = open;
-    const day = validDay(target) ? target : '';
+    const day = validDay(target) || isWeekItem(target) ? target : ''; // a day, or 'wk:<monday>' for a past check-in
     if (open && day) { ui.pages.questions = pageForItem(questionArchive(), day); ui.highlight = day; setTimeout(() => { ui.highlight = null; scheduleRender(); }, 3000); }
     render();
     const dlg = $('[data-question-dialog]');
     if (!open) return;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     if (target === 'ask') $('[data-planner-form="ask"] textarea')?.focus();
-    else $(day ? '#qday-' + day : '#cc-q-past')?.scrollIntoView({ block: 'start' });
+    else $(day ? archiveAnchor(day) : '#cc-q-past')?.scrollIntoView({ block: 'start' });
   }
   function showTodayQuestion() {
     if (ui.collapsed.delete('question')) ls.set('collapsed', [...ui.collapsed]);
@@ -406,8 +432,171 @@
     if (!text) { field.setCustomValidity('Write an answer first.'); field.reportValidity(); return; }
     const mine = answerOf(date, ui.me), theirs = answerOf(date, partnerKey());
     const job = mine ? store.update('answers', mine.id, { text }) : store.set('answers', { id: `${date}:${ui.me}`, date, q: questionFor(date), author: meName(), text, createdAt: Date.now() });
-    run(job.then(() => { delete questionDrafts[date]; if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
+    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
+  }
+
+  // ---------- weekly check-in ----------
+  // One card per Monday-to-Sunday week, above the daily question: how the week feels (a weather mood) and a few
+  // words if you like. Same no-spoiler rule as the daily question, but kept apart from it: answering one never
+  // unlocks the other. Not part of the icon badge's "+1" or of achievements.
+  // every emoji on the page goes through here (pixel art when pixel-emoji.js is loaded); labels live on the element around it
+  const moodHtml = ch => (window.CCPixelEmoji ? CCPixelEmoji.html(ch, { decorative: true }) : `<span class="cc-emoji">${esc(ch)}</span>`);
+  const checkinDrafts = {}; // week -> { mood, text }, so a re-render never loses what you picked or typed
+  let editingCheckin = null;
+  const thisWeek = () => Q.weekOf(qDay());
+  const checkinOf = (week, key) => data.checkins.find(c => c.id === `${week}:${key}`);
+  const checkinDraft = week => (checkinDrafts[week] ||= { mood: 0, text: '' });
+  const moodOf = v => Q.MOODS.find(m => m.v === Number(v));
+  const isWeekItem = id => /^wk:/.test(id || '') && validDay(id.slice(3));
+  const archiveAnchor = id => (isWeekItem(id) ? '#qweek-' + id.slice(3) : '#qday-' + id);
+  const weekLabel = (week, withYear) => 'WEEK OF ' + niceDate(week, withYear ? undefined : { month: 'short', day: 'numeric' }).toUpperCase();
+  function checkinPromptFor(week) { // the first check-in keeps its prompt, like questionFor
+    const first = data.checkins.filter(c => c.week === week && c.q).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+    return first ? first.q : Q.forWeek(week);
+  }
+  function moodLine(c, withLabel) {
+    const m = moodOf(c.mood); if (!m) return '';
+    const name = `${esc(m.en)} ${esc(m.zh)}`;
+    return `<p class="cc-ck-mood-line"><span class="cc-ck-glyph" role="img" aria-label="${name}" title="${name}">${moodHtml(m.glyph)}</span>${withLabel ? `<span aria-hidden="true">${esc(m.en)} <span lang="zh-CN">${esc(m.zh)}</span></span>` : ''}</p>`;
+  }
+  function myCheckinCell(week) {
+    const mine = checkinOf(week, ui.me);
+    if (mine && editingCheckin !== week) return `<div class="cc-q-answer cc-ck-answer ${ui.me}"><div class="cc-q-row">${answerHead(ui.me)}<button type="button" class="cc-link" data-checkin-edit="${week}">Edit</button></div>${moodLine(mine, false)}${mine.text ? `<p class="cc-feed-text">${esc(mine.text)}</p>` : ''}</div>`;
+    const draft = checkinDrafts[week] || { mood: 0, text: '' };
+    const moods = Q.MOODS.map(m => `<button type="button" class="cc-button cc-ck-mood" data-checkin-mood="${m.v}" aria-pressed="${draft.mood === m.v}" aria-label="${esc(m.en)} ${esc(m.zh)}" title="${esc(m.en)} ${esc(m.zh)}"><span class="cc-ck-glyph" aria-hidden="true">${moodHtml(m.glyph)}</span>${esc(m.en)}</button>`).join(''); // a bare label keeps the button's typewriter font
+    return `<form class="cc-q-answer cc-q-form cc-ck-form ${ui.me}" data-checkin-form="${week}"><div class="cc-q-row">${answerHead(ui.me)}<span class="cc-small">How was your week?</span></div><div class="cc-ck-moods" role="group" aria-label="How was your week? Pick one">${moods}</div><textarea name="text" maxlength="600" rows="2" placeholder="A few words, if you like…" aria-label="A few words about your week (optional)">${esc(draft.text)}</textarea><div class="cc-form-footer"><button class="cc-button" type="submit">${mine ? 'Save' : 'Check in'}</button>${mine ? `<button type="button" class="cc-button" data-checkin-cancel="${week}">Cancel</button>` : ''}</div></form>`;
+  }
+  function partnerCheckinCell(week) {
+    const key = partnerKey(), theirs = checkinOf(week, key);
+    if (!theirs) return `<div class="cc-q-answer cc-q-waiting ${key}"><div class="cc-q-row">${answerHead(key)}</div><p class="cc-small">${week < thisWeek() ? 'No check-in that week.' : 'Hasn’t checked in yet.'}</p></div>`;
+    // their mood and words never reach the page until you have checked in for that week too
+    if (!checkinOf(week, ui.me)) return `<div class="cc-q-answer cc-q-locked ${key}"><div class="cc-q-row">${answerHead(key)}</div><p>${moodHtml('🔒')} ${esc(PEOPLE[key])} checked in. Check in to see how they’re doing.</p></div>`;
+    return `<div class="cc-q-answer cc-ck-answer ${key}"><div class="cc-q-row">${answerHead(key)}</div>${moodLine(theirs, true)}${theirs.text ? `<p class="cc-feed-text">${esc(theirs.text)}</p>` : ''}</div>`;
+  }
+  const checkinBlock = week => `<div class="cc-q-answers cc-ck-answers">${myCheckinCell(week)}<div class="cc-q-cell" data-ck-partner="${week}">${partnerCheckinCell(week)}</div></div>`;
+  function renderCheckin(box) { // this week's card, at the top of the daily question window
+    if (!box) return;
+    const week = thisWeek(), q = checkinPromptFor(week), mine = checkinOf(week, ui.me);
+    const key = [week, !!mine, editingCheckin === week, q?.qid].join('|'), a = document.activeElement;
+    // like the daily question: a sync while you type or pick a mood only refreshes the partner's side
+    if (passive && box.dataset.key === key && a && box.contains(a) && a.closest('[data-checkin-form]')) {
+      const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(week);
+      return;
+    }
+    box.dataset.key = key;
+    box.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week))}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${checkinBlock(week)}`;
+  }
+  function withCheckinWeeks(items) { // past weeks with a check-in join the Past questions list, just above their Monday
+    const current = thisWeek(), weeks = [...new Set(data.checkins.map(c => c.week))].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current);
+    const at = it => (isWeekItem(it.id) ? it.id.slice(3) + '~' : it.id);
+    return [...items, ...weeks.map(w => ({ id: 'wk:' + w }))].sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0));
+  }
+  const checkinArticle = week => `<article class="cc-q-day cc-ck-day ${ui.highlight === 'wk:' + week ? 'cc-highlight' : ''}" id="qweek-${week}"><div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week, true))}</span></div>${questionHtml(checkinPromptFor(week))}${checkinBlock(week)}</article>`;
+  function checkinMessages(add, edited) { // for allMessages: nothing about their week shows before you check in for it
+    const current = thisWeek();
+    for (const c of data.checkins) {
+      if (!validDay(c.week || '')) continue;
+      const open = !!checkinOf(c.week, ui.me), target = { type: 'checkin', week: c.week };
+      const which = c.week === current ? 'for the week' : `for the week of ${niceDate(c.week, { month: 'short', day: 'numeric' })}`;
+      const said = [moodOf(c.mood)?.glyph, clip(c.text)].filter(Boolean).join(' ');
+      add('home', 'wk:' + c.id, c.author, c.createdAt, `checked in ${which} · ${open ? said : 'your turn 🔒'}`, target);
+      if (open && edited(c)) add('home', `wk-u:${c.id}:${c.updatedAt}`, c.updatedBy, c.updatedAt, `updated their check-in${c.week === current ? '' : ' ' + which} · ${said}`, target);
+    }
+  }
+  function submitCheckin(form) {
+    const week = form.dataset.checkinForm, draft = checkinDraft(week), field = form.elements.text;
+    if (!ui.me || !validDay(week) || Q.weekOf(week) !== week || week > thisWeek()) return;
+    draft.text = field.value;
+    if (!moodOf(draft.mood)) { flash('Pick a mood for your week first.'); form.querySelector('[data-checkin-mood]')?.focus(); return; }
+    const text = String(field.value || '').trim().slice(0, 600), mood = draft.mood;
+    const mine = checkinOf(week, ui.me), theirs = checkinOf(week, partnerKey()), partner = PEOPLE[partnerKey()];
+    const job = mine ? store.update('checkins', mine.id, { mood, text }) : store.set('checkins', { id: `${week}:${ui.me}`, week, mood, text, q: checkinPromptFor(week), author: meName(), createdAt: Date.now() });
+    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); }));
+    flash(mine ? 'Saved.' : theirs ? `Checked in. Now you can see how ${partner}’s week went ♡` : `Checked in. You’ll see ${partner}’s once they check in.`);
+  }
+  root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') { checkinDraft(f.dataset.checkinForm).text = e.target.value; keepDraft('checkin', f.dataset.checkinForm); } });
+  root.addEventListener('submit', e => { if (e.target.matches('[data-checkin-form]')) { e.preventDefault(); submitCheckin(e.target); } });
+  root.addEventListener('click', e => {
+    const el = e.target.closest('button'); if (!el || el.disabled) return;
+    const ds = el.dataset;
+    if (ds.checkinMood) { // picking a mood only flips the tiles, so focus and the half-typed text stay put
+      const f = el.closest('[data-checkin-form]'); if (!f) return;
+      checkinDraft(f.dataset.checkinForm).mood = Number(ds.checkinMood); keepDraft('checkin', f.dataset.checkinForm);
+      f.querySelectorAll('[data-checkin-mood]').forEach(b => b.setAttribute('aria-pressed', String(b === el)));
+    } else if (ds.checkinEdit) {
+      const mine = checkinOf(ds.checkinEdit, ui.me); if (!mine) return;
+      editingCheckin = ds.checkinEdit; checkinDrafts[ds.checkinEdit] = { mood: Number(mine.mood) || 0, text: mine.text || '' };
+      render(); $(`[data-checkin-form="${ds.checkinEdit}"] textarea`)?.focus();
+    } else if (ds.checkinCancel) { delete checkinDrafts[ds.checkinCancel]; dropDraft('checkin', ds.checkinCancel); editingCheckin = null; render(); }
+  });
+
+  // ---------- achievements: earned from what is already in the data; nothing resets, nothing is counted elsewhere ----------
+  const achKey = key => 'achievements:' + key;
+  const mergeKept = (...all) => { const out = {}; for (const k of all) for (const [id, at] of Object.entries(k || {})) if (typeof at === 'number' && !(out[id] <= at)) out[id] = at; return out; };
+  function achState() { // this person's seen list, plus "kept": once earned, never taken back even if the item is deleted
+    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null;
+    return { seen: [...new Set([...(synced?.seen || []), ...(local?.seen || [])])], kept: mergeKept(local?.kept, synced?.kept) };
+  }
+  function saveAchState(st) {
+    const key = achKey(ui.me); ls.set(key, st);
+    const cur = data.meta[key];
+    if (!ui.dataReady || (cur && (cur.seen || []).length === st.seen.length && JSON.stringify(mergeKept(cur.kept)) === JSON.stringify(mergeKept(st.kept)))) return;
+    data.meta = { ...data.meta, [key]: st };
+    run(store.mergeMeta(key, { seen: st.seen }, 'max')); run(store.mergeMeta(key, { kept: st.kept }, 'min')); // union of seen, earliest kept time
+  }
+  let achCache = null, achCacheKey = '';
+  function achievements() {
+    const key = (ui.me || '') + '|' + qDay();
+    if (!A) return [];
+    if (!achCache || achCacheKey !== key) {
+      const kept = mergeKept(achState().kept, ...Object.keys(PEOPLE).map(k => data.meta[achKey(k)]?.kept));
+      achCache = A.evaluate(data, { today: qDay(), kept, Q }); achCacheKey = key;
+    }
+    return achCache;
+  }
+  const unseenAchievements = () => { const seen = new Set(achState().seen); return achievements().filter(a => a.earned && !seen.has(a.id)); };
+  function achTarget(a) { // the moment that earned it, if it is still there
+    const t = a.target; if (!t) return null;
+    if (t.question) return { type: 'question', date: t.question };
+    const item = (data[t.col] || []).find(x => x.id === t.id); if (!item) return null;
+    return { diary: { type: 'entry', id: t.id }, photos: { type: 'photo', id: t.id }, trips: { type: 'item', tab: 'todo', id: t.id }, tasks: { type: 'item', tab: 'todo', id: t.id }, wishes: { type: 'item', tab: 'wishlist', id: t.id }, albums: { type: 'album', id: t.id }, dates: { type: 'date', date: repeatDate(item) }, events: { type: 'date', date: item.date } }[t.col] || null;
+  }
+  function achTile(a, fresh) {
+    const bar = p => { const f = Math.min(10, Math.floor(10 * Math.min(p.n, p.of) / p.of)); return `<span class="cc-ach-bar" role="img" aria-label="${p.n} of ${p.of}"><span aria-hidden="true">${'▮'.repeat(f)}${'▯'.repeat(10 - f)}</span> ${Math.min(p.n, p.of)} / ${p.of}</span>`; };
+    const desc = `<small>${esc(a.desc.en)} <span lang="zh-CN">${esc(a.desc.zh)}</span></small>`; // locked firsts come back as a gentle invitation
+    const when = a.earned && a.at ? `<small class="cc-ach-when">${esc(niceDate(currentDayFor(a.at)))}${achTarget(a) ? ` · <button type="button" class="cc-link" data-ach-go="${esc(a.id)}">See the moment ›</button>` : ''}</small>` : '';
+    return `<article class="cc-ach ${a.earned ? '' : 'cc-ach-locked'}"><span class="cc-ach-glyph" aria-hidden="true">${emojiHtml(a.glyph)}</span><div class="cc-ach-text"><div><b>${esc(a.en)}</b> <span lang="zh-CN">${esc(a.zh)}</span>${fresh.has(a.id) ? ' <span class="cc-q-new">NEW</span>' : ''}</div>${desc}${when}${!a.earned && a.progress ? bar(a.progress) : ''}</div></article>`;
+  }
+  function achChip() {
+    const n = achievements().filter(a => a.earned).length, fresh = unseenAchievements().length;
+    return `<button type="button" data-ach-open aria-label="${n} achievement${n === 1 ? '' : 's'}${fresh ? ', some new' : ''}">✦ ${n} achievement${n === 1 ? '' : 's'}${fresh ? '<i class="cc-ach-spark" aria-hidden="true"></i>' : ''}</button>`;
+  }
+  function renderAchievementsDialog() {
+    const dlg = $('[data-ach-dialog]');
+    if (!ui.achOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
+    const list = achievements(), fresh = ui.achFresh || new Set();
+    const earned = list.filter(a => a.earned).sort((a, b) => (b.at || 0) - (a.at || 0));
+    const onTheWay = list.filter(a => !a.earned && a.visible), hidden = list.filter(a => a.cat === 'secret' && !a.earned).length;
+    dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✦ ACHIEVEMENTS · 成就</span><button type="button" class="cc-min" data-ach-close aria-label="Close">×</button></div><div class="cc-body">
+      <p class="cc-small">Little things you have done together. Nothing expires and nothing resets.</p>
+      <h3 class="cc-q-sub">Earned · ${earned.length}</h3><div class="cc-ach-grid">${earned.map(a => achTile(a, fresh)).join('') || '<p class="cc-empty-plan">Nothing yet. They turn up on their own as you use the site.</p>'}</div>
+      ${onTheWay.length ? `<h3 class="cc-q-sub">On the way</h3><div class="cc-ach-grid">${onTheWay.map(a => achTile(a, fresh)).join('')}</div>` : ''}
+      ${hidden ? `<h3 class="cc-q-sub">Hidden · ${hidden}</h3><div class="cc-ach-grid cc-ach-hidden">${Array.from({ length: hidden }, () => '<article class="cc-ach cc-ach-locked" aria-label="Hidden achievement"><span class="cc-ach-glyph" aria-hidden="true">?</span><div class="cc-ach-text"><b>???</b></div></article>').join('')}</div><p class="cc-small">These show up when they happen.</p>` : ''}
+    </div></section>`;
+  }
+  function openAchievements(open) {
+    ui.achOpen = open;
+    if (!open) ui.achFresh = null;
+    if (open && ui.me) { // opening the shelf marks everything seen and keeps what has been earned
+      const st = achState(), earned = achievements().filter(a => a.earned), kept = { ...st.kept };
+      ui.achFresh = new Set(unseenAchievements().map(a => a.id));
+      for (const a of earned) if (typeof a.at === 'number' && !(kept[a.id] <= a.at)) kept[a.id] = a.at;
+      saveAchState({ seen: [...new Set([...st.seen, ...earned.map(a => a.id)])], kept });
+    }
+    render();
+    const dlg = $('[data-ach-dialog]');
+    if (open && !dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
   }
 
   // ---------- todo + wishlist ----------
@@ -431,11 +620,11 @@
       const trip = i.kind === 'trip', date = trip ? i.start : i.date;
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
-      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${date}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
+      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
     const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
-    $('[data-panel="todo"]').innerHTML = panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`);
+    fill($('[data-panel="todo"]'), panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`));
   }
   function renderWishlist() {
     const people = { both: 'For us', sijie: 'For 斯婕', zhenzhen: 'For 真真' };
@@ -443,13 +632,28 @@
     const page = pageList('wishlist', wishes);
     const cards = page.items.map(i => `<article class="cc-plan-card cc-wish-note cc-wish-note-${wishNoteStyle(i)} ${i.got ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${people[i.who] || 'For us'}</div><div class="cc-wish-name">${esc(i.title)}</div>${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><label class="cc-inline-check"><input type="checkbox" data-wish-id="${esc(i.id)}" ${i.got ? 'checked' : ''}><span>Got it ♡</span></label>${removeButton('wishes', i.id)}</div></article>`).join('') || '<p class="cc-empty-plan">No wishes yet.</p>';
     const fields = formField('wish', 'title', 'Something we would love', 'text', true) + selectField('wish', 'who', 'Who is it for?', [['both', 'Both of us'], ['sijie', '斯婕'], ['zhenzhen', '真真']]) + notesField('wish');
-    $('[data-panel="wishlist"]').innerHTML = panelShell('wishlist', '♡ WISHLIST', '愿望清单', `${pageToolbar(`${wishes.length} wishes`, `<button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button>`)}${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid" data-page-list="wishlist">${cards}</div>${pageNav('wishlist', page)}`);
+    fill($('[data-panel="wishlist"]'), panelShell('wishlist', '♡ WISHLIST', '愿望清单', `${pageToolbar(`${wishes.length} wishes`, `<button type="button" class="cc-button" data-show-form="wish" aria-expanded="${planner.forms.wish}">${planner.forms.wish ? 'Close form' : '+ Add a wish'}</button>`)}${planner.forms.wish ? formShell('wish', 'Add a wish', fields, '+ Save wish') : ''}<div class="cc-wishlist-grid" data-page-list="wishlist">${cards}</div>${pageNav('wishlist', page)}`));
   }
 
   // ---------- diary ----------
+  const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
+  const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
+  function entryPhotoIds(entry) {
+    // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
+    // list, so when both of us change one entry's photos at once, the later save can drop the other's new photo from it
+    if (photoIndex?.src !== data.photos) {
+      const ids = new Set(), byEntry = new Map();
+      for (const p of data.photos) { ids.add(p.id); if (p.entryId) { if (!byEntry.has(p.entryId)) byEntry.set(p.entryId, []); byEntry.get(p.entryId).push(p); } }
+      photoIndex = { src: data.photos, ids, byEntry };
+    }
+    const listed = (entry.photoIds || []).filter(id => photoIndex.ids.has(id));
+    const more = (photoIndex.byEntry.get(entry.id) || []).filter(p => !listed.includes(p.id)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return [...listed, ...more.map(p => p.id)];
+  }
   function photoThumbs(ids) {
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
-    return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${p.thumb ? `<img src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`).join('')}</div>` : '';
+    return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => { const src = thumbOf(p); return `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`; }).join('')}</div>` : '';
   }
   function parseTags(text) {
     const seen = new Set();
@@ -461,17 +665,17 @@
     const hay = [e.text, e.author, entryDisplayDate(e), ...(e.tags || []), ...(e.comments || []).map(c => c.text)].join(' ').toLowerCase();
     return q.split(/\s+/).every(w => hay.includes(w));
   }
-  const mini = key => { const img = (data.meta.avatars || {})[key]; return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${img}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
+  const mini = key => { const img = avatarOf(key); return `<span class="cc-mini-avatar ${key}">${img ? `<img src="${esc(img)}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`; };
   function diaryEditForm(entry) {
     const draft = planner.drafts.entryedit;
     const existing = draft.photoIds.map(id => data.photos.find(photo => photo.id === id)).filter(Boolean);
-    const kept = existing.map(photo => `<span class="cc-pending">${photo.thumb ? `<img src="${esc(photo.thumb)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}<button type="button" data-entry-photo-remove="${esc(photo.id)}" aria-label="Remove photo">×</button></span>`).join('');
+    const kept = existing.map(photo => `<span class="cc-pending">${thumbOf(photo) ? `<img src="${esc(thumbOf(photo))}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}<button type="button" data-entry-photo-remove="${esc(photo.id)}" aria-label="Remove photo">×</button></span>`).join('');
     const added = draft.pending.map((photo, index) => `<span class="cc-pending"><img src="${esc(photo.thumb)}" alt=""><button type="button" data-entry-pending-remove="${index}" aria-label="Remove new photo">×</button></span>`).join('');
-    return `<article class="cc-feed" id="entry-${esc(entry.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(draft.text)}</textarea></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(draft.tags)}"></label><label class="cc-field cc-field-wide">Photos (${existing.length + draft.pending.length}/9)<span class="cc-button cc-file-btn">＋ Add photos<input type="file" accept="image/*" multiple data-entry-edit-photos ${ui.busy ? 'disabled' : ''}></span></label></div>${kept || added ? `<div class="cc-pending-row">${kept}${added}</div>` : ''}<p class="cc-small">Date updates when you save.</p><div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Save edits'}</button><button type="button" class="cc-button" data-entry-cancel ${ui.busy ? 'disabled' : ''}>Cancel</button></div></form></article>`;
+    return `<article class="cc-feed" id="entry-${esc(entry.id)}"><form class="cc-plan-form" data-planner-form="entryedit"><h3>Edit entry</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Text<textarea name="text" maxlength="3000" rows="4">${esc(draft.text)}</textarea></label><label class="cc-field">Tags<input name="tags" type="text" maxlength="120" value="${esc(draft.tags)}"></label><label class="cc-field cc-field-wide">Photos (${existing.length + draft.pending.length}/9)<span class="cc-button cc-file-btn">＋ Add photos<input type="file" accept="image/*" multiple data-entry-edit-photos ${busy.entry ? 'disabled' : ''}></span></label></div>${kept || added ? `<div class="cc-pending-row">${kept}${added}</div>` : ''}<p class="cc-small">Date updates when you save.</p><div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.entry ? 'disabled' : ''}>${busy.entry ? 'Saving…' : 'Save edits'}</button><button type="button" class="cc-button" data-entry-cancel ${busy.entry ? 'disabled' : ''}>Cancel</button></div></form></article>`;
   }
   function renderDiary() {
-    const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${p.thumb}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${ui.busy ? 'disabled' : ''}>Close</button></div></form></div>`;
+    const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${esc(p.thumb)}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
@@ -486,9 +690,9 @@
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
       const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
-    $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${ui.busy ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
+    fill($('[data-panel="diary"]'), panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page)));
   }
 
   // ---------- album ----------
@@ -508,7 +712,7 @@
     const page = pageList('album', visible);
     const selected = albums.find(a => a.id === ui.album);
     const albumTile = (key, title, items) => {
-      const cover = items.find(p => p.thumb)?.thumb;
+      const cover = thumbOf(items.find(p => p.thumb));
       return `<button type="button" class="cc-album-folder" data-album-open="${esc(key)}" aria-pressed="${ui.album === key}"><span class="cc-album-cover">${cover ? `<img src="${esc(cover)}" alt="">` : '<span aria-hidden="true">▧</span>'}</span><span class="cc-album-label"><strong>${esc(title)}</strong><small>${items.length} photo${items.length === 1 ? '' : 's'}</small></span></button>`;
     };
     const known = new Set(albums.map(a => a.id));
@@ -517,21 +721,28 @@
     const form = ui.albumForm ? `<form class="cc-plan-form cc-album-form" data-album-form><h3>${ui.albumForm === 'new' ? 'New album' : 'Rename album'}</h3><label class="cc-field">Album name<input name="albumName" maxlength="50" required value="${esc(ui.albumDraft)}" autocomplete="off"></label><div class="cc-form-footer"><button type="submit" class="cc-button">Save album</button><button type="button" class="cc-button" data-album-cancel>Cancel</button></div></form>` : '';
     const title = selected?.title || (ui.album === 'unsorted' ? 'Unsorted' : 'All photos');
     const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
-    const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${p.thumb ? `<img class="cc-photo-img" src="${p.thumb}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
-    $('[data-panel="album"]').innerHTML = panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${ui.busy ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${ui.busy ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`);
+    const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${thumbOf(p) ? `<img class="cc-photo-img" src="${esc(thumbOf(p))}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
+    fill($('[data-panel="album"]'), panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
     return { thumb, full };
   }
-  async function savePhotos(list, extra) {
-    const ids = [];
-    for (const p of list) {
-      const id = newId();
-      await store.putFull(id, p.full);
-      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra });
-      ids.push(id);
+  async function savePhotos(list, extra, { keepPartial = false } = {}) {
+    const ids = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
+    try {
+      for (const p of list) {
+        const id = newId(); tried.push(id);
+        await store.putFull(id, p.full);
+        await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
+        ids.push(id);
+      }
+    } catch (err) {
+      // a diary photo is no use without its entry: when a post fails part way, take back what this try stored,
+      // so nothing is left pointing at an entry that was never saved and trying again doesn't add them twice
+      if (!keepPartial) for (const id of tried) await Promise.resolve(store.remove('photos', id)).catch(e => console.error(e));
+      throw err;
     }
     return ids;
   }
@@ -542,7 +753,7 @@
     if (ui.page === 'album') return albumPhotos(photosSorted()).map(x => x.id);
     if (ui.page === 'diary' && p.entryId) {
       const entry = data.diary.find(x => x.id === p.entryId);
-      if (entry) return (entry.photoIds || []).filter(id => data.photos.some(x => x.id === id));
+      if (entry) return entryPhotoIds(entry);
     }
     return photosSorted().map(x => x.id);
   }
@@ -564,11 +775,24 @@
     lightbox.zoom = Math.max(1, Math.min(4, value));
     applyPhotoZoom();
   }
+  const photoExists = id => data.photos.some(p => p.id === id);
+  function nextInLightbox(direction) { // the nearest photo that way which still exists (the other person may have deleted some)
+    const list = lightbox.list, i = list.indexOf(lightbox.id), n = list.length;
+    for (let k = 1; k < n; k++) { const id = list[(((i + direction * k) % n) + n) % n]; if (photoExists(id)) return id; }
+    return null;
+  }
   function stepPhoto(direction) {
     const i = lightbox.list.indexOf(lightbox.id);
     if (i < 0 || lightbox.list.length < 2) return;
+    const next = nextInLightbox(direction); if (!next) return;
     ui.confirm = null;
-    openPhoto(lightbox.list[(i + direction + lightbox.list.length) % lightbox.list.length], lightbox.list);
+    openPhoto(next, lightbox.list.filter(photoExists));
+  }
+  function keepLightboxOnData() { // the photo on screen was deleted elsewhere: show the next one, or close when none is left
+    if (!lightbox.id || photoExists(lightbox.id)) return;
+    const next = nextInLightbox(1);
+    ui.confirm = null;
+    if (next) openPhoto(next, lightbox.list.filter(photoExists)); else closePhoto();
   }
   async function openPhoto(id, sequence = null) {
     const p = data.photos.find(x => x.id === id); if (!p) return;
@@ -579,7 +803,7 @@
     const idx = lightbox.list.indexOf(id);
     const albumPicker = `<label class="cc-photo-album">Album<select data-photo-album="${esc(p.id)}" aria-label="Move photo to album"><option value="" ${!p.albumId ? 'selected' : ''}>Unsorted</option>${albumsSorted().map(a => `<option value="${esc(a.id)}" ${p.albumId === a.id ? 'selected' : ''}>${esc(a.title)}</option>`).join('')}</select></label>`;
     const photoDate = p.date && p.createdAt && p.date !== currentDayFor(p.createdAt) ? `Photo date ${niceDate(p.date)} · uploaded ` : '';
-    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"><div class="cc-lightbox-stage" data-lightbox-stage role="group" aria-label="Photo. Swipe left or right to browse."><button type="button" class="cc-lightbox-arrow previous" data-lightbox-step="-1" aria-label="Previous photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>‹</button><img data-full draggable="false" src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><button type="button" class="cc-lightbox-arrow next" data-lightbox-step="1" aria-label="Next photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>›</button></div><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(photoDate)}${esc(timestamp(p.createdAt, p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-photo-zoom="out" aria-label="Zoom out" disabled>−</button><span class="cc-zoom-label" data-photo-zoom-label>100%</span><button type="button" class="cc-button" data-photo-zoom="in" aria-label="Zoom in">＋</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
+    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"><div class="cc-lightbox-stage" data-lightbox-stage role="group" aria-label="Photo. Swipe left or right to browse."><button type="button" class="cc-lightbox-arrow previous" data-lightbox-step="-1" aria-label="Previous photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>‹</button><img data-full draggable="false" src="${esc(thumbOf(p) || 'data:image/gif;base64,R0lGODlhAQABAAAAACw=')}" alt="${esc(p.caption || '')}"><button type="button" class="cc-lightbox-arrow next" data-lightbox-step="1" aria-label="Next photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>›</button></div><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(photoDate)}${esc(timestamp(p.createdAt, p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-photo-zoom="out" aria-label="Zoom out" disabled>−</button><span class="cc-zoom-label" data-photo-zoom-label>100%</span><button type="button" class="cc-button" data-photo-zoom="in" aria-label="Zoom in">＋</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
@@ -600,6 +824,11 @@
     if (!shared) return local;
     return { since: Math.max(Number(shared.since) || 0, Date.now() - 30 * 86400000),
       read: [...new Set([...(local.read || []), ...(shared.read || []).map(item => item.key).filter(Boolean)])] };
+  }
+  function ago(ms) { // "5m ago", "2h ago", "3d ago", then a date
+    const sec = Math.max(0, (Date.now() - ms) / 1000);
+    if (sec < 60) return 'just now'; if (sec < 3600) return Math.floor(sec / 60) + 'm ago'; if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+    return sec < 7 * 86400 ? Math.floor(sec / 86400) + 'd ago' : new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
   const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
   function allMessages() {
@@ -635,7 +864,10 @@
       if (edited(e) && /text|tags|date/.test(e.updatedWhat || '')) add('diary', `dy-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a diary entry · ${clip(e.text)}`, { type: 'entry', id: e.id });
       for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
     }
-    for (const p of data.photos) if (!p.entryId) add('album', 'ph:' + p.id, p.author, p.createdAt, 'added a photo to the album', { type: 'photo', id: p.id, thumb: p.thumb });
+    for (const g of photoUploads()) { // a batch that grows gets a new key (so it alerts again); older photos keep their first photo's key
+      const first = g[0], n = g.length, album = data.albums.find(a => a.id === first.albumId);
+      add('album', first.batch ? `ph:b:${first.batch}#${n}` : 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, ids: g.map(p => p.id), thumb: thumbOf(first) });
+    }
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
     for (const a of data.answers) {
@@ -643,10 +875,27 @@
       add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
       if (open && edited(a)) add('home', `qa-u:${a.id}:${a.updatedAt}`, a.updatedBy, a.updatedAt, `edited their answer · ${clip(a.text)}`, target);
     }
+    checkinMessages(add, edited);
     for (const { q, on } of Q.schedule(data.questions)) if (on <= day) add('home', 'cq:' + q.id, q.by, localMidnight(on), `asked you ${on === day ? 'today’s' : 'a'} question · ${clip(q.text)}`, { type: 'question', date: on });
     return out.sort((a, b) => b.at - a.at);
   }
-  function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
+  function photoUploads() { // album photos grouped by upload; older photos without a batch group by person + album + within 10 minutes
+    const groups = new Map(), open = new Map();
+    for (const p of data.photos.filter(x => !x.entryId && x.author && x.createdAt).sort((a, b) => a.createdAt - b.createdAt)) {
+      if (p.batch) { const g = groups.get('b:' + p.batch); g ? g.push(p) : groups.set('b:' + p.batch, [p]); continue; }
+      const k = p.author, g = open.get(k); // not the album, so moving a photo later doesn't split its upload
+      if (g && p.createdAt - g[g.length - 1].createdAt < 10 * 60000) g.push(p);
+      else { const fresh = [p]; open.set(k, fresh); groups.set('p:' + p.id, fresh); }
+    }
+    return [...groups.values()];
+  }
+  function isRead(key, read) { // a photo batch read at a bigger size stays read after one of its photos is deleted
+    if (read.has(key)) return true;
+    const m = /^ph:b:(.+)#(\d+)$/.exec(key); if (!m) return false;
+    for (const k of read) { const r = /^ph:b:(.+)#(\d+)$/.exec(k); if (r && r[1] === m[1] && +r[2] >= +m[2]) return true; }
+    return false;
+  }
+  function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !isRead(m.key, read)); }
   function syncInboxState() {
     if (!ui.me) return;
     const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
@@ -688,7 +937,7 @@
     const tabs = [['all', 'All'], ...Object.entries(TAB_NAMES)];
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✉ MESSAGES</span><button type="button" class="cc-min" data-close-inbox aria-label="Close">×</button></div><div class="cc-body">
       <div class="cc-filter-row">${tabs.map(([v, l]) => `<button type="button" class="cc-button" data-inbox-filter="${v}" aria-pressed="${filter === v}">${l}</button>`).join('')}</div>
-      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
+      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${window.CCPixelEmoji ? CCPixelEmoji.text(m.text) : esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${esc(m.target.thumb)}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
     </div></section>`;
   }
   function openInbox(filter) {
@@ -701,11 +950,14 @@
   function closeInbox() { ui.inboxOpen = false; const dlg = $('[data-inbox]'); if (dlg.open) dlg.close(); }
   function goToMessage(key) {
     const m = allMessages().find(x => x.key === key); if (!m) return;
-    markRead([key]); closeInbox();
-    const t = m.target;
+    markRead([key]); closeInbox(); goToTarget(m.target);
+  }
+  function goToTarget(t) { // shared by the inbox and the achievements shelf
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
-    else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id); }
+    else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id, t.ids?.filter(id => data.photos.some(p => p.id === id))); }
     else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
+    else if (t.type === 'checkin') { if (t.week === thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
+    else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
     else {
       ui.highlight = t.id;
       if (t.type === 'entry') { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), t.id); }
@@ -770,9 +1022,225 @@
   function renderHeroCaption() {
     const cap = data.meta.heroCaption || 'SUNFLOWER GARDEN', custom = !!data.meta.hero;
     loadHero(data.meta.hero);
-    $('[data-hero-caption]').innerHTML = ui.editCaption
-      ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
-      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${ui.busy === 'hero' ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
+    fill($('[data-hero-caption]'), ui.editCaption
+      ? `<form class="cc-caption-form" data-caption-form><input name="caption" maxlength="40" value="${esc(ui.captionDraft ?? cap)}" aria-label="Picture caption"><button type="submit" class="cc-button">Save</button><button type="button" class="cc-button" data-caption-cancel>Cancel</button></form>`
+      : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${busy.hero ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`);
+  }
+
+  // ---------- status ----------
+  // Like WeChat 状态: one status per person in meta ('status:<key>' = { emoji, text, at } or null),
+  // so the two of us never overwrite each other. Shown in a slide-out tab on the right edge of every page.
+  // every emoji in this UI goes through emojiHtml (pixel-art versions can plug in here); data keeps plain characters
+  const emojiHtml = ch => (window.CCPixelEmoji ? CCPixelEmoji.html(ch, { decorative: true }) : `<span class="cc-emoji">${esc(ch)}</span>`);
+  const STATUS_PRESETS = [
+    { emoji: '😴', en: 'Sleepy', zh: '犯困' },
+    { emoji: '💼', en: 'Busy', zh: '忙碌' },
+    { emoji: '🍜', en: 'Eating', zh: '干饭' },
+    { emoji: '🚗', en: 'On my way', zh: '在路上' },
+    { emoji: '🥰', en: 'Missing you', zh: '想你' },
+    { emoji: '🤒', en: 'Unwell', zh: '不舒服' },
+    { emoji: '📚', en: 'Studying', zh: '学习中' },
+    { emoji: '🏃', en: 'Working out', zh: '运动' },
+    { emoji: '🎮', en: 'Gaming', zh: '游戏' },
+    { emoji: '🛁', en: 'Relaxing', zh: '放松' },
+    { emoji: '🎧', en: 'Music on', zh: '听歌' },
+    { emoji: '😤', en: 'Grumpy', zh: '有点烦' },
+    { emoji: '✈️', en: 'Travelling', zh: '出行' },
+    { emoji: '🌙', en: 'Good night', zh: '晚安' }
+  ];
+  const STATUS_DAY = 86400000, STATUS_MAX = 40;
+  const statusDraft = { emoji: '', text: '', dirty: false, owner: null }; // survives re-renders while typing
+  let statusShown = null, statusSwipe = null, statusSwipedAt = -1e9;
+  const statusKey = key => 'status:' + key;
+  function statusOf(key) {
+    const s = key ? data.meta[statusKey(key)] : null;
+    return s && typeof s === 'object' && s.emoji && Number.isFinite(+s.at) ? { emoji: String(s.emoji), text: String(s.text || ''), at: +s.at } : null;
+  }
+  const statusStale = s => Date.now() - s.at >= STATUS_DAY; // older statuses stay, just dimmed
+  function statusWhen(s) {
+    if (!statusStale(s)) return ago(s.at);
+    const n = Math.floor((Date.now() - s.at) / STATUS_DAY);
+    return `set ${n} day${n === 1 ? '' : 's'} ago`;
+  }
+  const statusPreset = emoji => STATUS_PRESETS.find(p => p.emoji === emoji);
+  const statusChars = t => (typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter().segment(t)].map(x => x.segment) : Array.from(t));
+  const statusClip = (t, n = 12) => { const c = statusChars(String(t).replace(/\s+/g, ' ').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
+  // "seen" bookkeeping: always go through these two, so the storage behind them can change
+  function statusSeenAt() { return ui.me ? Math.max(+data.meta['statusSeen:' + ui.me] || 0, +ls.get('statusSeen:' + ui.me, 0) || 0) : 0; } // synced per person, local copy for right now
+  function markStatusSeen(at) { if (!ui.me || !(at > statusSeenAt())) return; const key = 'statusSeen:' + ui.me; ls.set(key, at); data.meta = { ...data.meta, [key]: at }; run(store.mergeMeta(key, at, 'max')); } // merged, so an older device can't lower it
+  function statusUnseen() {
+    const s = statusOf(partnerKey()); if (!s) return false;
+    const seen = statusSeenAt();
+    return seen ? s.at > seen : Date.now() - s.at < STATUS_DAY; // first run: only a fresh status counts as new
+  }
+  function statusBubble(key) { // the player card's speech bubble shows the status when there is one
+    const s = statusOf(key);
+    if (!s) return `<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span>`;
+    return `<span class="cc-baby-bubble cc-status-bubble${statusStale(s) ? ' cc-status-stale' : ''}">${emojiHtml(s.emoji)} ${esc(statusClip(s.text, 10))}</span>`;
+  }
+  function statusCardHtml() {
+    const key = partnerKey(), s = statusOf(key);
+    const who = `<div class="cc-status-who">${mini(key)}<b>${esc(PEOPLE[key])}</b>${s ? `<small class="cc-plan-tag">${esc(statusWhen(s))}</small>` : ''}</div>`;
+    if (!s) return `<div class="cc-status-card cc-status-none ${key}">${who}<p class="cc-status-text cc-small">No status yet.</p></div>`;
+    return `<div class="cc-status-card ${key}${statusStale(s) ? ' cc-status-stale' : ''}">${who}<div class="cc-status-now"><span class="cc-status-emoji">${emojiHtml(s.emoji)}</span><p class="cc-status-text">${esc(s.text)}</p></div></div>`;
+  }
+  function statusMineHtml() {
+    const s = statusOf(ui.me), d = statusDraft, pick = statusPreset(d.emoji);
+    const current = s
+      ? `<div class="cc-status-mine${statusStale(s) ? ' cc-status-stale' : ''}"><span class="cc-status-emoji-sm">${emojiHtml(s.emoji)}</span><span class="cc-status-mine-text">${esc(s.text)}<small class="cc-plan-tag">${esc(statusWhen(s))}</small></span><button type="button" class="cc-button" data-status-clear>Clear</button></div>`
+      : '<p class="cc-small cc-status-mine-empty">Not set yet. Pick one below.</p>';
+    const presets = STATUS_PRESETS.map((p, i) => `<button type="button" class="cc-button cc-status-preset" data-status-preset="${i}" aria-pressed="${d.emoji === p.emoji}" aria-label="${esc(`${p.en} ${p.zh}`)}" title="${esc(`${p.en} · ${p.zh}`)}">${emojiHtml(p.emoji)}</button>`).join('');
+    return `<h3 class="cc-status-sub">Your status · <span lang="zh-CN">我的状态</span></h3>${current}
+      <div class="cc-status-presets" role="group" aria-label="Pick a status">${presets}</div>
+      <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${emojiHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Tap an emoji, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
+  }
+  function renderStatus(soft = passive) {
+    const box = $('[data-status-root]'); if (!box) return;
+    const tab = box.querySelector('[data-status-toggle]'), panel = box.querySelector('[data-status-panel]'), body = panel.querySelector('[data-status-body]');
+    box.hidden = !ui.me || $('[data-app]').hidden;
+    if (box.hidden) ui.statusOpen = false;
+    const open = !!ui.statusOpen;
+    box.classList.toggle('cc-open', open);
+    tab.setAttribute('aria-expanded', String(open));
+    panel.toggleAttribute('inert', !open);
+    if (open) panel.removeAttribute('aria-hidden'); else panel.setAttribute('aria-hidden', 'true');
+    if (box.hidden) { body.innerHTML = ''; statusShown = null; return; }
+    if (statusDraft.owner !== ui.me) Object.assign(statusDraft, { owner: ui.me, emoji: '', text: '', dirty: false });
+    const key = partnerKey(), theirs = statusOf(key);
+    if (open && theirs) markStatusSeen(theirs.at); // looking at it counts as seeing it
+    const unseen = statusUnseen();
+    tab.setAttribute('aria-label', `${PEOPLE[key]}'s status${theirs ? `: ${theirs.emoji} ${theirs.text}` : ''}${unseen ? ' (new)' : ''}`);
+    tab.innerHTML = `${mini(key)}${theirs ? `<span class="cc-status-tab-emoji${statusStale(theirs) ? ' cc-status-stale' : ''}">${emojiHtml(theirs.emoji)}</span>` : ''}<span class="cc-status-chev" aria-hidden="true">${open ? '›' : '‹'}</span>${unseen ? '<i class="cc-status-dot" aria-hidden="true"></i>' : ''}`;
+    const html = `<div data-status-partner>${statusCardHtml()}</div>${statusMineHtml()}`;
+    if (html === statusShown) return;
+    const a = document.activeElement, inside = !!a && body.contains(a);
+    // a sync while typing only refreshes the other person's card, so the keyboard and IME stay put
+    if (soft && inside && a.matches('input')) { const card = body.querySelector('[data-status-partner]'); if (card) card.innerHTML = statusCardHtml(); statusShown = null; return; }
+    const sel = !inside ? null : a.name ? `[name="${a.name}"]` : a.dataset.statusPreset != null ? `[data-status-preset="${a.dataset.statusPreset}"]` : a.hasAttribute('data-status-clear') ? '[data-status-clear]' : a.type === 'submit' ? '[data-status-form] [type=submit]' : null;
+    const range = inside && a.matches('input') ? [a.selectionStart, a.selectionEnd] : null;
+    body.innerHTML = html; statusShown = html;
+    if (inside) {
+      const el = (sel && body.querySelector(sel)) || panel.querySelector('[data-status-close]');
+      el.focus({ preventScroll: true });
+      if (range && el.setSelectionRange) try { el.setSelectionRange(...range); } catch {}
+    }
+  }
+  function openStatus(open, restoreFocus = true) {
+    if (open && !ui.me) return;
+    const was = !!ui.statusOpen, box = $('[data-status-root]');
+    ui.statusOpen = open;
+    if (open && !was && !statusDraft.dirty) { const mine = statusOf(ui.me); Object.assign(statusDraft, { owner: ui.me, emoji: mine?.emoji || '', text: mine?.text || '' }); }
+    renderStatus(false);
+    if (open && !was) box.querySelector('[data-status-panel] :is(button, input):not([disabled])')?.focus({ preventScroll: true });
+    if (!open && was && restoreFocus) box.querySelector('[data-status-toggle]')?.focus({ preventScroll: true });
+  }
+  function setMyStatus(value) {
+    if (!ui.me) return;
+    const key = statusKey(ui.me);
+    data.meta = { ...data.meta, [key]: value };
+    run(store.setMeta({ [key]: value }));
+    render();
+  }
+  function pickStatusPreset(i) {
+    const p = STATUS_PRESETS[i]; if (!p) return;
+    const t = statusDraft.text.trim(); // replace the words only while they are still a preset's label
+    if (!t || STATUS_PRESETS.some(x => [x.zh, x.en, `${x.zh} ${x.en}`].includes(t))) statusDraft.text = p.zh;
+    Object.assign(statusDraft, { emoji: p.emoji, dirty: true }); keepDraft('status');
+    renderStatus(false);
+  }
+  function saveStatus(form) {
+    const field = form.elements.text, text = String(field.value || '').trim().slice(0, STATUS_MAX), pick = statusPreset(statusDraft.emoji);
+    if (!statusDraft.emoji) { flash('Pick an emoji for your status first.'); $('[data-status-preset]')?.focus(); return; }
+    const value = { emoji: statusDraft.emoji, text: text || pick?.zh || '', at: Date.now() };
+    Object.assign(statusDraft, { emoji: value.emoji, text: value.text, dirty: false }); dropDraft('status');
+    setMyStatus(value);
+    flash('Status saved.');
+  }
+  {
+    const box = $('[data-status-root]'), panel = box.querySelector('[data-status-panel]');
+    root.addEventListener('click', e => {
+      const el = e.target.closest('button'); if (!el || !box.contains(el)) return;
+      if (el.hasAttribute('data-status-toggle')) openStatus(!ui.statusOpen);
+      else if (el.hasAttribute('data-status-close')) openStatus(false);
+      else if (el.dataset.statusPreset != null) pickStatusPreset(+el.dataset.statusPreset);
+      else if (el.hasAttribute('data-status-clear')) { Object.assign(statusDraft, { emoji: '', text: '', dirty: false }); dropDraft('status'); setMyStatus(null); flash('Status cleared.'); }
+    });
+    root.addEventListener('input', e => { if (e.target.name === 'text' && e.target.closest('[data-status-form]')) { Object.assign(statusDraft, { text: e.target.value, dirty: true }); keepDraft('status'); } });
+    root.addEventListener('submit', e => { if (e.target.matches('[data-status-form]')) { e.preventDefault(); saveStatus(e.target); } });
+    // tapping anywhere else closes it (composedPath: a re-render may already have detached the target)
+    document.addEventListener('click', e => {
+      if (!ui.statusOpen || e.composedPath().includes(box)) return;
+      const a = document.activeElement;
+      openStatus(false, !a || a === document.body || panel.contains(a));
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || e.isComposing || !ui.statusOpen || root.querySelector('dialog[open]')) return;
+      e.preventDefault(); openStatus(false);
+    });
+    // swipe left on the tab opens, swipe right on the tab or the open panel closes
+    box.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const onTab = !!e.target.closest('[data-status-toggle]');
+      if (!onTab && !(ui.statusOpen && e.target.closest('[data-status-panel]'))) return;
+      if (e.target.closest('input, textarea, select')) return; // let text selection be
+      statusSwipe = { id: e.pointerId, x: e.clientX, y: e.clientY, onTab };
+    });
+    document.addEventListener('pointerup', e => {
+      const s = statusSwipe; if (!s || s.id !== e.pointerId) return;
+      statusSwipe = null;
+      const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (Math.abs(dx) < 30 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (dx < 0 && s.onTab && !ui.statusOpen) { statusSwipedAt = performance.now(); openStatus(true); }
+      else if (dx > 0 && ui.statusOpen) { statusSwipedAt = performance.now(); openStatus(false); }
+    });
+    document.addEventListener('pointercancel', e => { if (statusSwipe?.id === e.pointerId) statusSwipe = null; });
+    box.addEventListener('dragstart', e => e.preventDefault()); // dragging selected text or an avatar would cancel the swipe
+    // the click that ends a swipe must not toggle it straight back (or count as an outside tap)
+    document.addEventListener('click', e => { if (performance.now() - statusSwipedAt < 400) { statusSwipedAt = -1e9; e.stopPropagation(); e.preventDefault(); } }, true);
+    setInterval(() => { if (ui.statusOpen && !document.hidden) renderStatus(true); }, 60000); // keep "2h ago" fresh
+  }
+
+  // ---------- drafts: typed but not sent yet, kept on this device per person (localStorage), so a reload or iOS
+  // closing the app loses nothing; sending, cancelling or closing the form forgets them. Picked photos are not kept (too big).
+  let draftsOwner = null;
+  const draftNow = { // each kind as it is in memory now, or null when there is nothing to keep
+    diary: () => (diaryDraft.text || diaryDraft.tags || diaryDraft.date !== today ? { text: diaryDraft.text, tags: diaryDraft.tags, date: diaryDraft.date !== today ? diaryDraft.date : '' } : null),
+    reply: id => commentDrafts[id] || null,
+    answer: id => questionDrafts[id] || null,
+    checkin: id => { const c = checkinDrafts[id]; return c && (c.mood || c.text) ? { mood: c.mood, text: c.text } : null; },
+    ask: () => (planner.drafts.ask.text ? { text: planner.drafts.ask.text, date: planner.drafts.ask.date || '' } : null),
+    status: () => (statusDraft.dirty ? { emoji: statusDraft.emoji, text: statusDraft.text } : null)
+  };
+  const obj = v => (v && typeof v === 'object' ? v : {}), str = v => (typeof v === 'string' ? v : '');
+  function keepDraft(kind, id = '', drop = false) { // written straight away (a few hundred bytes), so nothing waits on a timer when iOS closes the app
+    if (!draftsOwner || draftsOwner !== ui.me) return;
+    const all = obj(ls.get('drafts:' + draftsOwner, {})), box = all[kind] = obj(all[kind]), v = drop ? null : draftNow[kind](id);
+    if (v) box[id] = v; else delete box[id];
+    if (!Object.keys(box).length) delete all[kind];
+    ls.set('drafts:' + draftsOwner, all);
+  }
+  const dropDraft = (kind, id) => keepDraft(kind, id, true);
+  function loadDrafts() { // on start, and when someone else starts playing on this device
+    if (!ui.me || draftsOwner === ui.me) return;
+    draftsOwner = ui.me;
+    const all = obj(ls.get('drafts:' + ui.me, {})), one = k => obj(obj(all[k])['']);
+    const dy = one('diary'); Object.assign(diaryDraft, { text: str(dy.text), tags: str(dy.tags), date: validDay(str(dy.date)) ? dy.date : today });
+    for (const [mem, kind] of [[commentDrafts, 'reply'], [questionDrafts, 'answer']]) { for (const k in mem) delete mem[k]; for (const [k, v] of Object.entries(obj(all[kind]))) if (str(v)) mem[k] = v; }
+    for (const k in checkinDrafts) delete checkinDrafts[k];
+    for (const [w, c] of Object.entries(obj(all.checkin))) checkinDrafts[w] = { mood: Number(obj(c).mood) || 0, text: str(obj(c).text) };
+    const ask = one('ask'); planner.drafts.ask = { text: str(ask.text), date: str(ask.date) };
+    const st = one('status'); Object.assign(statusDraft, { owner: ui.me, emoji: str(st.emoji), text: str(st.text), dirty: !!(st.emoji || st.text) });
+    if (diaryDraft.text || diaryDraft.tags) ui.newEntryOpen = true; // an unfinished entry comes back already open
+    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts) }; reopenDraftEdits();
+  }
+  let reopenEdits = null;
+  function reopenDraftEdits() { // a half-finished edit of an answer or check-in already posted reopens in edit mode, once the data is here
+    if (!reopenEdits || !ui.dataReady || !ui.me) return;
+    const { answers, checkins } = reopenEdits; reopenEdits = null;
+    const a = answers.filter(d => { const m = answerOf(d, ui.me); return m && questionDrafts[d] !== m.text; }).sort().pop();
+    if (a) ui.editingAnswer = a;
+    const c = checkins.filter(w => { const m = checkinOf(w, ui.me), d = checkinDrafts[w]; return m && d && (d.mood !== (Number(m.mood) || 0) || d.text !== (m.text || '')); }).sort().pop();
+    if (c) editingCheckin = c;
   }
 
   // ---------- chrome: player card, hero, sync ----------
@@ -782,8 +1250,8 @@
     $('[data-current-folder]').textContent = ui.page;
     const local = store.mode === 'local';
     const avatars = data.meta.avatars || {};
-    const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
-    const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span></span>`;
+    const badge = key => `<span class="cc-badge ${key}">${avatarOf(key) ? `<img src="${esc(avatarOf(key))}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
+    const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}${statusBubble(key)}</span>`;
     const canBadge = 'setAppBadge' in navigator && 'Notification' in window && Notification.permission === 'default' && (matchMedia('(display-mode: standalone)').matches || navigator.standalone);
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}${canBadge ? '<button type="button" class="cc-link" data-enable-badge>Show a count on the app icon</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
@@ -794,33 +1262,98 @@
       $(`[data-mode-toggle="${k}"]`).setAttribute('aria-pressed', String(mode[k]));
       $(`[data-mode-label="${k}"]`).textContent = k === 'dark' ? (mode.dark ? 'DARK' : 'LIGHT') : (mode.high ? 'HIGH' : 'NORMAL');
     }
-    const icon = avatars[ui.me];
-    $('[data-user-icon]').innerHTML = ui.me ? (icon ? `<img src="${icon}" alt="">` : esc(PEOPLE[ui.me].slice(0, 1))) : '?';
+    const icon = avatarOf(ui.me);
+    $('[data-user-icon]').innerHTML = ui.me ? (icon ? `<img src="${esc(icon)}" alt="">` : esc(PEOPLE[ui.me].slice(0, 1))) : '?';
     $('[data-user-icon]').className = 'cc-user-icon ' + (ui.me || '');
     applyTheme();
     const ws = weekStart(today), weekCount = Array.from({ length: 7 }, (_, i) => dayEvents(shiftDay(ws, i)).length).reduce((a, b) => a + b, 0);
-    $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>`;
+    $('[data-hero-stats]').innerHTML = `<button type="button" data-hero="week">▦ ${weekCount} this week</button><button type="button" data-go="diary">✎ ${data.diary.length} diary</button><button type="button" data-go="album">▧ ${data.photos.length} photos</button>${ui.me && A ? achChip() : ''}`;
     const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
     renderTearpad(anniv);
     renderHeroCaption();
-    const syncText = { local: 'LOCAL ONLY', connecting: 'CONNECTING…', synced: '● SYNCED', saving: 'SAVING…', offline: 'OFFLINE', error: 'SYNC ERROR', signedout: 'LOG IN' }[ui.sync] || '';
+    const busyMin = ui.sync === 'ratelimited' ? Math.max(1, Math.ceil((ui.syncUntil - Date.now()) / 60000)) : 0; // GitHub rate limit: minutes left
+    const syncText = { local: 'LOCAL ONLY', connecting: 'CONNECTING…', synced: '● SYNCED', saving: 'SAVING…', offline: 'OFFLINE', error: 'SYNC ERROR', signedout: 'LOG IN', ratelimited: `BUSY · RETRY ${busyMin}m` }[ui.sync] || '';
     const chip = $('[data-sync]'); chip.textContent = syncText; chip.dataset.state = ui.sync;
-    chip.title = local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
+    chip.title = busyMin ? `GitHub is busy, trying again in ${busyMin} min. Your changes are kept and will save then.` : local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
     $('[data-logout]').hidden = local || !ui.user;
   }
 
   // ---------- render with focus preservation ----------
   let frame = 0, passive = false; // passive: a background sync or timer, not something the user just did
+  let ime = null, imeWaiting = false; // ime: the field with an open IME composition (pinyin not yet turned into 你)
+  root.addEventListener('compositionstart', e => { ime = e.target; });
+  root.addEventListener('compositionend', () => { ime = null; if (imeWaiting) { imeWaiting = false; scheduleRender(); } }); // next frame: Safari sends the last input after compositionend
+  // the text field being typed in stays the same element through a re-render (caret, IME and the phone keyboard carry on):
+  // everything around it is swapped for the fresh markup; if the markup around it changed shape, the box is rebuilt as before
+  const typing = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password)$/.test(el.type)));
+  const idOf = el => [...el.attributes].filter(x => x.name === 'id' || x.name.startsWith('data-')).map(x => x.name + '=' + x.value).join();
+  function keepField(box, html, field) {
+    const t = document.createElement('template'); t.innerHTML = html;
+    const path = [], pairs = []; for (let n = field; n !== box; n = n.parentNode) path.unshift(n);
+    let fresh = t.content;
+    for (const node of path) { // its twin: same id / data-* if it has some (entries can move), else same position
+      const kids = [...fresh.childNodes], id = idOf(node);
+      const twin = id ? kids.find(k => k.nodeName === node.nodeName && idOf(k) === id) : kids[[...node.parentNode.childNodes].indexOf(node)];
+      if (!twin || twin.nodeName !== node.nodeName || idOf(twin) !== id) return false;
+      pairs.push([node, twin]); fresh = twin;
+    }
+    if (fresh.value !== field.value || fresh.type !== field.type) return false; // the render means to change what is typed
+    for (const [node, twin] of pairs) {
+      const kids = [...twin.parentNode.childNodes], at = kids.indexOf(twin);
+      for (const k of [...node.parentNode.childNodes]) if (k !== node) k.remove();
+      node.before(...kids.slice(0, at)); node.after(...kids.slice(at + 1));
+      for (const x of [...node.attributes]) if (!twin.hasAttribute(x.name)) node.removeAttribute(x.name);
+      for (const x of twin.attributes) if (x.name !== 'value' && node.getAttribute(x.name) !== x.value) node.setAttribute(x.name, x.value);
+    }
+    return true;
+  }
+  function fill(box, html) { const a = document.activeElement; if (!(typing(a) && box.contains(a) && keepField(box, html, a))) box.innerHTML = html; }
+  // a keyboard user on a button / select / checkbox that a render replaces lands on its twin (same data-* or same label,
+  // in the same box), not on <body>; mouse clicks keep today's behaviour
+  const STATEFUL = /^data-(today|selected|key)$/; // data-* that follow state, not which control it is
+  const keysOf = el => [...el.attributes].filter(x => (x.name === 'id' || x.name.startsWith('data-')) && !STATEFUL.test(x.name)).map(x => x.name + '=' + x.value).join();
+  const boxOf = el => { for (let p = el.parentElement; p && p !== root; p = p.parentElement) { const k = keysOf(p); if (k) return p.tagName + k; } return ''; };
+  const twins = (s, same) => [...root.getElementsByTagName(s.tag)].filter(x => same(x) && !x.disabled && boxOf(x) === s.box && x.getClientRects().length);
+  let pointerLast = false; // a <select> shows :focus-visible even when clicked, so it also needs the last input to be a key
+  document.addEventListener('pointerdown', () => { pointerLast = true; }, true);
+  document.addEventListener('keydown', () => { pointerLast = false; }, true);
+  function focusSpot() {
+    const a = document.activeElement;
+    try { if (!a || !root.contains(a) || !a.matches('button, select, input[type=checkbox], input[type=radio]') || !a.matches(':focus-visible') || (a.tagName === 'SELECT' && pointerLast)) return null; } catch { return null; }
+    const s = { el: a, tag: a.tagName, keys: keysOf(a), label: a.getAttribute('aria-label'), box: boxOf(a) };
+    s.same = x => keysOf(x) === s.keys && x.getAttribute('aria-label') === s.label;
+    const list = twins(s, s.same); s.i = list.indexOf(a); s.n = list.length;
+    return s;
+  }
+  function refocus(s) {
+    const now = document.activeElement;
+    if (!s || s.el.isConnected || (now && now !== document.body)) return;
+    const label = x => x.getAttribute('aria-label'), names = x => keysOf(x).replace(/=[^,]*/g, ''), only = m => (m.length === 1 ? m[0] : null);
+    const same = twins(s, s.same), gone = s.label && ![...root.getElementsByTagName(s.tag)].some(x => label(x) === s.label && boxOf(x) === s.box);
+    const el = (same.length === s.n ? same[s.i] : only(same)) // the same control, e.g. a calendar day or a filter
+      || (s.label && only(twins(s, x => label(x) === s.label && names(x) === names(s.el)))) // same job, new data: "Next page"
+      || (gone && s.keys && only(twins(s, x => keysOf(x) === s.keys))); // same data, new label: Minimize ↔ Expand
+    if (el) el.focus({ preventScroll: true });
+  }
+  const keepFocus = fn => { const s = focusSpot(); fn(); refocus(s); };
   function render() {
     cancelAnimationFrame(frame); frame = 0;
-    const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
-    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form'].find(n => fa.hasAttribute(n));
+    // a field replaced mid-composition commits the raw letters ("ni你"): wait for the composition to end, then render once
+    if (ime && ime.isConnected && ime === document.activeElement) { imeWaiting = true; return; }
+    ime = null; imeWaiting = false;
+    const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null, spot = focusSpot();
+    const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form', 'data-caption-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    const on = p => ui.page === p; // only the page on screen is rebuilt; the others are rebuilt when you go to them
+    renderChrome(); if (on('home')) renderCalendar(); renderSpecialDays(); if (on('home')) renderQuestion(); renderStatus(); if (on('home')) renderMemory();
+    if (on('todo')) renderTodo(); if (on('wishlist')) renderWishlist(); if (on('diary')) renderDiary(); if (on('album')) renderAlbum();
+    renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
+    refocus(spot);
+    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
   }
   const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(() => { passive = true; try { render(); } finally { passive = false; } }); };
 
@@ -830,28 +1363,29 @@
 
   // ---------- form submit ----------
   async function submitPlanner(form) {
+    checkDay(); // just past midnight, before the minute timer notices: an untouched date becomes the new today
     const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form));
     if (name === 'entryedit') {
       const entry = data.diary.find(item => item.id === ui.editingEntry);
       if (!entry || entry.author !== meName()) return;
       const draft = planner.drafts.entryedit;
       const text = String(d.text || '').trim();
-      const kept = draft.photoIds.filter(id => (entry.photoIds || []).includes(id));
+      const current = entryPhotoIds(entry), kept = draft.photoIds.filter(id => current.includes(id));
       if (!text && !kept.length && !draft.pending.length) {
         form.elements.text.setCustomValidity('Write something or keep a photo.'); form.elements.text.reportValidity(); return;
       }
-      ui.busy = 'entryedit'; render();
+      busy.entry++; render();
       try {
         const editedDate = currentDay();
         const added = await savePhotos(draft.pending, { entryId: entry.id, date: editedDate });
         await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
-        for (const id of (entry.photoIds || []).filter(id => !kept.includes(id))) await store.remove('photos', id);
+        for (const id of current.filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
         planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
         ui.pages.diary = 1;
         flash('Saved.');
       } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
-      ui.busy = false; render(); return;
+      busy.entry--; render(); return;
     }
     if (name === 'ask') {
       const text = String(d.text || '').trim().slice(0, 200), tomorrow = shiftDay(qDay(), 1);
@@ -859,7 +1393,7 @@
       if (!validDay(d.date || '') || d.date < tomorrow) { form.elements.date.setCustomValidity('Pick tomorrow or later.'); form.elements.date.reportValidity(); return; }
       const on = Q.nextFreeDay(d.date, data.questions), partner = PEOPLE[partnerKey()];
       run(store.set('questions', { id: newId(), date: on, text, by: meName(), createdAt: Date.now() }).then(() => render()));
-      planner.drafts.ask = { text: '', date: '' };
+      planner.drafts.ask = { text: '', date: '' }; dropDraft('ask');
       flash(on === d.date ? `Scheduled for ${niceDate(on)}. ${partner} won’t see it until then.` : `${niceDate(d.date)} already has a question, so yours is on ${niceDate(on)}.`);
       render(); return;
     }
@@ -895,35 +1429,39 @@
     render();
   }
   async function submitDiary(form) {
+    checkDay(); // see submitPlanner
     const text = String(form.elements.text.value || '').trim(), date = form.elements.date.value || today;
     if (!text && !diaryDraft.pending.length) { form.elements.text.setCustomValidity('Write something or add a photo.'); form.elements.text.reportValidity(); return; }
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
-    ui.busy = true; render();
+    busy.diary++; render();
     try {
       const id = newId();
       const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now() });
-      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = [];
+      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
+      diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = []; dropDraft('diary');
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
       flash('Posted.');
     } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
-    ui.busy = false; render();
+    busy.diary--; render();
   }
 
   // ---------- events ----------
   root.addEventListener('input', e => {
     const el = e.target; el.setCustomValidity?.('');
+    if (e.isComposing) ime = el; // also caught here in case compositionstart was missed
     if (el.closest('[data-album-form]') && el.name === 'albumName') ui.albumDraft = el.value;
+    if (el.closest('[data-caption-form]')) ui.captionDraft = el.value; // a sync while editing the caption keeps what you typed
     const pf = el.closest('[data-planner-form]');
-    if (pf) planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value;
-    if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) diaryDraft[el.name] = el.value;
-    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); }
-    const cf = el.closest('[data-comment-form]'); if (cf) commentDrafts[cf.dataset.commentForm] = el.value;
-    const qf = el.closest('[data-question-form]'); if (qf) questionDrafts[qf.dataset.questionForm] = el.value;
+    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (pf.dataset.plannerForm === 'ask') keepDraft('ask'); }
+    if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) { diaryDraft[el.name] = el.value; keepDraft('diary'); }
+    if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); } // the box itself is kept (fill), only the results change
+    const cf = el.closest('[data-comment-form]'); if (cf) { commentDrafts[cf.dataset.commentForm] = el.value; keepDraft('reply', cf.dataset.commentForm); }
+    const qf = el.closest('[data-question-form]'); if (qf) { questionDrafts[qf.dataset.questionForm] = el.value; keepDraft('answer', qf.dataset.questionForm); }
   });
-  root.addEventListener('change', async e => {
+  root.addEventListener('change', e => {
     const el = e.target;
+    if (el.type === 'file') return; // file inputs have their own listener: filesPicked
     if (el.matches('[data-photo-album]')) {
       const albumId = el.value;
       if (albumId && !data.albums.some(a => a.id === albumId)) return;
@@ -934,7 +1472,6 @@
       flash('Photo moved.');
       return;
     }
-    if (el.matches('[data-calendar-file]')) { calendarImport.file = el.files[0] || null; calendarImport.name = calendarImport.file?.name || ''; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-import-date]')) { calendarImport[el.dataset.importDate] = el.value; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-export-kind]')) { planner.exportKind = el.value; ls.set('exportKind', el.value); }
     if (el.matches('[data-task-id]')) run(store.update('tasks', el.dataset.taskId, { done: el.checked }));
@@ -944,44 +1481,50 @@
     if (el.name === 'kind' && el.closest('[data-planner-form="event"]')) { planner.drafts.event.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="todo"]')) { planner.drafts.todo.kind = el.value; render(); }
     if (el.name === 'kind' && el.closest('[data-planner-form="dayedit"]')) { planner.drafts.dayedit.kind = el.value; planner.drafts.dayedit.repeat = el.value !== 'holiday' || planner.drafts.dayedit.repeat; render(); }
+  });
+  // Every file input gets this as its own listener (render() adds it): a sync can rebuild the page while the photo
+  // picker is open, and a change on an input that has left the page never bubbles up to root.
+  async function filesPicked(e) {
+    const el = e.target, picked = [...el.files]; el.value = ''; // so the same photo can be picked again
+    if (el.matches('[data-calendar-file]')) { calendarImport.file = picked[0] || null; calendarImport.name = calendarImport.file?.name || ''; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-entry-edit-photos]')) {
       const draft = planner.drafts.entryedit;
-      const files = [...el.files].slice(0, 9 - draft.photoIds.length - draft.pending.length);
-      if (el.files.length > files.length) flash('Up to 9 photos per entry.');
-      ui.busy = 'entryedit'; render();
+      const files = picked.slice(0, 9 - draft.photoIds.length - draft.pending.length);
+      if (picked.length > files.length) flash('Up to 9 photos per entry.');
+      busy.entry++; render();
       for (const file of files) { try { draft.pending.push(await makePhoto(file)); } catch (err) { flash(err.message); } }
-      ui.busy = false; render();
+      busy.entry--; render();
     }
     if (el.matches('[data-diary-photos]')) {
-      const files = [...el.files].slice(0, 9 - diaryDraft.pending.length);
-      if (el.files.length > files.length) flash('Up to 9 photos per entry.');
-      ui.busy = true; render();
+      const files = picked.slice(0, 9 - diaryDraft.pending.length);
+      if (picked.length > files.length) flash('Up to 9 photos per entry.');
+      busy.diary++; render();
       for (const f of files) { try { diaryDraft.pending.push(await makePhoto(f)); } catch (err) { flash(err.message); } }
-      ui.busy = false; render();
+      busy.diary--; render();
     }
-    if (el.matches('[data-avatar-file]') && el.files[0]) {
+    if (el.matches('[data-avatar-file]') && picked[0]) {
       ui.busy = 'avatar'; render();
-      try { const img = await CCStore.resizeImage(el.files[0], 160, 0.8, true); run(store.setMeta({ avatars: { ...(data.meta.avatars || {}), [ui.me]: img } })); flash('Picture updated.'); }
+      try { const img = await CCStore.resizeImage(picked[0], 160, 0.8, true); run(store.metaKey('avatars', ui.me, img)); flash('Picture updated.'); }
       catch (err) { flash(err.message); }
       ui.busy = false; render();
     }
-    if (el.matches('[data-hero-file]') && el.files[0]) {
-      ui.busy = 'hero'; render();
+    if (el.matches('[data-hero-file]') && picked[0]) {
+      busy.hero++; render();
       try {
-        const img = await CCStore.resizeImage(el.files[0], 1400, 0.85);
+        const img = await CCStore.resizeImage(picked[0], 1400, 0.85);
         const id = 'hero-' + newId(); ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
-      ui.busy = false; render();
+      busy.hero--; render();
     }
     if (el.matches('[data-album-photos]')) {
-      const files = [...el.files].slice(0, 20);
-      ui.busy = true; render();
-      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
+      const files = picked.slice(0, 20);
+      busy.album++; render();
+      try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }, { keepPartial: true }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
       catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
-      ui.busy = false; render();
+      busy.album--; render();
     }
-  });
+  }
   root.addEventListener('submit', e => {
     const f = e.target; e.preventDefault();
     if (f.matches('[data-album-form]')) {
@@ -1004,7 +1547,7 @@
     else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
-      commentDrafts[id] = ''; run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
+      commentDrafts[id] = ''; dropDraft('reply', id); run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
     }
     else if (f.matches('[data-login-form]')) {
       const err = $('[data-login-error]'); err.textContent = '';
@@ -1025,14 +1568,11 @@
     if (ds.albumDelete) {
       const album = data.albums.find(a => a.id === ds.albumDelete); if (!album) return;
       ui.confirm = null; ui.album = 'unsorted'; ui.albumForm = ''; ui.pages.album = 1;
-      run((async () => {
-        for (const photo of data.photos.filter(p => p.albumId === album.id)) await store.update('photos', photo.id, { albumId: '' });
-        await store.remove('albums', album.id);
-        flash('Album deleted. Photos are in Unsorted.');
-      })());
+      // one change, however big the album: a photo whose album is gone already counts as Unsorted everywhere
+      run(store.remove('albums', album.id).then(() => flash('Album deleted. Photos are in Unsorted.')));
       render(); return;
     }
-    if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
+    if (el.hasAttribute('data-toggle-diary')) { ui.newEntryOpen = !ui.newEntryOpen; if (!ui.newEntryOpen) dropDraft('diary'); render(); if (ui.newEntryOpen) $('[data-diary-form] textarea[name="text"]')?.focus(); return; }
     if (ds.pageKey && ds.pageNumber) {
       ui.pages[ds.pageKey] = +ds.pageNumber;
       render();
@@ -1044,24 +1584,27 @@
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
     if (ds.openInbox) { openInbox(ds.openInbox); return; }
     if (el.hasAttribute('data-close-inbox')) { closeInbox(); return; }
-    if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; renderInbox(); return; }
+    if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; keepFocus(renderInbox); return; }
     if (ds.inboxGo) { goToMessage(ds.inboxGo); return; }
     if (ds.questionOpen) { openQuestions(true, ds.questionOpen); return; }
+    if (el.hasAttribute('data-ach-open')) { openAchievements(true); return; }
+    if (el.hasAttribute('data-ach-close')) { openAchievements(false); return; }
+    if (ds.achGo) { const a = achievements().find(x => x.id === ds.achGo), t = a && achTarget(a); openAchievements(false); if (t) goToTarget(t); return; }
     if (el.hasAttribute('data-question-close')) { openQuestions(false); return; }
     if (ds.answerEdit) { const mine = answerOf(ds.answerEdit, ui.me); if (mine) { ui.editingAnswer = ds.answerEdit; questionDrafts[ds.answerEdit] = mine.text; render(); $(`[data-question-form="${ds.answerEdit}"] textarea`)?.focus(); } return; }
-    if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; ui.editingAnswer = null; render(); return; }
+    if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; dropDraft('answer', ds.answerCancel); ui.editingAnswer = null; render(); return; }
     if (el.hasAttribute('data-enable-badge')) { Promise.resolve(Notification.requestPermission()).catch(() => {}).finally(() => { iconBadge = -1; render(); }); return; }
-    if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); render(); return; }
+    if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); loadDrafts(); render(); return; }
     if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
-    if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.setMeta({ kindColors: kc })); render(); return; }
-    if (el.hasAttribute('data-avatar-reset')) { const av = { ...(data.meta.avatars || {}) }; delete av[ui.me]; run(store.setMeta({ avatars: av })); return; }
+    if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.metaKey('kindColors', ui.colorKind, ds.setColor)); render(); return; }
+    if (el.hasAttribute('data-avatar-reset')) { run(store.metaKey('avatars', ui.me, null)); return; }
     if (ds.editDay) { const it = data.dates.find(x => x.id === ds.editDay); if (it) { planner.editingDay = it.id; planner.drafts.dayedit = { title: it.title, kind: it.kind, date: it.date, repeat: !!it.repeat }; render(); } return; }
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: [...(en.photoIds || [])], pending: [] }; render(); } return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; render(); } return; }
     if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
     if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
@@ -1095,7 +1638,7 @@
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
     if (el.hasAttribute('data-tear')) { tear(); return; }
     if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
-    if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; render(); $('[data-caption-form] input')?.focus(); return; }
+    if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; ui.captionDraft = null; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
     if (ds.remove) {
@@ -1109,12 +1652,12 @@
     if (el.hasAttribute('data-import-preview')) { previewImport(); return; }
     if (el.hasAttribute('data-import-confirm')) { confirmImport(); return; }
     // memory / diary / photos
-    if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); renderMemory(); return; }
+    if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); keepFocus(renderMemory); return; }
     if (ds.openEntry) { closePhoto(); diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), ds.openEntry); ui.highlight = ds.openEntry; go('diary'); document.getElementById('entry-' + ds.openEntry)?.scrollIntoView({ block: 'center' }); setTimeout(() => { ui.highlight = null; scheduleRender(); }, 2500); return; }
     if (ds.pendingRemove) { diaryDraft.pending.splice(+ds.pendingRemove, 1); render(); return; }
     if (ds.entryDelete) {
       const entry = data.diary.find(x => x.id === ds.entryDelete); ui.confirm = null; if (!entry) return;
-      run((async () => { for (const pid of entry.photoIds || []) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
+      run((async () => { for (const pid of entryPhotoIds(entry)) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
     }
     if (ds.commentRemove) { openCommentDelete(ds.entry, ds.commentRemove); return; }
     if (el.hasAttribute('data-comment-confirm-cancel')) { $('[data-comment-confirm-dialog]').close(); return; }
@@ -1132,7 +1675,7 @@
     if (ds.photoZoom) { setPhotoZoom(lightbox.zoom + (ds.photoZoom === 'in' ? 1 : -1)); return; }
     if (ds.photoDelete) {
       const p = data.photos.find(x => x.id === ds.photoDelete); closePhoto(); if (!p) return;
-      run((async () => { await store.remove('photos', p.id); if (p.entryId) { const en = data.diary.find(x => x.id === p.entryId); if (en) await store.update('diary', en.id, { photoIds: (en.photoIds || []).filter(x => x !== p.id) }); } })());
+      run((async () => { await store.remove('photos', p.id); if (p.entryId) { const en = data.diary.find(x => x.id === p.entryId); if (en) await store.update('diary', en.id, { photoIds: (en.photoIds || []).filter(x => x !== p.id) }, { quiet: true }); } })());
       flash('Photo deleted.'); return;
     }
   });
@@ -1171,8 +1714,21 @@
   $('[data-comment-confirm-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $('[data-question-dialog]').addEventListener('close', () => { if (ui.questionOpen) { ui.questionOpen = false; render(); } });
   $('[data-question-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openQuestions(false); });
+  $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } $('[data-ach-open]')?.focus({ preventScroll: true }); });
+  $('[data-ach-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openAchievements(false); });
   let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
-  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; scheduleRender(); return true; };
+  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; rollDay(shownDay, d); shownDay = today = d; achCache = null; scheduleRender(); return true; };
+  function rollDay(old, day) { // dates that still say the old "today" (nobody changed them) move on to the new day
+    if (diaryDraft.date === old) diaryDraft.date = day;
+    if (planner.drafts.event.date === old) planner.drafts.event.date = day;
+    if (planner.selected === old && !planner.editing) {
+      planner.selected = day;
+      if (planner.month === old.slice(0, 7)) planner.month = day.slice(0, 7);
+      if (planner.year === +old.slice(0, 4)) planner.year = +day.slice(0, 4);
+    }
+    // open forms too, in case this render leaves them alone
+    $$('[data-diary-form] input[name="date"], [data-planner-form="event"] input[name="date"]').forEach(el => { if (el.value === old) el.value = day; });
+  }
   setInterval(() => { if (!document.hidden && !checkDay()) renderBadges(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDay(); });
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
@@ -1205,7 +1761,7 @@
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
-    flash(`${entries.length} events imported.`, async () => { for (const x of entries) await store.remove('events', x.id); });
+    flash(`${entries.length} events imported.`, () => quietly(async () => { for (const x of entries) await store.remove('events', x.id); }));
     render();
   }
 
@@ -1306,14 +1862,18 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); scheduleRender(); };
+  let holdRenders = 0; // see quietly()
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (!holdRenders) scheduleRender(); };
+  // many changes in a row (undoing an import removes each event): the page renders once at the end instead of after each
+  async function quietly(job) { holdRenders++; try { return await job(); } finally { holdRenders--; scheduleRender(); } }
   let lastError = 0;
   const onStatus = (s, err) => {
-    if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
-    if (ui.sync !== s) { ui.sync = s; scheduleRender(); }
+    if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown
+    else if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
+    if (ui.sync !== s || s === 'ratelimited') { ui.sync = s; scheduleRender(); }
   };
   history.replaceState(null, '', '#' + ui.page);
-  render();
+  loadDrafts(); render();
   if (store.mode === 'local') {
     showApp(true);
     seedIfNeeded().then(() => store.start(onChange)).then(syncInboxState);
@@ -1322,7 +1882,7 @@
     store.onAuth(async (user, err) => {
       ui.user = user;
       if (!user) { if (err) $('[data-login-error]').textContent = err.message; ui.sync = 'signedout'; showApp(false); render(); return; }
-      ui.me = nameToKey(user.name || '斯婕');
+      ui.me = nameToKey(user.name || '斯婕'); loadDrafts();
       showApp(true); render();
       try { await store.start(onChange, onStatus); await seedIfNeeded(); syncInboxState(); }
       catch (e) {

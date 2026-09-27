@@ -1,4 +1,4 @@
-// Daily question: built-in bilingual bank, date-seeded daily pick, and scheduling for custom questions.
+// Daily question: built-in bilingual bank, date-seeded daily pick, scheduling for custom questions, and the weekly check-in.
 (() => {
   'use strict';
   const CATEGORIES = {
@@ -8,6 +8,10 @@
     wyr: { en: 'WOULD YOU RATHER', zh: '二选一' },
     know: { en: 'GET TO KNOW', zh: '了解你' },
     future: { en: 'FUTURE', zh: '未来' },
+    week: { en: 'THIS WEEK', zh: '这周' },
+    childhood: { en: 'CHILDHOOD', zh: '小时候' },
+    food: { en: 'FOOD', zh: '吃货' },
+    checkin: { en: 'WEEKLY CHECK-IN', zh: '每周心情' }, // the weekly question (WEEKLY), never in BANK
     custom: { en: 'JUST FOR YOU', zh: '私房题' }
   };
 
@@ -198,7 +202,235 @@
     { id: 'q177', cat: 'future', en: "If you could leave a note for us to open a year from now, what would it say?", zh: '如果能给一年后的我们留一张字条，你会写什么？' },
     { id: 'q178', cat: 'future', en: "If we had a motto just for us, what would you want it to be?", zh: '如果我们有一句专属座右铭，你希望是什么？' },
     { id: 'q179', cat: 'future', en: "What would you like us to grow together someday, a plant, a pet, or a little project?", zh: '以后你想和我一起养点什么？植物、宠物，还是一个小项目？' },
-    { id: 'q180', cat: 'future', en: "What's a milestone ahead of us, big or small, that you're excited about?", zh: '我们接下来的哪个里程碑，不管大小，是你特别期待的？' }
+    { id: 'q180', cat: 'future', en: "What's a milestone ahead of us, big or small, that you're excited about?", zh: '我们接下来的哪个里程碑，不管大小，是你特别期待的？' },
+
+    { id: 'q181', cat: 'fun', en: "If we had a mascot, what would it be and what would it wear?", zh: '如果我们俩有个吉祥物，它会是什么？穿什么衣服？' },
+    { id: 'q182', cat: 'fun', en: "If there were a tiny museum all about us, what would the first exhibit be?", zh: '如果有一座专门讲我们俩的小博物馆，第一件展品会是什么？' },
+    { id: 'q183', cat: 'fun', en: "If you came with a warning label, what would it say?", zh: '如果你身上贴着一张警告标签，上面会写什么？' },
+    { id: 'q184', cat: 'fun', en: "If you hosted a late-night talk show, who would your first three guests be?", zh: '如果你主持一档深夜脱口秀，前三位嘉宾想请谁？' },
+    { id: 'q185', cat: 'fun', en: "If our home could leave us a review, how many stars would it give us and why?", zh: '如果我们的家能给我们俩写条评价，会打几颗星？为什么？' },
+    { id: 'q186', cat: 'fun', en: "If you could add one holiday to the calendar, what would it celebrate and how?", zh: '如果能在日历上新加一个节日，你想让它庆祝什么？怎么过？' },
+    { id: 'q187', cat: 'fun', en: "If we entered a talent show as a duo, what would our act be?", zh: '如果我们俩组队参加才艺大赛，会表演什么节目？' },
+    { id: 'q188', cat: 'fun', en: "What harmless conspiracy theory would you make up about me?", zh: '如果要编一个关于我的无害阴谋论，你会怎么编？' },
+    { id: 'q189', cat: 'fun', en: "If you could be world champion of one very silly sport, which would it be?", zh: '如果能在一项特别无厘头的运动上拿世界冠军，你选哪一项？' },
+    { id: 'q190', cat: 'fun', en: "If you were a friendly ghost, how would you haunt a house?", zh: '如果你是一只友善的小幽灵，你会怎么在房子里捣乱？' },
+    { id: 'q191', cat: 'fun', en: "If you had a whole shopping mall to yourself for one night, what would you do first?", zh: '如果整座商场一整晚都归你一个人，你第一件事做什么？' },
+    { id: 'q192', cat: 'fun', en: "What's a word that should exist but doesn't, and what would it mean?", zh: '有什么词你觉得早就该有，却一直没人发明？它是什么意思？' },
+    { id: 'q193', cat: 'fun', en: "If you shrank to the size of a mouse for an afternoon, where would you explore?", zh: '如果你变得像老鼠一样小，过一个下午，你想去哪儿探险？' },
+    { id: 'q194', cat: 'fun', en: "If we were a pair of cartoon villains, what would our evil plan be?", zh: '如果我们是动画片里的一对反派搭档，我们的邪恶计划是什么？' },
+    { id: 'q195', cat: 'fun', en: "If you had to sell one of my habits in a TV shopping ad, how would you pitch it?", zh: '如果要在电视购物广告里推销我的一个小习惯，你会怎么吆喝？' },
+
+    { id: 'q196', cat: 'deep', en: "What's a compliment you find hard to accept, and why do you think that is?", zh: '有什么夸奖是你很难坦然接受的？你觉得是为什么？' },
+    { id: 'q197', cat: 'deep', en: "When did you last feel completely at peace, and what was around you?", zh: '你上一次觉得内心特别平静是什么时候？当时身边有什么？' },
+    { id: 'q198', cat: 'deep', en: "What's a mistake you made that ended up teaching you something good?", zh: '有没有哪次犯的错，最后反而让你学到了好东西？' },
+    { id: 'q199', cat: 'deep', en: "What do people tend to get wrong about you when they first meet you?", zh: '别人刚认识你的时候，常会对你有什么误会？' },
+    { id: 'q200', cat: 'deep', en: "What's something about yourself you used to dislike but have made peace with?", zh: '关于你自己，有什么是你以前不喜欢、现在已经释然了的？' },
+    { id: 'q201', cat: 'deep', en: "What does a good apology look like to you?", zh: '在你看来，一个好的道歉应该是什么样的？' },
+    { id: 'q202', cat: 'deep', en: "When you're upset, which words actually comfort you, and which ones don't help?", zh: '你难过的时候，哪些话真的能安慰到你？哪些话其实没用？' },
+    { id: 'q203', cat: 'deep', en: "Which part of your everyday life feels most meaningful to you right now?", zh: '眼下的日常生活里，哪一部分让你觉得最有意义？' },
+    { id: 'q204', cat: 'deep', en: "In what moments do you feel most confident?", zh: '你在什么时候最有自信？' },
+    { id: 'q205', cat: 'deep', en: "In a relationship, what comes easily for you to give, and what feels harder?", zh: '在感情里，什么是你很容易付出的？什么对你来说比较难？' },
+    { id: 'q206', cat: 'deep', en: "Is there something you've wanted to try for a while but feel a little shy about?", zh: '有没有什么事你想试很久了，但又有点不好意思？' },
+    { id: 'q207', cat: 'deep', en: "What's a feeling you find hard to put into words?", zh: '有什么感受，是你很难用语言说清楚的？' },
+    { id: 'q208', cat: 'deep', en: "When we're apart for a whole day, what do you miss about me first?", zh: '我们分开一整天的时候，你最先想念我的什么？' },
+    { id: 'q209', cat: 'deep', en: "What's a question you wish I asked you more often?", zh: '有什么问题，你希望我多问问你？' },
+    { id: 'q210', cat: 'deep', en: "Which of your own little habits do you secretly like about yourself?", zh: '你自己的哪个小习惯，是你偷偷挺喜欢的？' },
+
+    { id: 'q211', cat: 'memory', en: "Is there a rainy or snowy day with me that you still remember?", zh: '有没有哪个和我一起度过的雨天或雪天，让你记到现在？' },
+    { id: 'q212', cat: 'memory', en: "Which of our silly disagreements makes you laugh now?", zh: '我们闹过的小别扭里，哪一次现在想起来会让你笑？' },
+    { id: 'q213', cat: 'memory', en: "Which late-night conversation with me has stayed with you?", zh: '我们哪一次深夜聊天，让你一直记在心里？' },
+    { id: 'q214', cat: 'memory', en: "When did I help you feel a little braver?", zh: '有哪一次，是我让你变得勇敢了一点？' },
+    { id: 'q215', cat: 'memory', en: "Which place we visited didn't live up to the hype, but was fun anyway?", zh: '我们去过的哪个地方名不副实，但还是玩得很开心？' },
+    { id: 'q216', cat: 'memory', en: "What do you remember about meeting my friends or family for the first time?", zh: '第一次见我的朋友或家人时，你还记得哪些细节？' },
+    { id: 'q217', cat: 'memory', en: "When did we get properly lost together, and how did we find our way back?", zh: '我们有没有哪次一起彻底迷了路？后来是怎么找到路的？' },
+    { id: 'q218', cat: 'memory', en: "When did you realize I'd remembered something you said in passing?", zh: '什么时候你发现，我把你随口说的一句话记在了心上？' },
+    { id: 'q219', cat: 'memory', en: "Which season with me do you remember most fondly, and why?", zh: '和我一起度过的哪个季节，让你最怀念？为什么？' },
+    { id: 'q220', cat: 'memory', en: "When did I cheer you up without even knowing you were down?", zh: '有没有哪次你心情不好，我还没察觉，却刚好把你逗开心了？' },
+    { id: 'q221', cat: 'memory', en: "Do you remember the first nickname we gave each other, and where it came from?", zh: '你还记得我们给对方起的第一个昵称吗？它是怎么来的？' },
+    { id: 'q222', cat: 'memory', en: "What's a small promise I kept that you noticed?", zh: '我遵守过的哪个小承诺，被你默默记住了？' },
+    { id: 'q223', cat: 'memory', en: "What's something from our early days together that you miss a little?", zh: '我们刚在一起那段时间，有什么是你现在还有点怀念的？' },
+    { id: 'q224', cat: 'memory', en: "When did you first see me really nervous, and what was it about?", zh: '你第一次看到我特别紧张是什么时候？是因为什么事？' },
+    { id: 'q225', cat: 'memory', en: "Which walk we took together do you remember best?", zh: '我们一起散过的步里，你记得最清楚的是哪一次？' },
+
+    { id: 'q226', cat: 'wyr', en: "Would you rather spend a whole day without your phone or a whole day without talking?", zh: '你更想过一整天不碰手机，还是一整天不说话？' },
+    { id: 'q227', cat: 'wyr', en: "Would you rather have a personal chef or a personal driver?", zh: '你更想要一位私人厨师，还是一位私人司机？' },
+    { id: 'q228', cat: 'wyr', en: "Would you rather always know what I'm craving or always know which song is stuck in my head?", zh: '你更想永远知道我此刻想吃什么，还是永远知道我脑子里在循环哪首歌？' },
+    { id: 'q229', cat: 'wyr', en: "Would you rather live above a bakery or next door to a bookshop?", zh: '你更想住在面包店楼上，还是书店隔壁？' },
+    { id: 'q230', cat: 'wyr', en: "Would you rather take a slow train across a country or a short flight to a tiny island?", zh: '你更想坐慢火车穿越一整个国家，还是飞一小段去一座小岛？' },
+    { id: 'q231', cat: 'wyr', en: "Would you rather be unbeatable at board games or never lose at rock paper scissors?", zh: '你更想玩桌游所向无敌，还是剪刀石头布永远不输？' },
+    { id: 'q232', cat: 'wyr', en: "Would you rather have a perfect sense of direction or never forget a name?", zh: '你更想拥有完美的方向感，还是永远不会忘记别人的名字？' },
+    { id: 'q233', cat: 'wyr', en: "Would you rather go camping in a tent for the weekend or stay in a fancy hotel with room service?", zh: '你更想周末去搭帐篷露营，还是住豪华酒店叫客房服务？' },
+    { id: 'q234', cat: 'wyr', en: "Would you rather be able to fix anything that breaks or grow any plant you touch?", zh: '你更想什么东西坏了都会修，还是什么植物都能养活？' },
+    { id: 'q235', cat: 'wyr', en: "Would you rather plan a surprise for me or be surprised by me?", zh: '你更想给我准备惊喜，还是等着被我惊喜？' },
+    { id: 'q236', cat: 'wyr', en: "Would you rather be a character in a fairy tale or in a detective story?", zh: '你更想当童话故事里的角色，还是侦探小说里的角色？' },
+    { id: 'q237', cat: 'wyr', en: "Would you rather spend a day as a cat in our home or as a bird above the city?", zh: '你更想变成一只猫在我们家待一天，还是变成一只鸟在城市上空飞一天？' },
+    { id: 'q238', cat: 'wyr', en: "Would you rather have to sing everything you say or dance everywhere you walk?", zh: '你更想说的每句话都得唱出来，还是走的每一步都得跳着舞？' },
+    { id: 'q239', cat: 'wyr', en: "Would you rather spend a year of weekends on surprise trips or a year of weekends cozy at home?", zh: '你更想接下来一年的周末都去惊喜旅行，还是一年的周末都在家舒舒服服地窝着？' },
+    { id: 'q240', cat: 'wyr', en: "Would you rather get a hundred small gifts or one gift you'll keep forever?", zh: '你更想收到一百份小礼物，还是一份能珍藏一辈子的礼物？' },
+
+    { id: 'q241', cat: 'know', en: "What's a smell that instantly makes you feel calm?", zh: '有什么气味，一闻到就能让你平静下来？' },
+    { id: 'q242', cat: 'know', en: "Besides me, who's the first person you want to tell when something good happens?", zh: '有好消息的时候，除了我，你第一个想告诉谁？' },
+    { id: 'q243', cat: 'know', en: "What's a skill you're quietly proud of that most people don't know you have?", zh: '你有什么不太为人知、自己却偷偷挺得意的本事？' },
+    { id: 'q244', cat: 'know', en: "What's your ideal way to spend a rainy afternoon on your own?", zh: '一个人的下雨天午后，你最理想的打发方式是什么？' },
+    { id: 'q245', cat: 'know', en: "What's a topic you could talk about for an hour without any notes?", zh: '有什么话题，你不用准备就能滔滔不绝讲上一小时？' },
+    { id: 'q246', cat: 'know', en: "Which app on your phone would be hardest for you to delete?", zh: '你手机里哪个应用最舍不得删？' },
+    { id: 'q247', cat: 'know', en: "What's a small thing that always makes you nervous, even though you know it's no big deal?", zh: '有什么小事明明不算什么，却总让你紧张？' },
+    { id: 'q248', cat: 'know', en: "Who's someone you admire but have never met?", zh: '有没有哪个你从没见过、却很欣赏的人？' },
+    { id: 'q249', cat: 'know', en: "What do you usually do when you can't fall asleep?", zh: '睡不着的时候，你一般会做什么？' },
+    { id: 'q250', cat: 'know', en: "Where's your favorite place nearby to be alone for a while?", zh: '在你住的地方附近，你最喜欢一个人待着的去处是哪儿？' },
+    { id: 'q251', cat: 'know', en: "What's a movie or show you could rewatch endlessly?", zh: '有什么电影或剧，你怎么看都看不腻？' },
+    { id: 'q252', cat: 'know', en: "What's a rule you always follow, even when nobody's watching?", zh: '有什么规矩，就算没人看着你也一定会遵守？' },
+    { id: 'q253', cat: 'know', en: "Which chore do you secretly not mind doing?", zh: '有什么家务，你其实偷偷不讨厌做？' },
+    { id: 'q254', cat: 'know', en: "Is there anything you collect now, or used to collect?", zh: '你现在有没有在收集什么东西？或者以前收集过？' },
+    { id: 'q255', cat: 'know', en: "When you're sick, how do you like to be looked after?", zh: '你生病的时候，希望别人怎么照顾你？' },
+
+    { id: 'q256', cat: 'future', en: "What's an ordinary errand you'd like us to turn into a little date?", zh: '有什么普通的日常琐事，你想把它变成我们的小约会？' },
+    { id: 'q257', cat: 'future', en: "What would a perfect staycation weekend look like for us, without leaving town?", zh: '如果我们不出城，来一次本地度假，你理想中的周末怎么安排？' },
+    { id: 'q258', cat: 'future', en: "Which season coming up are you most looking forward to spending with me, and why?", zh: '接下来的哪个季节，你最期待和我一起过？为什么？' },
+    { id: 'q259', cat: 'future', en: "What's a question you'd like to ask me again in ten years, to see if my answer changed?", zh: '有什么问题，你想十年后再问我一次，看看我的答案变没变？' },
+    { id: 'q260', cat: 'future', en: "What's something you'd like to teach me someday?", zh: '有什么东西，你以后想亲自教会我？' },
+    { id: 'q261', cat: 'future', en: "What's something you want to say yes to more often in the coming year?", zh: '接下来这一年，你想对什么事多说几次“好”？' },
+    { id: 'q262', cat: 'future', en: "A few years from now, what do you hope our friends say about us?", zh: '几年以后，你希望朋友们提起我们时会怎么说？' },
+    { id: 'q263', cat: 'future', en: "If our home had a little corner that was just yours, what would you put there?", zh: '如果我们家里有一个只属于你的小角落，你想在那儿放些什么？' },
+    { id: 'q264', cat: 'future', en: "If we made a scrapbook of next year, what do you hope is on the first page?", zh: '如果给明年的我们做一本手账，你希望第一页贴着什么？' },
+    { id: 'q265', cat: 'future', en: "What kind of neighborhood do you picture us living in someday?", zh: '你想象中，我们以后会住在一个什么样的街区？' },
+    { id: 'q266', cat: 'future', en: "When things get hard someday, what do you hope we're like as a team?", zh: '以后遇到难关的时候，你希望我们俩是什么样的搭档？' },
+    { id: 'q267', cat: 'future', en: "What's a first time you'd like us to share next year?", zh: '明年你想和我一起解锁哪个“第一次”？' },
+    { id: 'q268', cat: 'future', en: "A year from now, what do you hope you're spending more time on than you are today?", zh: '一年以后，你希望自己在什么事上花的时间比现在多？' },
+    { id: 'q269', cat: 'future', en: "Which goal of mine would you most love to celebrate with me when it happens?", zh: '我的哪个目标实现的时候，你最想陪我一起庆祝？' },
+    { id: 'q270', cat: 'future', en: "Five years from now, what do you want our weekends to feel like?", zh: '五年后，你希望我们的周末是什么感觉？' },
+
+    { id: 'q271', cat: 'week', en: "Which moment this week do you wish I'd been there to see?", zh: '这周有哪个瞬间，你真希望我当时也在场？' },
+    { id: 'q272', cat: 'week', en: "What's the best thing you ate this week?", zh: '这周你吃到最好吃的一样东西是什么？' },
+    { id: 'q273', cat: 'week', en: "What song did you have on repeat this week?", zh: '这周你单曲循环的是哪首歌？' },
+    { id: 'q274', cat: 'week', en: "Besides me, who made you laugh this week?", zh: '这周除了我，还有谁把你逗笑了？' },
+    { id: 'q275', cat: 'week', en: "What made you say “finally!” this week?", zh: '这周有什么事让你忍不住感叹了一句“终于”？' },
+    { id: 'q276', cat: 'week', en: "What's the funniest thing you saw online this week?", zh: '这周你在网上看到最好笑的东西是什么？' },
+    { id: 'q277', cat: 'week', en: "What went better than you expected this week?", zh: '这周有什么事，结果比你预想的要好？' },
+    { id: 'q278', cat: 'week', en: "What small thing annoyed you this week that we can laugh about now?", zh: '这周有什么小事让你有点烦，现在可以拿来一起笑笑？' },
+    { id: 'q279', cat: 'week', en: "If this week were a movie, what would the title be?", zh: '如果把你这周拍成一部电影，片名叫什么？' },
+    { id: 'q280', cat: 'week', en: "What's something new you learned this week, however random?", zh: '这周你学到了什么新鲜知识，哪怕很冷门？' },
+    { id: 'q281', cat: 'week', en: "What did you spend way too long thinking about this week that didn't matter at all?", zh: '这周你琢磨了半天、其实一点都不重要的事是什么？' },
+    { id: 'q282', cat: 'week', en: "Which conversation from this week has stuck with you?", zh: '这周有哪段对话，让你一直记着？' },
+    { id: 'q283', cat: 'week', en: "What was the coziest moment of your week?", zh: '这周你最惬意的一个瞬间是什么？' },
+    { id: 'q284', cat: 'week', en: "If this weekend had no plans at all, what would you do first?", zh: '如果这个周末什么安排都没有，你第一件想做的事是什么？' },
+    { id: 'q285', cat: 'week', en: "What did you notice on your way somewhere this week that made you stop and look?", zh: '这周在路上，有什么让你停下来多看了一眼？' },
+    { id: 'q286', cat: 'week', en: "Who are you grateful for this week, and why?", zh: '这周你最想感谢谁？为什么？' },
+    { id: 'q287', cat: 'week', en: "What small kindness did you see or receive this week?", zh: '这周你看到或收到过什么小小的善意？' },
+    { id: 'q288', cat: 'week', en: "What did you do this week purely because you wanted to?", zh: '这周你做了什么事，纯粹只是因为自己想做？' },
+    { id: 'q289', cat: 'week', en: "What's the most random thing that happened to you this week?", zh: '这周发生在你身上最莫名其妙的事是什么？' },
+    { id: 'q290', cat: 'week', en: "On a scale of one to ten dumplings, how was your week?", zh: '如果满分是十个饺子，你给这周打几个？' },
+    { id: 'q291', cat: 'week', en: "Which photo on your phone from this week has a story behind it?", zh: '你这周拍的照片里，哪张背后有故事？' },
+    { id: 'q292', cat: 'week', en: "What's one thing you'd like us to do together before this week is over?", zh: '这周结束前，你最想和我一起做的一件事是什么？' },
+    { id: 'q293', cat: 'week', en: "Which day this week felt the longest, and which one flew by?", zh: '这周你觉得哪天过得最慢？哪天一眨眼就过去了？' },
+    { id: 'q294', cat: 'week', en: "What's a story from this week you haven't had a chance to tell me yet?", zh: '这周有什么事，你还没来得及讲给我听？' },
+    { id: 'q295', cat: 'week', en: "If you handed out awards for this week, like best snack or weirdest moment, who or what would win?", zh: '如果给这周颁几个奖，比如最佳零食、最离谱瞬间，你会颁给谁？' },
+    { id: 'q296', cat: 'week', en: "What was your smartest decision this week, even a tiny one?", zh: '这周你做过最明智的一个决定是什么，哪怕很小？' },
+    { id: 'q297', cat: 'week', en: "What did you put off this week, and how creative was your excuse?", zh: '这周你拖延了什么事？找的借口有多有创意？' },
+    { id: 'q298', cat: 'week', en: "If you could replay one hour from this week, which would you pick?", zh: '如果能把这周的某一个小时重新过一遍，你选哪一个？' },
+    { id: 'q299', cat: 'week', en: "What's the nicest message you got this week?", zh: '这周你收到最暖心的一条消息是什么？' },
+    { id: 'q300', cat: 'week', en: "What's something new you tried this week, like a place, a shop, or a dish?", zh: '这周你有没有尝试什么新地方、新店或者新菜？' },
+
+    { id: 'q301', cat: 'childhood', en: "What would little you think of the two of us today?", zh: '小时候的你要是看到现在的我们，会怎么想？' },
+    { id: 'q302', cat: 'childhood', en: "Which cartoon or TV show did you rush home to watch as a kid?", zh: '小时候你每天急着赶回家看的是哪部动画片或电视剧？' },
+    { id: 'q303', cat: 'childhood', en: "What game did you play most at recess or after school?", zh: '小时候课间或者放学后，你最常玩什么游戏？' },
+    { id: 'q304', cat: 'childhood', en: "What did you usually spend your pocket money on as a kid?", zh: '小时候的零花钱，你大多花在了什么上面？' },
+    { id: 'q305', cat: 'childhood', en: "What's the naughtiest thing you did as a kid that nobody ever found out about?", zh: '小时候你干过最调皮、却一直没被发现的事是什么？' },
+    { id: 'q306', cat: 'childhood', en: "What was your bedroom like when you were little?", zh: '你小时候的房间是什么样的？' },
+    { id: 'q307', cat: 'childhood', en: "What toy or object did you carry everywhere as a kid?", zh: '小时候你走到哪儿都要带着的玩具或小物件是什么？' },
+    { id: 'q308', cat: 'childhood', en: "What did you believe as a kid that turned out to be completely wrong?", zh: '小时候你深信不疑、后来才发现完全不对的事是什么？' },
+    { id: 'q309', cat: 'childhood', en: "Who in your family did you get along with best as a kid, and why?", zh: '小时候家里你和谁最合得来？为什么？' },
+    { id: 'q310', cat: 'childhood', en: "What was your favorite part of summer vacation as a kid?", zh: '小时候放暑假，你最喜欢做什么？' },
+    { id: 'q311', cat: 'childhood', en: "What nickname did your family call you when you were little?", zh: '小时候家里人都叫你什么小名？' },
+    { id: 'q312', cat: 'childhood', en: "What did you want most for your birthday when you were little?", zh: '小时候过生日，你最想要的礼物是什么？' },
+    { id: 'q313', cat: 'childhood', en: "What's a school memory that still makes you laugh?", zh: '上学时有什么事，你现在想起来还会笑？' },
+    { id: 'q314', cat: 'childhood', en: "Where did you usually sit in class, and what was your desk mate like?", zh: '上学时你一般坐在教室哪个位置？你的同桌是个什么样的人？' },
+    { id: 'q315', cat: 'childhood', en: "What book or story did you love as a child?", zh: '小时候你最爱的一本书或一个故事是什么？' },
+    { id: 'q316', cat: 'childhood', en: "Which rule at home felt the most unfair to you as a kid?", zh: '小时候家里哪条规矩让你觉得最不公平？' },
+    { id: 'q317', cat: 'childhood', en: "What did a perfect day look like when you were eight?", zh: '八岁的你眼中，完美的一天是什么样的？' },
+    { id: 'q318', cat: 'childhood', en: "Which grown-up spoiled you the most when you were little?", zh: '小时候哪个大人最惯着你？' },
+    { id: 'q319', cat: 'childhood', en: "What's a dish from your childhood you'd love for me to taste someday?", zh: '你小时候常吃的哪道菜，最想让我也尝一尝？' },
+    { id: 'q320', cat: 'childhood', en: "What's a song from your childhood you can still sing every word of?", zh: '有哪首小时候的歌，你到现在还能一字不差地唱出来？' },
+    { id: 'q321', cat: 'childhood', en: "How did you get to school, and what do you remember about the way there?", zh: '小时候你怎么去上学？路上有什么让你印象深刻？' },
+    { id: 'q322', cat: 'childhood', en: "Did you have a secret hideout as a kid, and where was it?", zh: '小时候你有没有自己的秘密基地？在哪儿？' },
+    { id: 'q323', cat: 'childhood', en: "When you were little, what did you think grown-ups did all day?", zh: '小时候你以为大人整天都在忙些什么？' },
+    { id: 'q324', cat: 'childhood', en: "What's a holiday or festival memory from childhood that you miss?", zh: '小时候过年过节，有什么回忆是你现在特别怀念的？' },
+    { id: 'q325', cat: 'childhood', en: "Did you have a pet as a kid, or badly want one?", zh: '小时候你养过宠物吗？还是一直特别想养？' },
+    { id: 'q326', cat: 'childhood', en: "What were you like as a little kid: loud, shy, curious, or something else?", zh: '小时候的你是什么性格？爱闹、害羞、好奇，还是别的样子？' },
+    { id: 'q327', cat: 'childhood', en: "If you could spend an afternoon with yourself at age seven, what would you two do?", zh: '如果能陪七岁的自己过一个下午，你们会一起做什么？' },
+    { id: 'q328', cat: 'childhood', en: "Who taught you to ride a bike or swim, and how did it go?", zh: '小时候是谁教你骑车或游泳的？学得顺利吗？' },
+    { id: 'q329', cat: 'childhood', en: "What did you daydream about in class?", zh: '上课走神的时候，你都在想些什么？' },
+    { id: 'q330', cat: 'childhood', en: "What was everyone at your school obsessed with when you were a kid?", zh: '你上学那会儿，同学们都在疯玩或者疯收集什么？' },
+
+    { id: 'q331', cat: 'food', en: "If you could only eat one cuisine for the rest of your life, which would you choose?", zh: '如果这辈子只能吃一种菜系，你选哪一种？' },
+    { id: 'q332', cat: 'food', en: "What would be on the menu for your perfect birthday feast?", zh: '如果给你办一桌完美的生日宴，菜单上会有哪些菜？' },
+    { id: 'q333', cat: 'food', en: "What street food would you cross the whole city for?", zh: '有什么街头小吃，值得你穿过大半个城市去吃？' },
+    { id: 'q334', cat: 'food', en: "What was the first thing we ever cooked together, and how did it turn out?", zh: '我们第一次一起下厨做了什么？结果怎么样？' },
+    { id: 'q335', cat: 'food', en: "Sweet, sour, salty, spicy, or bitter: which flavor could you never give up?", zh: '酸甜苦辣咸里，哪一种味道你绝对戒不掉？' },
+    { id: 'q336', cat: 'food', en: "What's your most controversial food opinion?", zh: '你有什么关于吃的观点，一说出来就可能引发一场大战？' },
+    { id: 'q337', cat: 'food', en: "What's a food that always reminds you of a particular person?", zh: '有什么食物，一吃就会让你想起某个人？' },
+    { id: 'q338', cat: 'food', en: "Which three snacks would you pack for a long train ride?", zh: '坐长途火车的话，你会带哪三样零食？' },
+    { id: 'q339', cat: 'food', en: "What's the most memorable thing you've eaten while traveling?", zh: '旅行时你吃到过最难忘的东西是什么？' },
+    { id: 'q340', cat: 'food', en: "What's a dish you're secretly proud of making?", zh: '有没有哪道菜，是你私下挺得意的拿手菜？' },
+    { id: 'q341', cat: 'food', en: "What do you crave most when the weather turns cold?", zh: '天一冷下来，你最馋什么？' },
+    { id: 'q342', cat: 'food', en: "What's your ideal late-night snack after a long day?", zh: '忙了一整天，你最理想的夜宵是什么？' },
+    { id: 'q343', cat: 'food', en: "Which fruit do you think is overrated, and which one is underrated?", zh: '你觉得哪种水果被高估了？哪种又被低估了？' },
+    { id: 'q344', cat: 'food', en: "If the two of us were one dish, what would it be and why?", zh: '如果把我们俩做成一道菜，会是什么菜？为什么？' },
+    { id: 'q345', cat: 'food', en: "Which food smell makes you instantly hungry?", zh: '有什么食物的香味，一闻到你就饿了？' },
+    { id: 'q346', cat: 'food', en: "Hot pot or barbecue for a night out with friends, and why?", zh: '和朋友聚餐，火锅和烧烤你选哪个？为什么？' },
+    { id: 'q347', cat: 'food', en: "What's your usual order at your favorite breakfast spot?", zh: '去你最爱的早餐店，你的固定搭配是什么？' },
+    { id: 'q348', cat: 'food', en: "What's a food you've always wanted to try but haven't yet?", zh: '有什么食物你一直想尝，却还没尝过？' },
+    { id: 'q349', cat: 'food', en: "What's the strangest thing you've ever eaten?", zh: '你吃过最奇怪的东西是什么？' },
+    { id: 'q350', cat: 'food', en: "If you could keep only three seasonings in the kitchen, which would you keep?", zh: '如果厨房里只能留三种调料，你留哪三种？' },
+    { id: 'q351', cat: 'food', en: "What's a dish you've never managed to get right, no matter how many times you try?", zh: '有什么菜你试了好多次，总是做不好？' },
+    { id: 'q352', cat: 'food', en: "If anyone at all could cook for you for a day, famous chef or family member, who would you pick?", zh: '如果能请任何人给你做一天饭，不管是名厨还是家里人，你选谁？' },
+    { id: 'q353', cat: 'food', en: "What's the longest you've ever queued for one dish, and was it worth it?", zh: '你为了一口吃的排过最久的队有多久？值得吗？' },
+    { id: 'q354', cat: 'food', en: "What's something you'll always order if you see it on a menu?", zh: '有什么菜只要在菜单上看到，你就一定会点？' },
+    { id: 'q355', cat: 'food', en: "What's a stubborn little food rule you follow, like never letting certain things touch?", zh: '你吃东西有什么固执的小讲究，比如哪些东西绝对不能混在一起？' },
+    { id: 'q356', cat: 'food', en: "If we invited friends over for dinner, what should the star dish be?", zh: '如果我们请朋友来家里吃饭，你觉得压轴菜应该是什么？' },
+    { id: 'q357', cat: 'food', en: "Which dessert can you never say no to?", zh: '有什么甜品，是你永远无法拒绝的？' },
+    { id: 'q358', cat: 'food', en: "What's a dish you think tastes even better the next day?", zh: '有什么菜你觉得隔夜再吃反而更香？' },
+    { id: 'q359', cat: 'food', en: "What's the first thing you want to eat when you get back from a trip?", zh: '每次出远门回来，你第一顿最想吃什么？' },
+    { id: 'q360', cat: 'food', en: "Who's the best cook you know, and what's their signature dish?", zh: '你认识的人里谁的厨艺最好？招牌菜是什么？' }
+  ];
+
+  // Weather for how the week felt, best first.
+  const MOODS = [
+    { v: 5, glyph: '☀️', en: 'Sunny', zh: '晴' },
+    { v: 4, glyph: '🌤️', en: 'Mostly sunny', zh: '多云转晴' },
+    { v: 3, glyph: '☁️', en: 'Cloudy', zh: '多云' },
+    { v: 2, glyph: '🌧️', en: 'Rainy', zh: '小雨' },
+    { v: 1, glyph: '⛈️', en: 'Stormy', zh: '雷阵雨' }
+  ];
+
+  // The weekly check-in: how each of us is really doing. Append-only, like BANK (answers keep the id).
+  const WEEKLY = [
+    { id: 'w01', en: "What's taking up the most space in your head this week?", zh: '这周你脑子里最占地方的是什么事？' },
+    { id: 'w02', en: "What would make this week feel a little lighter?", zh: '有什么能让你这周过得轻松一点？' },
+    { id: 'w03', en: "What do you need more of from me this week?", zh: '这周你希望我多给你一点什么？' },
+    { id: 'w04', en: "What gave you energy this week, and what drained it?", zh: '这周什么给了你能量？什么又让你耗电？' },
+    { id: 'w05', en: "Beyond “fine”, how are you really doing this week?", zh: '除了“还行”，这周你真实的状态怎么样？' },
+    { id: 'w06', en: "Is there anything you've been carrying on your own that you'd like to share with me?", zh: '有没有什么事你一直一个人扛着，想跟我说说？' },
+    { id: 'w07', en: "How have you been sleeping, and do you feel rested?", zh: '这周你睡得怎么样？觉得休息够了吗？' },
+    { id: 'w08', en: "What's one thing you'd like to let go of before next week?", zh: '下周开始前，你想放下哪件事？' },
+    { id: 'w09', en: "When did you feel most at ease this week?", zh: '这周什么时候你觉得最放松、最自在？' },
+    { id: 'w10', en: "How have you been feeling about yourself this week?", zh: '这周你对自己的感觉怎么样？' },
+    { id: 'w11', en: "Is there anything between us this week that you'd like to talk about?", zh: '这周我们之间，有没有什么事你想聊一聊？' },
+    { id: 'w12', en: "How close to me did you feel this week?", zh: '这周你觉得和我够亲近吗？' },
+    { id: 'w13', en: "What turned out to be harder than it looked this week?", zh: '这周有什么事，比你想象的要难？' },
+    { id: 'w14', en: "If a kind friend looked back on your week, what would they tell you?", zh: '如果一个温柔的朋友回顾你这一周，会对你说什么？' },
+    { id: 'w15', en: "What do you want next week to feel like?", zh: '你希望下一周是什么感觉？' },
+    { id: 'w16', en: "Where did you feel stretched too thin this week?", zh: '这周有哪些时候，你觉得自己快顾不过来了？' },
+    { id: 'w17', en: "What helped you get through the tough bits of this week?", zh: '这周不顺的时候，是什么帮你撑过来的？' },
+    { id: 'w18', en: "Is there something you'd like more time for next week?", zh: '下周你想多留点时间给什么？' },
+    { id: 'w19', en: "In a word or two, how's your heart this week?", zh: '用一两个词形容，这周你的心情怎么样？' },
+    { id: 'w20', en: "Which moment from this week would you like to hold onto?", zh: '这周有哪个瞬间，是你想好好留住的？' },
+    { id: 'w21', en: "What have you been putting pressure on yourself about lately?", zh: '最近你在什么事上给自己压力太大了？' },
+    { id: 'w22', en: "Who or what took good care of you this week?", zh: '这周有什么人或什么事，让你觉得被好好照顾了？' },
+    { id: 'w23', en: "What would you like to hear from me this week?", zh: '这周你想听我对你说些什么？' },
+    { id: 'w24', en: "What did you need this week that you didn't quite get?", zh: '这周你有什么需要，是没怎么被满足的？' },
+    { id: 'w25', en: "How much room did you have for fun this week?", zh: '这周你给自己留了多少玩乐的空间？' },
+    { id: 'w26', en: "What's one gentle thing you'll do for yourself next week?", zh: '下周你打算为自己做一件什么温柔的小事？' }
   ];
 
   // ---------- dates (UTC, 'YYYY-MM-DD') ----------
@@ -212,7 +444,7 @@
   }
   const nextDay = iso => toIso(parse(iso) + DAY);
 
-  // ---------- bank: each cycle of BANK.length days is a seeded shuffle, so nothing repeats within a cycle ----------
+  // ---------- rotation: each cycle of L slots is a seeded shuffle, so nothing repeats within a cycle ----------
   function mulberry32(a) {
     return () => {
       a = a + 0x6D2B79F5 | 0;
@@ -221,31 +453,49 @@
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
   }
-  function shuffled(cycle, L) {
-    const rand = mulberry32((cycle + 1) >>> 0), order = Array.from({ length: L }, (_, i) => i);
+  // The salt keeps each rotation (daily bank, weekly check-in) independent. The daily bank uses salt 0,
+  // which gives exactly the seeds it always had.
+  const DAILY_SALT = 0, WEEKLY_SALT = 0x5745454B;
+  function shuffled(cycle, L, salt) {
+    const rand = mulberry32(((cycle + 1) ^ salt) >>> 0), order = Array.from({ length: L }, (_, i) => i);
     for (let i = L - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     return order;
   }
-  // A new cycle opens with GAP questions that were not in the last GAP days of the previous one, so nothing
-  // comes back within GAP days across a boundary. The tail of each order stays as shuffled (GAP <= L / 3).
+  // A new cycle opens with GAP items that were not in the last GAP slots of the previous one, so nothing
+  // comes back within GAP slots across a boundary. The tail of each order stays as shuffled (GAP <= L / 3).
   const orders = new Map();
-  function orderFor(cycle, L) {
-    const key = cycle + ':' + L;
+  function orderFor(cycle, L, maxGap, salt) {
+    const key = salt + ':' + maxGap + ':' + cycle + ':' + L;
     if (!orders.has(key)) {
-      const raw = shuffled(cycle, L), gap = Math.min(30, Math.floor(L / 3));
-      const recent = new Set(shuffled(cycle - 1, L).slice(L - gap)), head = [];
+      const raw = shuffled(cycle, L, salt), gap = Math.min(maxGap, Math.floor(L / 3));
+      const recent = new Set(shuffled(cycle - 1, L, salt).slice(L - gap)), head = [];
       for (const i of raw) { if (head.length === gap) break; if (!recent.has(i)) head.push(i); }
       const lead = new Set(head);
       orders.set(key, [...head, ...raw.filter(i => !lead.has(i))]);
     }
     return orders.get(key);
   }
+  // index for slot n (any integer, negative before the epoch) of a rotation over L items
+  const pick = (n, L, maxGap, salt) => orderFor(Math.floor(n / L), L, maxGap, salt)[((n % L) + L) % L];
+
   function bankFor(iso) {
     const t = parse(iso);
     if (t === null) return null;
-    const n = Math.round((t - EPOCH) / DAY), L = BANK.length;
-    const b = BANK[orderFor(Math.floor(n / L), L)[((n % L) + L) % L]];
+    const b = BANK[pick(Math.round((t - EPOCH) / DAY), BANK.length, 30, DAILY_SALT)];
     return { qid: b.id, cat: b.cat, en: b.en, zh: b.zh };
+  }
+
+  // ---------- weekly check-in: one prompt per Monday to Sunday week ----------
+  const WEEK_EPOCH = Date.UTC(2026, 0, 5); // a Monday
+  function weekOf(iso) { // the Monday of the week containing iso
+    const t = parse(iso);
+    return t === null ? null : toIso(t - ((new Date(t).getUTCDay() + 6) % 7) * DAY);
+  }
+  function forWeek(iso) {
+    const monday = weekOf(iso);
+    if (monday === null) return null;
+    const w = WEEKLY[pick(Math.round((parse(monday) - WEEK_EPOCH) / (7 * DAY)), WEEKLY.length, 4, WEEKLY_SALT)];
+    return { qid: w.id, cat: 'checkin', en: w.en, zh: w.zh };
   }
 
   // ---------- custom questions: booked on a date; a clash moves the later one to the next free day ----------
@@ -274,7 +524,7 @@
     return day;
   }
 
-  const api = { CATEGORIES, BANK, bankFor, schedule, forDay, nextFreeDay };
+  const api = { CATEGORIES, BANK, MOODS, WEEKLY, bankFor, schedule, forDay, nextFreeDay, weekOf, forWeek };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') window.CCQuestions = api;
 })();

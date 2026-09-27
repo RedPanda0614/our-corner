@@ -4,7 +4,7 @@
 //  - local:  IndexedDB on this device only (used when config.js has no repo filled in).
 (function (scope) {
   'use strict';
-  const COLLECTIONS = ['events', 'trips', 'tasks', 'dates', 'wishes', 'diary', 'photos', 'albums', 'answers', 'questions'];
+  const COLLECTIONS = ['events', 'trips', 'tasks', 'dates', 'wishes', 'diary', 'photos', 'albums', 'answers', 'questions', 'checkins'];
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const clean = value => JSON.parse(JSON.stringify(value));
 
@@ -26,17 +26,37 @@
       },
       async put(key, value) {
         const db = await dbPromise; if (!db) { memory.set(key, value); return; }
-        return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(value, key); t.oncomplete = res; t.onerror = () => rej(t.error); });
+        // a full disk aborts the transaction (QuotaExceededError) instead of firing error, so listen for both
+        return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(value, key); t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error('Could not save on this device.')); });
       },
       async del(key) {
         const db = await dbPromise; if (!db) { memory.delete(key); return; }
-        return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = res; t.onerror = res; });
+        return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = res; t.onerror = t.onabort = res; });
       }
     };
   }
 
   // ---------- operations (shared by both modes, so GitHub conflicts can be replayed) ----------
   function emptyData() { const d = { version: 1, meta: {}, collections: {} }; COLLECTIONS.forEach(c => d.collections[c] = []); return d; }
+  // mergeMeta rules: arrays -> union (order kept, no duplicates); numbers -> max (or min when num is 'min');
+  // plain objects -> merged key by key; anything else or a type mismatch -> the new value; null/undefined -> keep what's there
+  const isPlain = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  function mergeValue(cur, val, num) {
+    if (val == null) return cur;
+    if (Array.isArray(val)) {
+      if (!Array.isArray(cur)) return val;
+      const seen = new Set(), out = [];
+      for (const x of [...cur, ...val]) { const k = JSON.stringify(x); if (!seen.has(k)) { seen.add(k); out.push(x); } }
+      return out;
+    }
+    if (typeof val === 'number') return typeof cur === 'number' ? (num === 'min' ? Math.min(cur, val) : Math.max(cur, val)) : val;
+    if (isPlain(val)) {
+      const out = isPlain(cur) ? { ...cur } : {};
+      for (const [k, v] of Object.entries(val)) { const m = mergeValue(out[k], v, num); if (m === undefined) delete out[k]; else out[k] = m; }
+      return out;
+    }
+    return val;
+  }
   function applyOp(data, op) {
     if (op.type === 'meta') { data.meta = { ...data.meta, ...op.patch }; return data; }
     if (op.type === 'inboxRead') {
@@ -48,6 +68,18 @@
         if (item && typeof item.key === 'string' && Number(item.at) > since) items.set(item.key, { key: item.key, at: Number(item.at) });
       }
       data.meta = { ...data.meta, inboxReads: { ...reads, [op.who]: { since, read: [...items.values()] } } };
+      return data;
+    }
+    // one entry inside a shared meta object (avatars.sijie, kindColors.trip): replaying it after a conflict keeps the other entries; null removes it
+    if (op.type === 'metaKey') {
+      const cur = data.meta?.[op.key], next = cur && typeof cur === 'object' && !Array.isArray(cur) ? { ...cur } : {};
+      if (op.value == null) delete next[op.sub]; else next[op.sub] = op.value;
+      data.meta = { ...data.meta, [op.key]: next };
+      return data;
+    }
+    if (op.type === 'mergeMeta') { // two devices' copies combine instead of the later one winning (see mergeValue)
+      const merged = mergeValue(data.meta?.[op.key], op.value, op.num);
+      if (merged !== undefined) data.meta = { ...data.meta, [op.key]: merged };
       return data;
     }
     const list = data.collections[op.col] || (data.collections[op.col] = []);
@@ -86,6 +118,8 @@
       async isSeeded() { await load(); return !!data.meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
+      mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       set: (col, item) => op({ type: 'set', col, id: item.id, item }),
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
@@ -111,24 +145,71 @@
     const db = kv();
     const auth = { token: null, name: null };
     try { Object.assign(auth, JSON.parse(localStorage.getItem('olc:github') || '{}')); } catch {}
-    let base = emptyData(), sha = null, etag = null, pending = [], started = false;
+    let base = emptyData(), sha = null, etag = null, pending = [], started = false, verified = false;
     let mutationQueue = Promise.resolve(), revision = 0;
-    let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null;
+    let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null, listening = false, retryStart = null;
     const thumbs = new Map(); // photo id -> object URL / data URL
     const loadingThumbs = new Set();
+    const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
+    const thumbQueue = []; let thumbActive = 0, thumbEmit = null;
+    const superseded = new Map(); // data.json shas our own saves replaced -> when; GitHub can briefly serve those again
+    const fullShas = new Map(); // photo id -> sha of the full file uploaded in this session
+    let fileDeletes = []; // photo files still to delete on GitHub, [{ path, sha }]; kept across reloads, retried until done
+    let deleting = null, deleteFails = 0, deleteTimer = null;
+    let fullCache = []; // ids of full photos cached on this device, oldest first (all are on GitHub too, so they can be dropped)
+    let warned = false, evictedOld = false;
+    let busyUntil = 0, busyTimer = null; // GitHub rate limit: no requests until then
 
+    // Every request goes through here. While GitHub is busy nothing is sent; a rate-limited answer starts that wait.
     function gh$(path, opts = {}) {
-      const send = () => fetch(api + path, {
+      const send = () => Date.now() < busyUntil ? Promise.reject(busyError(busyUntil)) : fetch(api + path, {
         cache: 'no-store', ...opts,
         headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + auth.token, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) }
-      });
+      }).then(async res => { const until = await limitedUntil(res); if (until) throw pause(until); return res; });
       if (opts.method === 'PUT' || opts.method === 'DELETE') {
         const job = mutationQueue.then(send); mutationQueue = job.catch(() => {}); return job;
       }
       return send();
     }
-    const status = (s, err) => onStatus && onStatus(s, err);
-    const persist = () => db.put(stateKey, clean({ base, sha, pending }));
+    // A rate limit (403/404 with x-ratelimit-remaining 0, retry-after or a "rate limit" message, or any 429) is temporary,
+    // so the token stays. Returns when to try again, as GitHub advises: retry-after, else x-ratelimit-reset when none are left, else a minute; or 0.
+    async function limitedUntil(res) {
+      if (res.status !== 403 && res.status !== 404 && res.status !== 429) return 0;
+      const h = k => res.headers.get(k), now = Date.now();
+      if (res.status !== 429 && h('x-ratelimit-remaining') !== '0' && h('retry-after') == null) {
+        const body = await (res.clone ? res.clone() : res).json().catch(() => null);
+        if (!/rate limit/i.test((body && body.message) || '')) return 0;
+      }
+      const after = Number(h('retry-after')), reset = h('x-ratelimit-remaining') === '0' ? Number(h('x-ratelimit-reset')) * 1000 : 0;
+      return now + (after > 0 ? after * 1000 : reset > now ? reset - now : 60000);
+    }
+    const busyError = (until, login) => { const n = Math.max(1, Math.ceil((until - Date.now()) / 60000)); return Object.assign(new Error(login ? `GitHub is busy, try again in ${n} min.` : `GitHub is busy, trying again in ${n} min.`), { code: 'ratelimit', until }); };
+    function pause(until) { // polls and saves wait (an online event or tab focus doesn't skip it); the status ticks each minute, then sync resumes
+      busyUntil = Math.max(busyUntil, until);
+      const tick = () => {
+        const left = busyUntil - Date.now();
+        if (left > 0) { status('ratelimited'); busyTimer = setTimeout(tick, left % 60000 || 60000); return; }
+        poll(); if (pending.length) scheduleFlush(); else deleteFiles();
+      };
+      clearTimeout(busyTimer); busyTimer = setTimeout(tick, (busyUntil - Date.now()) % 60000 || 60000);
+      status('ratelimited');
+      return busyError(busyUntil);
+    }
+    const status = (s, err) => { if (!onStatus) return; if (Date.now() < busyUntil) onStatus('ratelimited', busyError(busyUntil)); else onStatus(s, err); };
+    // The device copy is a cache: when storage is full, drop old full photos and try once more, else carry on (logged once).
+    async function cachePut(key, value) {
+      try { await db.put(key, value); return true; } catch {}
+      await evictFull();
+      try { await db.put(key, value); return true; }
+      catch (err) { if (!warned) { warned = true; console.warn('This device is out of storage; the app keeps working but saves less for offline use.', err); } return false; }
+    }
+    async function evictFull() { // oldest half of the full-photo cache; the first time also copies cached before this list existed
+      const drop = fullCache.splice(0, Math.ceil(fullCache.length / 2));
+      if (!evictedOld) { evictedOld = true; const known = new Set(fullCache); drop.push(...(base.collections.photos || []).map(p => p.id).filter(id => !known.has(id)), ...(base.meta?.hero && !known.has(base.meta.hero) ? [base.meta.hero] : [])); }
+      await Promise.all(drop.map(id => db.del('full:' + id)));
+    }
+    const keepFull = id => { fullCache = [...fullCache.filter(x => x !== id), id]; };
+    const persist = () => cachePut(stateKey, clean({ base, sha, pending, files: fileDeletes, fullCache }));
     const view = () => applyAll(base, pending);
     function emit() {
       if (!onChange) return;
@@ -142,14 +223,21 @@
       (v.collections.photos || []).forEach(p => { if (!thumbs.has(p.id)) loadThumb(p.id); });
     }
 
-    async function pull() {
+    async function pull(force) {
       const observedRevision = revision;
       const res = await gh$(`/contents/${FILE}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} });
       if (res.status === 304) return false;
+      if (res.status === 404 && verified && !sha) { // the repo opens but has no data.json yet: start empty, the first save creates it
+        if (revision !== observedRevision) return false;
+        base = emptyData(); etag = null;
+        await persist();
+        return true;
+      }
       if (res.status === 404) throw new Error('The private data file could not be opened. Check the repository and token access.');
       if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
       if (!res.ok) throw new Error('GitHub error ' + res.status);
       const json = await res.json();
+      if (!force && json.sha !== sha && Date.now() - (superseded.get(json.sha) || 0) < 30000) return false; // a lagging copy from before our own save
       let text = json.content ? b64decode(json.content) : '';
       if (!text && json.size) { // files over 1 MB come without content
         const raw = await gh$(`/contents/${FILE}?ref=${branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
@@ -166,14 +254,23 @@
       return true;
     }
     async function poll() {
-      if (document.hidden || flushing || !auth.token) return;
-      try { if (await pull()) emit(); status(pending.length ? 'saving' : 'synced'); if (pending.length) scheduleFlush(); }
+      if (document.hidden || flushing || !auth.token || Date.now() < busyUntil) return;
+      if (retryStart) { const retry = retryStart; retryStart = null; retry(); return; } // the first load failed: start() tries again
+      try { if (await pull()) emit(); else retryThumbs(); status(pending.length ? 'saving' : 'synced'); if (pending.length) scheduleFlush(); }
       catch (err) { status(navigator.onLine === false ? 'offline' : 'error', err); }
     }
     function schedulePoll() { clearInterval(pollTimer); pollTimer = setInterval(poll, (gh.pollSeconds || 20) * 1000); }
+    function listen() {
+      if (listening) return; listening = true;
+      schedulePoll();
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+      scope.addEventListener('online', () => { thumbFails.forEach(f => { f.at = 0; }); deleteFails = 0; poll(); if (pending.length) scheduleFlush(); else deleteFiles(); });
+      scope.addEventListener('beforeunload', e => { if (pending.length || flushing) { e.preventDefault(); e.returnValue = ''; } });
+    }
 
     async function flush() {
       if (flushing) return flushing;
+      if (Date.now() < busyUntil) { scheduleFlush(); return; }
       flushing = (async () => {
         while (pending.length) {
           const ops = pending.slice();
@@ -182,8 +279,12 @@
             const next = applyAll(base, ops);
             const who = auth.name || 'someone';
             const res = await gh$(`/contents/${FILE}`, { method: 'PUT', body: JSON.stringify({ message: `${who}: ${describe(ops)}`, content: b64encode(JSON.stringify(next, null, 1)), branch, ...(sha ? { sha } : {}) }) });
-            if (res.ok) { const j = await res.json(); base = next; sha = j.content.sha; etag = null; revision++; ok = true; }
-            else if (res.status === 409 || res.status === 422) { etag = null; await pull(); } // someone else saved first: reload, replay our changes
+            if (res.ok) {
+              const j = await res.json(), now = Date.now();
+              if (sha) { superseded.forEach((at, s) => { if (now - at > 30000) superseded.delete(s); }); superseded.set(sha, now); }
+              base = next; sha = j.content.sha; etag = null; revision++; ok = true;
+            }
+            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); } // someone else saved first: reload, replay our changes
             else if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token cannot write to this repo.'), { code: 'auth' });
             else throw new Error('GitHub error ' + res.status);
           }
@@ -196,22 +297,23 @@
       try { await flushing; status('synced'); }
       catch (err) { status(navigator.onLine === false ? 'offline' : 'error', err); setTimeout(() => pending.length && scheduleFlush(), 15000); }
       finally { flushing = null; }
+      await deleteFiles();
     }
     function describe(ops) {
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', inboxRead: 'read messages' }[o.type] || 'update';
+      const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
       return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
-    function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
+    function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, Math.max(700, busyUntil - Date.now())); }
     async function op(o) { pending.push(clean(o)); await persist(); status('saving'); emit(); scheduleFlush(); }
 
     // photos: stored as files photos/<id>.jpg (full) and photos/<id>-thumb.jpg
-    async function putFile(path, dataUrl, message) {
+    async function putFile(path, dataUrl, message) { // resolves to the new file's sha
       const content = dataUrl.split(',')[1];
       let fileSha;
       for (let attempt = 0; attempt < 4; attempt++) {
         const res = await gh$(`/contents/${path}`, { method: 'PUT', body: JSON.stringify({ message, content, branch, ...(fileSha ? { sha: fileSha } : {}) }) });
-        if (res.ok) return;
+        if (res.ok) return (await res.json().catch(() => null))?.content?.sha || null;
         if (res.status !== 409 && res.status !== 422) throw new Error('Photo upload failed (' + res.status + ')');
         const current = await gh$(`/contents/${path}?ref=${branch}`);
         if (current.ok) fileSha = (await current.json()).sha;
@@ -224,18 +326,76 @@
       if (!res.ok) return null;
       return blobToDataUrl(new Blob([await res.arrayBuffer()], { type: 'image/jpeg' }));
     }
-    async function deleteFile(path, message) {
-      const meta = await gh$(`/contents/${path}?ref=${branch}`); if (!meta.ok) return;
-      const { sha: fileSha } = await meta.json();
-      const res = await gh$(`/contents/${path}`, { method: 'DELETE', body: JSON.stringify({ message, sha: fileSha, branch }) });
-      if (!res.ok) throw new Error('Photo deletion failed (' + res.status + ')');
+    // A file's sha without downloading it: one directory listing (names and shas only) serves every older photo in a batch;
+    // a file missing from it (a listing stops at 1,000 files) falls back to reading the file's own details.
+    async function findSha(path, listing) {
+      if (!listing.files) {
+        const res = await gh$(`/contents/photos?ref=${branch}`).catch(() => null);
+        const list = res && res.ok ? await res.json().catch(() => null) : null;
+        listing.files = new Map(Array.isArray(list) ? list.map(f => [f.path, f.sha]) : []);
+      }
+      if (listing.files.has(path)) return listing.files.get(path);
+      const meta = await gh$(`/contents/${path}?ref=${branch}`);
+      if (meta.status === 404) return null;
+      if (!meta.ok) throw new Error('Photo deletion failed (' + meta.status + ')');
+      return (await meta.json()).sha;
+    }
+    async function deleteFile(path, message, fileSha, listing = {}) {
+      let res;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        fileSha ||= await findSha(path, listing); if (!fileSha) return; // already gone
+        res = await gh$(`/contents/${path}`, { method: 'DELETE', body: JSON.stringify({ message, sha: fileSha, branch }) });
+        if (res.ok || res.status === 404) return;
+        if (res.status !== 409 && res.status !== 422) break;
+        fileSha = null; listing.files = null; // the sha we had is out of date: look it up again
+      }
+      throw new Error('Photo deletion failed (' + res.status + ')');
+    }
+    // Files go only after the data change that removed their photo is saved (nothing pending), one at a time, retried later on failure.
+    function deleteFiles() {
+      if (deleting) return deleting;
+      if (flushing || pending.length || !fileDeletes.length || !auth.token || Date.now() < busyUntil) return;
+      clearTimeout(deleteTimer);
+      let failed = false;
+      deleting = (async () => {
+        const listing = {};
+        try {
+          while (fileDeletes.length && !pending.length) {
+            const job = fileDeletes[0];
+            await deleteFile(job.path, 'delete photo', job.sha, listing);
+            fileDeletes = fileDeletes.filter(x => x !== job);
+          }
+          deleteFails = 0;
+        } catch (err) {
+          failed = true; // a busy GitHub resumes the deletes when the wait is over
+          if (err.code !== 'ratelimit') { deleteFails++; deleteTimer = setTimeout(deleteFiles, Math.min(600000, 20000 * 2 ** (deleteFails - 1))); }
+        }
+        await persist();
+      })().finally(() => { deleting = null; if (!failed) deleteFiles(); });
+      return deleting;
     }
     async function loadThumb(id) {
-      if (loadingThumbs.has(id)) return; loadingThumbs.add(id);
-      let url = await db.get('thumb:' + id);
-      if (!url) { url = await getFile(`photos/${id}-thumb.jpg`).catch(() => null); if (url) db.put('thumb:' + id, url).catch(() => {}); }
-      loadingThumbs.delete(id);
-      if (url) { thumbs.set(id, url); emit(); }
+      const fail = thumbFails.get(id);
+      if (loadingThumbs.has(id) || (fail && Date.now() < fail.at) || Date.now() < busyUntil) return; loadingThumbs.add(id);
+      const url = await db.get('thumb:' + id);
+      if (url) { loadingThumbs.delete(id); thumbReady(id, url); } else { thumbQueue.push(id); pumpThumbs(); }
+    }
+    function pumpThumbs() { // at most 4 downloads at a time, so a new device doesn't send hundreds of requests at once
+      while (thumbActive < 4 && thumbQueue.length) {
+        const id = thumbQueue.shift(); thumbActive++;
+        getFile(`photos/${id}-thumb.jpg`).catch(err => err.code === 'ratelimit' ? undefined : null).then(url => {
+          thumbActive--; loadingThumbs.delete(id);
+          if (url) { thumbFails.delete(id); cachePut('thumb:' + id, url); thumbReady(id, url); }
+          else if (url === null) { const n = (thumbFails.get(id)?.n || 0) + 1; thumbFails.set(id, { n, at: Date.now() + Math.min(300000, 15000 * 2 ** (n - 1)) }); }
+          pumpThumbs();
+        });
+      }
+    }
+    function thumbReady(id, url) { thumbs.set(id, url); thumbEmit ||= setTimeout(() => { thumbEmit = null; emit(); }, 50); } // one update for a burst of thumbs
+    function retryThumbs() { // missing thumbs: failed ones once their wait is over, and any skipped while GitHub was busy (emit only runs when data changes)
+      const ids = new Set();
+      (base.collections.photos || []).forEach(p => { ids.add(p.id); if (!thumbs.has(p.id)) loadThumb(p.id); });
+      thumbFails.forEach((f, id) => { if (!ids.has(id)) thumbFails.delete(id); });
     }
 
     return {
@@ -243,13 +403,18 @@
       async start(cb, statusCb) {
         onChange = cb; onStatus = statusCb; status('connecting');
         const cached = await db.get(stateKey);
-        if (cached) { base = cached.base; sha = cached.sha; pending = cached.pending || []; emit(); }
-        try { await pull(); started = true; emit(); status(pending.length ? 'saving' : 'synced'); }
-        catch (err) { if (!cached) throw err; started = true; status(navigator.onLine === false ? 'offline' : 'error', err); }
-        schedulePoll(); if (pending.length) scheduleFlush();
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-        scope.addEventListener('online', () => { poll(); if (pending.length) scheduleFlush(); });
-        scope.addEventListener('beforeunload', e => { if (pending.length || flushing) { e.preventDefault(); e.returnValue = ''; } });
+        if (cached) { base = cached.base; sha = cached.sha; pending = cached.pending || []; fileDeletes = cached.files || []; fullCache = cached.fullCache || []; emit(); }
+        for (;;) {
+          try { await pull(); started = true; emit(); status(pending.length ? 'saving' : 'synced'); break; }
+          catch (err) {
+            if (cached) { started = true; status(navigator.onLine === false ? 'offline' : 'error', err); break; }
+            if (err.code === 'auth') { if (listening) { clearInterval(pollTimer); auth.token = null; } throw err; }
+            // nothing saved on this device yet: keep the error showing and try again on the next poll, when back online or back in the tab
+            listen(); status(navigator.onLine === false ? 'offline' : 'error');
+            await new Promise(res => { retryStart = res; });
+          }
+        }
+        listen(); if (pending.length) scheduleFlush(); else deleteFiles();
       },
       onAuth(cb) {
         if (!auth.token) { cb(null); return; }
@@ -262,10 +427,11 @@
         const repo = await res.json();
         if (!repo.private) throw Object.assign(new Error('Please use a private data repository.'), { code: 'auth' });
         if (repo.permissions && !repo.permissions.push) throw Object.assign(new Error('This token can read but not write. Give it Contents: Read and write.'), { code: 'auth' });
+        verified = true;
       },
       async signIn(token, name) {
         auth.token = token.trim(); auth.name = name;
-        try { await this.verify(); } catch (e) { auth.token = null; throw e; }
+        try { await this.verify(); } catch (e) { auth.token = null; throw e.code === 'ratelimit' ? busyError(e.until, true) : e; }
         localStorage.setItem('olc:github', JSON.stringify({ token: auth.token, name }));
       },
       signOut() { localStorage.removeItem('olc:github'); clearInterval(pollTimer); location.reload(); },
@@ -273,30 +439,44 @@
       async isSeeded() { if (!started) await pull(); return !!view().meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
+      metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
+      mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       async set(col, item) {
         if (col === 'photos' && item.thumb && item.thumb.startsWith('data:')) {
           const thumb = item.thumb;
-          await putFile(`photos/${item.id}-thumb.jpg`, thumb, `${auth.name || 'someone'}: add photo`);
-          thumbs.set(item.id, thumb); await db.put('thumb:' + item.id, thumb);
-          item = { ...item, thumb: '' };
+          const thumbSha = await putFile(`photos/${item.id}-thumb.jpg`, thumb, `${auth.name || 'someone'}: add photo`);
+          thumbs.set(item.id, thumb); await cachePut('thumb:' + item.id, thumb);
+          const shas = { ...item.shas }, fullSha = fullShas.get(item.id); fullShas.delete(item.id);
+          if (fullSha) shas.full = fullSha; if (thumbSha) shas.thumb = thumbSha;
+          item = { ...item, thumb: '', ...(shas.full || shas.thumb ? { shas } : {}) }; // file shas let a later delete skip downloading the photo
         }
         return op({ type: 'set', col, id: item.id, item });
       },
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
+      // Only the data change waits here (it works offline); the photo's files are deleted in the background once it is saved.
       async remove(col, id) {
-        await op({ type: 'remove', col, id });
-        if (col === 'photos') {
-          thumbs.delete(id); await Promise.all([db.del('thumb:' + id), db.del('full:' + id)]);
-          await deleteFile(`photos/${id}-thumb.jpg`, 'delete photo');
-          await deleteFile(`photos/${id}.jpg`, 'delete photo');
-        }
+        if (col !== 'photos') return op({ type: 'remove', col, id });
+        const s = (view().collections.photos || []).find(p => p.id === id)?.shas || {};
+        fileDeletes.push({ path: `photos/${id}-thumb.jpg`, sha: s.thumb || null }, { path: `photos/${id}.jpg`, sha: s.full || null });
+        await op({ type: 'remove', col, id }); // saved on this device together with the files to delete
+        thumbs.delete(id); thumbFails.delete(id); fullCache = fullCache.filter(x => x !== id);
+        await Promise.all([db.del('thumb:' + id), db.del('full:' + id)]);
       },
       addComment: (id, comment) => op({ type: 'addComment', col: 'diary', id, comment }),
       removeComment: (id, commentId) => op({ type: 'removeComment', col: 'diary', id, commentId }),
       batchSet: (col, items) => op({ type: 'setMany', col, items }),
-      async putFull(id, dataUrl) { await putFile(`photos/${id}.jpg`, dataUrl, `${auth.name || 'someone'}: add photo`); await db.put('full:' + id, dataUrl); },
-      async getFull(id) { let url = await db.get('full:' + id); if (!url) { url = await getFile(`photos/${id}.jpg`); if (url) db.put('full:' + id, url).catch(() => {}); } return url; }
+      async putFull(id, dataUrl) {
+        const fileSha = await putFile(`photos/${id}.jpg`, dataUrl, `${auth.name || 'someone'}: add photo`);
+        if (fileSha) fullShas.set(id, fileSha);
+        if (await cachePut('full:' + id, dataUrl)) keepFull(id);
+      },
+      async getFull(id) {
+        let url = await db.get('full:' + id);
+        if (url) keepFull(id);
+        else { url = await getFile(`photos/${id}.jpg`); if (url) cachePut('full:' + id, url).then(ok => ok && keepFull(id)); }
+        return url;
+      }
     };
   }
 

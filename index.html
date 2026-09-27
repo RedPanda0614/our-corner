@@ -127,10 +127,19 @@
   </div>
   <div class="cc-statusbar"><span>bibo&amp;bobi 2026</span></div>
 
+  <div class="cc-status" data-status-root hidden>
+    <button type="button" class="cc-status-tab" data-status-toggle aria-expanded="false" aria-controls="cc-status-panel" aria-label="Status"></button>
+    <section id="cc-status-panel" class="cc-window cc-status-panel" data-status-panel aria-label="Status" aria-hidden="true" inert>
+      <div class="cc-bar"><span>♡ STATUS · 状态</span><button type="button" class="cc-min" data-status-close aria-label="Close">×</button></div>
+      <div class="cc-body" data-status-body></div>
+    </section>
+  </div>
+
   <dialog class="cc-lightbox" data-lightbox aria-label="Photo"></dialog>
   <dialog class="cc-modal" data-special-dialog aria-label="Special days"></dialog>
   <dialog class="cc-modal cc-inbox" data-inbox aria-label="Messages"></dialog>
   <dialog class="cc-modal cc-question-modal" data-question-dialog aria-label="Daily questions"></dialog>
+  <dialog class="cc-modal cc-ach-modal" data-ach-dialog aria-label="Achievements"></dialog>
   <dialog class="cc-modal cc-confirm-modal" data-comment-confirm-dialog aria-labelledby="comment-confirm-title">
     <section class="cc-window">
       <div class="cc-bar"><span id="comment-confirm-title">DELETE COMMENT</span></div>
@@ -150,6 +159,8 @@
 <script src="calendar-export.js"></script>
 <script src="pagination.js"></script>
 <script src="questions.js"></script>
+<script src="achievements.js"></script>
+<script src="pixel-emoji.js"></script>
 <script src="store.js"></script>
 <script src="bgm.js"></script>
 <script src="app.js"></script>
