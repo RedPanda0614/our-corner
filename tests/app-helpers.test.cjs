@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
 const start = source.indexOf('// ---------- pure helpers'), end = source.indexOf('// ---------- end pure helpers ----------');
 assert.ok(start > 0 && end > start, 'app.js has the pure helpers block');
-const H = vm.runInNewContext(`${source.slice(start, end)}; ({ safeImage, safeColor, isLeapYear, yearlyDay, nextYearly })`, {});
+const H = vm.runInNewContext(`${source.slice(start, end)}; ({ safeImage, safeColor, isLeapYear, yearlyDay, nextYearly, parseTags })`, {});
 
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2w==';
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -58,4 +58,18 @@ test('nextYearly: the next time a yearly day comes round, today included', () =>
   assert.equal(H.nextYearly('2024-05-20', '2026-05-20'), '2026-05-20');
   assert.equal(H.nextYearly('2030-01-01', '2026-09-27'), '2030-01-01', 'a date still ahead stays itself');
   assert.equal(H.nextYearly('1999-12-31', '2026-12-31'), '2026-12-31');
+});
+
+test('parseTags splits on commas, spaces, # and the Chinese list marks', () => {
+  const tags = t => [...H.parseTags(t)]; // made in another realm, so compared as plain arrays
+  assert.deepEqual(tags('旅行、美食'), ['旅行', '美食']);
+  assert.deepEqual(tags('旅行，美食；周末;猫'), ['旅行', '美食', '周末', '猫']);
+  assert.deepEqual(tags('#旅行 #美食 ＃火锅'), ['旅行', '美食', '火锅']);
+  assert.deepEqual(tags('travel, food  cafe'), ['travel', 'food', 'cafe']);
+  assert.deepEqual(tags('旅行\u3000美食'), ['旅行', '美食'], 'a full-width space');
+  assert.deepEqual(tags('Food, food、FOOD'), ['Food'], 'no repeats, whatever the case');
+  assert.deepEqual(tags('、，；, '), []);
+  assert.deepEqual(tags(null), []);
+  assert.equal(tags('a b c d e f g h i j').length, 8);
+  assert.equal(tags('x'.repeat(30))[0].length, 20);
 });

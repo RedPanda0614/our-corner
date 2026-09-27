@@ -656,6 +656,8 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-q-sub { margin: 18px 0 6px; font-size: 13px; font-weight: 600; }
 #couple-corner .cc-q-sched { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12px; border-bottom: 1px dashed hsl(0 0% 50% / .35); }
 #couple-corner .cc-q-sched b { margin-right: 6px; font-weight: 600; }
+#couple-corner .cc-q-sched > span { min-width: 0; overflow-wrap: anywhere; }
+#couple-corner .cc-q-sched .cc-button { flex: none; }
 #couple-corner .cc-q-day { padding: 10px 8px; border-top: 1px dashed hsl(0 0% 50% / .35); }
 #couple-corner .cc-q-day .cc-q-answers { margin-bottom: 4px; }
 @media (max-width: 600px) {

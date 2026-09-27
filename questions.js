@@ -434,7 +434,7 @@
   ];
 
   // ---------- dates (UTC, 'YYYY-MM-DD') ----------
-  const DAY = 864e5, EPOCH = Date.UTC(2026, 0, 1);
+  const DAY = 864e5;
   const toIso = t => new Date(t).toISOString().slice(0, 10);
   function parse(iso) { // ms at UTC midnight for a real calendar date, else null
     const m = typeof iso === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -461,40 +461,60 @@
     for (let i = L - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     return order;
   }
-  // A new cycle opens with GAP items that were not in the last GAP slots of the previous one, so nothing
-  // comes back within GAP slots across a boundary. The tail of each order stays as shuffled (GAP <= L / 3).
+  // A new cycle opens with GAP items that were not in the last GAP slots of the previous one (or, `before`, what the
+  // previous size row showed last), so nothing comes back within GAP slots across a boundary. The tail of each order
+  // stays as shuffled (GAP <= L / 3).
   const orders = new Map();
-  function orderFor(cycle, L, maxGap, salt) {
-    const key = salt + ':' + maxGap + ':' + cycle + ':' + L;
+  function orderFor(cycle, L, maxGap, salt, before = null) {
+    const key = salt + ':' + maxGap + ':' + cycle + ':' + L + (before ? ':' + [...before] : '');
     if (!orders.has(key)) {
       const raw = shuffled(cycle, L, salt), gap = Math.min(maxGap, Math.floor(L / 3));
-      const recent = new Set(shuffled(cycle - 1, L, salt).slice(L - gap)), head = [];
+      const recent = before || new Set(shuffled(cycle - 1, L, salt).slice(L - gap)), head = [];
       for (const i of raw) { if (head.length === gap) break; if (!recent.has(i)) head.push(i); }
       const lead = new Set(head);
       orders.set(key, [...head, ...raw.filter(i => !lead.has(i))]);
     }
     return orders.get(key);
   }
-  // index for slot n (any integer, negative before the epoch) of a rotation over L items
-  const pick = (n, L, maxGap, salt) => orderFor(Math.floor(n / L), L, maxGap, salt)[((n % L) + L) % L];
+  // How many items a rotation goes through, from which day on. Append-only like BANK and WEEKLY: questions added
+  // later only join from their own row's day, so every day before it keeps its question. After appending to BANK,
+  // add a row for a day still to come, e.g. { from: '2027-03-01', size: BANK.length }.
+  const BANK_SIZES = [{ from: '2026-01-01', size: 360 }];
+  const WEEKLY_SIZES = [{ from: '2026-01-05', size: 26 }]; // rows start on a Monday
+  const heads = new WeakMap(); // per table and row: what the row before showed in its last slots
+  // index for time t (a day, or a week's Monday): the last row whose from <= t (the first row before that), slots
+  // counted from the row's from, negative before it
+  function rotate(t, table, step, maxGap, salt) {
+    let r = 0; while (r + 1 < table.length && parse(table[r + 1].from) <= t) r++;
+    const from = parse(table[r].from), L = table[r].size, n = Math.round((t - from) / step), cycle = Math.floor(n / L);
+    let before = null;
+    if (r && cycle === 0) {
+      if (!heads.has(table)) heads.set(table, new Map());
+      const got = heads.get(table);
+      if (!got.has(r)) got.set(r, new Set(Array.from({ length: Math.min(maxGap, Math.floor(L / 3)) }, (_, k) => rotate(from - (k + 1) * step, table, step, maxGap, salt))));
+      before = got.get(r);
+    }
+    return orderFor(cycle, L, maxGap, salt, before)[((n % L) + L) % L];
+  }
+  const bankIndex = (iso, table = BANK_SIZES) => { const t = parse(iso); return t === null ? null : rotate(t, table, DAY, 30, DAILY_SALT); };
 
   function bankFor(iso) {
-    const t = parse(iso);
-    if (t === null) return null;
-    const b = BANK[pick(Math.round((t - EPOCH) / DAY), BANK.length, 30, DAILY_SALT)];
+    const i = bankIndex(iso);
+    if (i === null) return null;
+    const b = BANK[i];
     return { qid: b.id, cat: b.cat, en: b.en, zh: b.zh };
   }
 
   // ---------- weekly check-in: one prompt per Monday to Sunday week ----------
-  const WEEK_EPOCH = Date.UTC(2026, 0, 5); // a Monday
   function weekOf(iso) { // the Monday of the week containing iso
     const t = parse(iso);
     return t === null ? null : toIso(t - ((new Date(t).getUTCDay() + 6) % 7) * DAY);
   }
+  const weekIndex = (iso, table = WEEKLY_SIZES) => { const monday = weekOf(iso); return monday === null ? null : rotate(parse(monday), table, 7 * DAY, 4, WEEKLY_SALT); };
   function forWeek(iso) {
-    const monday = weekOf(iso);
-    if (monday === null) return null;
-    const w = WEEKLY[pick(Math.round((parse(monday) - WEEK_EPOCH) / (7 * DAY)), WEEKLY.length, 4, WEEKLY_SALT)];
+    const i = weekIndex(iso);
+    if (i === null) return null;
+    const w = WEEKLY[i];
     return { qid: w.id, cat: 'checkin', en: w.en, zh: w.zh };
   }
 
@@ -524,7 +544,7 @@
     return day;
   }
 
-  const api = { CATEGORIES, BANK, MOODS, WEEKLY, bankFor, schedule, forDay, nextFreeDay, weekOf, forWeek };
+  const api = { CATEGORIES, BANK, MOODS, WEEKLY, BANK_SIZES, WEEKLY_SIZES, bankFor, bankIndex, schedule, forDay, nextFreeDay, weekOf, forWeek, weekIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') window.CCQuestions = api;
 })();
