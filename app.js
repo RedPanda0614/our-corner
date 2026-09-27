@@ -1213,6 +1213,7 @@
 
   // ---------- form submit ----------
   async function submitPlanner(form) {
+    checkDay(); // just past midnight, before the minute timer notices: an untouched date becomes the new today
     const name = form.dataset.plannerForm, d = Object.fromEntries(new FormData(form));
     if (name === 'entryedit') {
       const entry = data.diary.find(item => item.id === ui.editingEntry);
@@ -1278,6 +1279,7 @@
     render();
   }
   async function submitDiary(form) {
+    checkDay(); // see submitPlanner
     const text = String(form.elements.text.value || '').trim(), date = form.elements.date.value || today;
     if (!text && !diaryDraft.pending.length) { form.elements.text.setCustomValidity('Write something or add a photo.'); form.elements.text.reportValidity(); return; }
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
@@ -1560,7 +1562,18 @@
   $('[data-ach-dialog]').addEventListener('close', () => { if (ui.achOpen) { ui.achOpen = false; ui.achFresh = null; render(); } });
   $('[data-ach-dialog]').addEventListener('click', e => { if (e.target === e.currentTarget) openAchievements(false); });
   let shownDay = currentDay(); // after midnight: new question, fresh "today" for the calendar and countdowns
-  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; shownDay = today = d; achCache = null; scheduleRender(); return true; };
+  const checkDay = () => { const d = currentDay(); if (d === shownDay) return false; rollDay(shownDay, d); shownDay = today = d; achCache = null; scheduleRender(); return true; };
+  function rollDay(old, day) { // dates that still say the old "today" (nobody changed them) move on to the new day
+    if (diaryDraft.date === old) diaryDraft.date = day;
+    if (planner.drafts.event.date === old) planner.drafts.event.date = day;
+    if (planner.selected === old && !planner.editing) {
+      planner.selected = day;
+      if (planner.month === old.slice(0, 7)) planner.month = day.slice(0, 7);
+      if (planner.year === +old.slice(0, 4)) planner.year = +day.slice(0, 4);
+    }
+    // open forms too, in case this render leaves them alone
+    $$('[data-diary-form] input[name="date"], [data-planner-form="event"] input[name="date"]').forEach(el => { if (el.value === old) el.value = day; });
+  }
   setInterval(() => { if (!document.hidden && !checkDay()) renderBadges(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDay(); });
   $('[data-special-dialog]').addEventListener('close', () => { if (planner.specialOpen) { planner.specialOpen = false; planner.editingDay = null; render(); } });
