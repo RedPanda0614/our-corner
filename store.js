@@ -158,25 +158,44 @@
     let deleting = null, deleteFails = 0, deleteTimer = null;
     let fullCache = []; // ids of full photos cached on this device, oldest first (all are on GitHub too, so they can be dropped)
     let warned = false, evictedOld = false;
+    let busyUntil = 0, busyTimer = null; // GitHub rate limit: no requests until then
 
+    // Every request goes through here. While GitHub is busy nothing is sent; a rate-limited answer starts that wait.
     function gh$(path, opts = {}) {
-      const send = () => fetch(api + path, {
+      const send = () => Date.now() < busyUntil ? Promise.reject(busyError(busyUntil)) : fetch(api + path, {
         cache: 'no-store', ...opts,
         headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + auth.token, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) }
-      });
+      }).then(async res => { const until = await limitedUntil(res); if (until) throw pause(until); return res; });
       if (opts.method === 'PUT' || opts.method === 'DELETE') {
         const job = mutationQueue.then(send); mutationQueue = job.catch(() => {}); return job;
       }
       return send();
     }
-    // 401, or a 403/404 that isn't GitHub's rate limit. A rate limit is temporary, so the saved token stays.
-    async function authFailure(res) {
-      if (res.status === 401) return true;
-      if (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.get('retry-after')) return false;
-      const body = await res.json().catch(() => null);
-      return !/rate limit/i.test((body && body.message) || '');
+    // A rate limit (403/404 with x-ratelimit-remaining 0, retry-after or a "rate limit" message, or any 429) is temporary,
+    // so the token stays. Returns when to try again, as GitHub advises: retry-after, else x-ratelimit-reset when none are left, else a minute; or 0.
+    async function limitedUntil(res) {
+      if (res.status !== 403 && res.status !== 404 && res.status !== 429) return 0;
+      const h = k => res.headers.get(k), now = Date.now();
+      if (res.status !== 429 && h('x-ratelimit-remaining') !== '0' && h('retry-after') == null) {
+        const body = await (res.clone ? res.clone() : res).json().catch(() => null);
+        if (!/rate limit/i.test((body && body.message) || '')) return 0;
+      }
+      const after = Number(h('retry-after')), reset = h('x-ratelimit-remaining') === '0' ? Number(h('x-ratelimit-reset')) * 1000 : 0;
+      return now + (after > 0 ? after * 1000 : reset > now ? reset - now : 60000);
     }
-    const status = (s, err) => onStatus && onStatus(s, err);
+    const busyError = (until, login) => { const n = Math.max(1, Math.ceil((until - Date.now()) / 60000)); return Object.assign(new Error(login ? `GitHub is busy, try again in ${n} min.` : `GitHub is busy, trying again in ${n} min.`), { code: 'ratelimit', until }); };
+    function pause(until) { // polls and saves wait (an online event or tab focus doesn't skip it); the status ticks each minute, then sync resumes
+      busyUntil = Math.max(busyUntil, until);
+      const tick = () => {
+        const left = busyUntil - Date.now();
+        if (left > 0) { status('ratelimited'); busyTimer = setTimeout(tick, left % 60000 || 60000); return; }
+        poll(); if (pending.length) scheduleFlush(); else deleteFiles();
+      };
+      clearTimeout(busyTimer); busyTimer = setTimeout(tick, (busyUntil - Date.now()) % 60000 || 60000);
+      status('ratelimited');
+      return busyError(busyUntil);
+    }
+    const status = (s, err) => { if (!onStatus) return; if (Date.now() < busyUntil) onStatus('ratelimited', busyError(busyUntil)); else onStatus(s, err); };
     // The device copy is a cache: when storage is full, drop old full photos and try once more, else carry on (logged once).
     async function cachePut(key, value) {
       try { await db.put(key, value); return true; } catch {}
@@ -215,10 +234,7 @@
         return true;
       }
       if (res.status === 404) throw new Error('The private data file could not be opened. Check the repository and token access.');
-      if (res.status === 401 || res.status === 403) {
-        if (await authFailure(res)) throw Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
-        throw new Error('GitHub error ' + res.status);
-      }
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
       if (!res.ok) throw new Error('GitHub error ' + res.status);
       const json = await res.json();
       if (!force && json.sha !== sha && Date.now() - (superseded.get(json.sha) || 0) < 30000) return false; // a lagging copy from before our own save
@@ -238,7 +254,7 @@
       return true;
     }
     async function poll() {
-      if (document.hidden || flushing || !auth.token) return;
+      if (document.hidden || flushing || !auth.token || Date.now() < busyUntil) return;
       if (retryStart) { const retry = retryStart; retryStart = null; retry(); return; } // the first load failed: start() tries again
       try { if (await pull()) emit(); else retryThumbs(); status(pending.length ? 'saving' : 'synced'); if (pending.length) scheduleFlush(); }
       catch (err) { status(navigator.onLine === false ? 'offline' : 'error', err); }
@@ -254,6 +270,7 @@
 
     async function flush() {
       if (flushing) return flushing;
+      if (Date.now() < busyUntil) { scheduleFlush(); return; }
       flushing = (async () => {
         while (pending.length) {
           const ops = pending.slice();
@@ -287,7 +304,7 @@
       const text = { set: 'save', setMany: 'import', update: 'edit', remove: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
       return `${text} ${o.col || ''}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
-    function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
+    function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, Math.max(700, busyUntil - Date.now())); }
     async function op(o) { pending.push(clean(o)); await persist(); status('saving'); emit(); scheduleFlush(); }
 
     // photos: stored as files photos/<id>.jpg (full) and photos/<id>-thumb.jpg
@@ -337,7 +354,7 @@
     // Files go only after the data change that removed their photo is saved (nothing pending), one at a time, retried later on failure.
     function deleteFiles() {
       if (deleting) return deleting;
-      if (flushing || pending.length || !fileDeletes.length || !auth.token) return;
+      if (flushing || pending.length || !fileDeletes.length || !auth.token || Date.now() < busyUntil) return;
       clearTimeout(deleteTimer);
       let failed = false;
       deleting = (async () => {
@@ -350,8 +367,8 @@
           }
           deleteFails = 0;
         } catch (err) {
-          failed = true; deleteFails++;
-          deleteTimer = setTimeout(deleteFiles, Math.min(600000, 20000 * 2 ** (deleteFails - 1)));
+          failed = true; // a busy GitHub resumes the deletes when the wait is over
+          if (err.code !== 'ratelimit') { deleteFails++; deleteTimer = setTimeout(deleteFiles, Math.min(600000, 20000 * 2 ** (deleteFails - 1))); }
         }
         await persist();
       })().finally(() => { deleting = null; if (!failed) deleteFiles(); });
@@ -359,25 +376,26 @@
     }
     async function loadThumb(id) {
       const fail = thumbFails.get(id);
-      if (loadingThumbs.has(id) || (fail && Date.now() < fail.at)) return; loadingThumbs.add(id);
+      if (loadingThumbs.has(id) || (fail && Date.now() < fail.at) || Date.now() < busyUntil) return; loadingThumbs.add(id);
       const url = await db.get('thumb:' + id);
       if (url) { loadingThumbs.delete(id); thumbReady(id, url); } else { thumbQueue.push(id); pumpThumbs(); }
     }
     function pumpThumbs() { // at most 4 downloads at a time, so a new device doesn't send hundreds of requests at once
       while (thumbActive < 4 && thumbQueue.length) {
         const id = thumbQueue.shift(); thumbActive++;
-        getFile(`photos/${id}-thumb.jpg`).catch(() => null).then(url => {
+        getFile(`photos/${id}-thumb.jpg`).catch(err => err.code === 'ratelimit' ? undefined : null).then(url => {
           thumbActive--; loadingThumbs.delete(id);
           if (url) { thumbFails.delete(id); cachePut('thumb:' + id, url); thumbReady(id, url); }
-          else { const n = (thumbFails.get(id)?.n || 0) + 1; thumbFails.set(id, { n, at: Date.now() + Math.min(300000, 15000 * 2 ** (n - 1)) }); }
+          else if (url === null) { const n = (thumbFails.get(id)?.n || 0) + 1; thumbFails.set(id, { n, at: Date.now() + Math.min(300000, 15000 * 2 ** (n - 1)) }); }
           pumpThumbs();
         });
       }
     }
     function thumbReady(id, url) { thumbs.set(id, url); thumbEmit ||= setTimeout(() => { thumbEmit = null; emit(); }, 50); } // one update for a burst of thumbs
-    function retryThumbs() { // failed thumbs whose wait is over (emit only runs when data changes)
-      const ids = new Set((base.collections.photos || []).map(p => p.id));
-      thumbFails.forEach((f, id) => { if (!ids.has(id)) thumbFails.delete(id); else if (Date.now() >= f.at) loadThumb(id); });
+    function retryThumbs() { // missing thumbs: failed ones once their wait is over, and any skipped while GitHub was busy (emit only runs when data changes)
+      const ids = new Set();
+      (base.collections.photos || []).forEach(p => { ids.add(p.id); if (!thumbs.has(p.id)) loadThumb(p.id); });
+      thumbFails.forEach((f, id) => { if (!ids.has(id)) thumbFails.delete(id); });
     }
 
     return {
@@ -404,10 +422,7 @@
       },
       async verify() {
         const res = await gh$('');
-        if (res.status === 401 || res.status === 403 || res.status === 404) {
-          if (await authFailure(res)) throw Object.assign(new Error('This token cannot open the repo.'), { code: 'auth' });
-          throw new Error('GitHub error ' + res.status);
-        }
+        if (res.status === 401 || res.status === 403 || res.status === 404) throw Object.assign(new Error('This token cannot open the repo.'), { code: 'auth' });
         if (!res.ok) throw new Error('GitHub error ' + res.status);
         const repo = await res.json();
         if (!repo.private) throw Object.assign(new Error('Please use a private data repository.'), { code: 'auth' });
@@ -416,7 +431,7 @@
       },
       async signIn(token, name) {
         auth.token = token.trim(); auth.name = name;
-        try { await this.verify(); } catch (e) { auth.token = null; throw e; }
+        try { await this.verify(); } catch (e) { auth.token = null; throw e.code === 'ratelimit' ? busyError(e.until, true) : e; }
         localStorage.setItem('olc:github', JSON.stringify({ token: auth.token, name }));
       },
       signOut() { localStorage.removeItem('olc:github'); clearInterval(pollTimer); location.reload(); },

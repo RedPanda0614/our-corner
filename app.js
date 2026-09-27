@@ -1172,9 +1172,10 @@
     const anniv = data.dates.filter(d => d.kind === 'anniversary' && d.date <= today).sort((a, b) => a.date.localeCompare(b.date))[0];
     renderTearpad(anniv);
     renderHeroCaption();
-    const syncText = { local: 'LOCAL ONLY', connecting: 'CONNECTING…', synced: '● SYNCED', saving: 'SAVING…', offline: 'OFFLINE', error: 'SYNC ERROR', signedout: 'LOG IN' }[ui.sync] || '';
+    const busyMin = ui.sync === 'ratelimited' ? Math.max(1, Math.ceil((ui.syncUntil - Date.now()) / 60000)) : 0; // GitHub rate limit: minutes left
+    const syncText = { local: 'LOCAL ONLY', connecting: 'CONNECTING…', synced: '● SYNCED', saving: 'SAVING…', offline: 'OFFLINE', error: 'SYNC ERROR', signedout: 'LOG IN', ratelimited: `BUSY · RETRY ${busyMin}m` }[ui.sync] || '';
     const chip = $('[data-sync]'); chip.textContent = syncText; chip.dataset.state = ui.sync;
-    chip.title = local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
+    chip.title = busyMin ? `GitHub is busy, trying again in ${busyMin} min. Your changes are kept and will save then.` : local ? 'Saved only in this browser. Fill in the GitHub repo in config.js to share.' : 'Saved to GitHub. Checks for updates every 20 seconds.';
     $('[data-logout]').hidden = local || !ui.user;
   }
 
@@ -1683,8 +1684,9 @@
   const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; achCache = null; scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
-    if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
-    if (ui.sync !== s) { ui.sync = s; scheduleRender(); }
+    if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown
+    else if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
+    if (ui.sync !== s || s === 'ratelimited') { ui.sync = s; scheduleRender(); }
   };
   history.replaceState(null, '', '#' + ui.page);
   render();
