@@ -57,7 +57,7 @@ function server({ legacy = false } = {}) {
     seed: { version: 1, meta: { seeded: true }, collections: { events: [], dates: [], trips: [], tasks: [], wishes: [], diary: [], photos: [] } },
     legacy, // true: the repo has only the single data.json, as before the split
     ready: false, tree: new Map(), blobs: new Map(), history: new Map(), // path -> sha for data.json and data/*.json.gz; sha -> bytes, every version ever saved; path -> commits (kept after a delete)
-    commitsReply: null, commitsOffline: false,
+    commitsReply: null, commitsOffline: false, cutOnce: new Set(), // cutOnce: blob shas whose next download is cut off part way
     files: new Map(), fileSeq: 0, log: [], messages: [], puts: [], offline: false, conflict: null, beforePut: null,
     verify: { status: 200, body: {}, headers: {} }, publicRepo: false, dataReply: null, lagOnce: null, rejectWrites: false,
     deleteStatus: [], photoPut: {}, photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0, putActive: 0, putMaxActive: 0,
@@ -145,6 +145,7 @@ function server({ legacy = false } = {}) {
       if (this.dataReply) return response(...this.dataReply);
       if (blobSha != null) { // git blobs: immutable, by sha
         const b = this.blobs.get(blobSha); if (!b) return response(404, { message: 'Not Found' });
+        if (this.cutOnce.delete(blobSha)) return response(200, b.subarray(0, Math.floor(b.length / 2)));
         return raw ? response(200, b) : response(200, { sha: blobSha, size: b.length, content: b.toString('base64'), encoding: 'base64' });
       }
       if (file === '' || file === 'data') {
@@ -168,17 +169,17 @@ function server({ legacy = false } = {}) {
 
 // A page in a fake browser. `quota(key, value, disk)` returning true makes that IndexedDB write fail like a full disk;
 // idb: false, no IndexedDB at all; zip: false, a browser without CompressionStream.
-function browser(remote, { disk = new Map(), local = new Map(), quota = null, idb = true, zip = true, config = { github: { owner: 'test', repo: 'private-data' } } } = {}) {
+function browser(remote, { disk = new Map(), local = new Map(), quota = null, slowDel = null, idb = true, zip = true, config = { github: { owner: 'test', repo: 'private-data' } } } = {}) {
   const timers = new Map(), intervals = [], listeners = {}, warnings = [], clock = { offset: 0 }; let timerId = 0;
   const indexedDB = { open() { if (!idb) throw new Error('IndexedDB is not available here');
     const request = { result: { transaction() {
       let open = 0, full = false; const writes = [];
-      const later = fn => { open++; queueMicrotask(() => { fn(); if (--open) return; if (full) { tx.error = new Error('QuotaExceededError'); tx.onabort?.(); return; } for (const [k, v, del] of writes) del ? disk.delete(k) : disk.set(k, v); tx.oncomplete?.(); }); };
+      const later = (fn, ms) => { open++; const run = () => { fn(); if (--open) return; if (full) { tx.error = new Error('QuotaExceededError'); tx.onabort?.(); return; } for (const [k, v, del] of writes) del ? disk.delete(k) : disk.set(k, v); tx.oncomplete?.(); }; ms ? setTimeout(run, ms) : queueMicrotask(run); };
       const tx = { objectStore() { return {
         get(key) { const req = {}; queueMicrotask(() => { req.result = clone(disk.get(key)); req.onsuccess?.(); }); return req; },
         getAllKeys() { const req = {}; later(() => { req.result = [...disk.keys()]; req.onsuccess?.(); }); return req; },
         put(value, key) { const snapshot = clone(value); later(() => { if (quota && quota(key, snapshot, disk)) full = true; writes.push([key, snapshot]); }); },
-        delete(key) { later(() => writes.push([key, undefined, true])); }
+        delete(key) { later(() => writes.push([key, undefined, true]), slowDel && slowDel(key)); } // slowDel(key): ms that delete takes
       }; } }; return tx;
     } } }; queueMicrotask(() => request.onsuccess?.()); return request;
   } };
