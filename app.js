@@ -462,13 +462,19 @@
     go('home');
     $('[data-win="question"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
+  // sent from the keyboard: once the form has turned into the answer, the keyboard carries on from its Edit link, not <body>
+  function focusBack(form, sel) {
+    const box = form.closest('dialog, [data-question]'), typed = !pointerLast && form.contains(document.activeElement);
+    return () => { const a = document.activeElement; if (typed && (!a || a === document.body)) box?.querySelector(sel)?.focus({ preventScroll: true }); };
+  }
   function submitAnswer(form) {
     const date = form.dataset.questionForm, field = form.elements.answer, text = String(field.value || '').trim();
     if (!ui.me || !validDay(date) || date > qDay()) return;
     if (!text) { field.setCustomValidity('Write an answer first.'); field.reportValidity(); return; }
     const mine = answerOf(date, ui.me), theirs = answerOf(date, partnerKey());
     const job = mine ? store.update('answers', mine.id, { text }) : store.set('answers', { id: `${date}:${ui.me}`, date, q: questionFor(date), author: meName(), text, createdAt: Date.now() });
-    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
+    const back = focusBack(form, `[data-answer-edit="${date}"]`);
+    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); back(); }));
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
   }
 
@@ -552,7 +558,8 @@
     const text = String(field.value || '').trim().slice(0, 600), mood = draft.mood;
     const mine = checkinOf(week, ui.me), theirs = checkinOf(week, partnerKey()), partner = PEOPLE[partnerKey()];
     const job = mine ? store.update('checkins', mine.id, { mood, text }) : store.set('checkins', { id: `${week}:${ui.me}`, week, mood, text, q: checkinPromptFor(week), author: meName(), createdAt: Date.now() });
-    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); }));
+    const back = focusBack(form, `[data-checkin-edit="${week}"]`);
+    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); back(); }));
     flash(mine ? 'Saved.' : theirs ? `Checked in. Now you can see how ${partner}’s week went ♡` : `Checked in. You’ll see ${partner}’s once they check in.`);
   }
   root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') { checkinDraft(f.dataset.checkinForm).text = e.target.value; keepDraft('checkin', f.dataset.checkinForm); } });
