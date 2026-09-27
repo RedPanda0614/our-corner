@@ -32,6 +32,10 @@
       async del(key) {
         const db = await dbPromise; if (!db) { memory.delete(key); return; }
         return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = res; t.onerror = t.onabort = res; });
+      },
+      async drop(test) { // every key that passes test, in one go
+        const db = await dbPromise; if (!db) { [...memory.keys()].filter(test).forEach(k => memory.delete(k)); return; }
+        return new Promise(res => { const t = db.transaction('kv', 'readwrite'), s = t.objectStore('kv'), r = s.getAllKeys(); r.onsuccess = () => r.result.filter(test).forEach(k => s.delete(k)); t.oncomplete = res; t.onerror = t.onabort = res; });
       }
     };
   }
@@ -190,7 +194,7 @@
     let fileDeletes = []; // photo files still to delete on GitHub, [{ path, sha }]; kept across reloads, retried until done
     let deleting = null, deleteFails = 0, deleteTimer = null;
     let fullCache = []; // ids of full photos cached on this device, oldest first (all are on GitHub too, so they can be dropped)
-    let warned = false, evictedOld = false;
+    let warned = false, evictedOld = false, closed = false; // closed: logging out, nothing is saved on this device any more
     let busyUntil = 0, busyTimer = null; // GitHub rate limit: no requests until then
 
     // Every request goes through here. While GitHub is busy nothing is sent; a rate-limited answer starts that wait.
@@ -231,6 +235,7 @@
     const status = (s, err) => { if (!onStatus) return; if (Date.now() < busyUntil) onStatus('ratelimited', busyError(busyUntil)); else onStatus(s, err); };
     // The device copy is a cache: when storage is full, drop old full photos and try once more, else carry on (logged once).
     async function cachePut(key, value) {
+      if (closed) return false;
       try { await db.put(key, value); return true; } catch {}
       await evictFull();
       try { await db.put(key, value); return true; }
@@ -486,7 +491,15 @@
         try { await this.verify(); } catch (e) { auth.token = null; throw e.code === 'ratelimit' ? busyError(e.until, true) : e; }
         localStorage.setItem('olc:github', JSON.stringify({ token: auth.token, name }));
       },
-      signOut() { localStorage.removeItem('olc:github'); clearInterval(pollTimer); location.reload(); },
+      // Not while changes or photo deletions are still on their way to GitHub; then this device forgets the token and
+      // the private data it keeps: the saved copy, thumbnails, full photos and drafts
+      async signOut() {
+        if (pending.length || flushing || fileDeletes.length || deleting) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
+        closed = true; clearInterval(pollTimer); localStorage.removeItem('olc:github');
+        for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('olc:drafts:')) localStorage.removeItem(k); }
+        await db.drop(k => typeof k === 'string' && /^(github-state:|thumb:|full:)/.test(k));
+        location.reload();
+      },
       pending: () => pending.length > 0 || !!flushing,
       async isSeeded() { if (!started) await pull(); return !!view().meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),

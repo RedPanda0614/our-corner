@@ -79,6 +79,7 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
     const request = { result: { transaction() {
       const tx = { objectStore() { return {
         get(key) { const req = {}; queueMicrotask(() => { req.result = clone(disk.get(key)); req.onsuccess?.(); }); return req; },
+        getAllKeys() { const req = {}; queueMicrotask(() => { req.result = [...disk.keys()]; req.onsuccess?.(); queueMicrotask(() => tx.oncomplete?.()); }); return req; },
         put(value, key) { const snapshot = clone(value); queueMicrotask(() => { if (quota && quota(key, snapshot, disk)) { tx.error = new Error('QuotaExceededError'); tx.onabort?.(); return; } disk.set(key, snapshot); tx.oncomplete?.(); }); },
         delete(key) { queueMicrotask(() => { disk.delete(key); tx.oncomplete?.(); }); }
       }; } }; return tx;
@@ -89,7 +90,9 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   class FakeDate extends Date { static now() { return Date.now() + clock.offset; } }
   class Blob { constructor(parts, o) { this.parts = parts; this.type = o?.type; } }
   class FileReader { readAsDataURL(blob) { setImmediate(() => { this.result = `data:${blob.type};base64,` + Buffer.concat(blob.parts.map(p => Buffer.from(p))).toString('base64'); this.onload?.(); }); } }
-  const context = vm.createContext({ window, indexedDB, localStorage: { getItem: k => local.get(k), setItem: (k, v) => local.set(k, v), removeItem: k => local.delete(k) },
+  const reloads = { n: 0 };
+  const context = vm.createContext({ window, indexedDB, location: { reload: () => { reloads.n++; } },
+    localStorage: { getItem: k => local.get(k), setItem: (k, v) => local.set(k, v), removeItem: k => local.delete(k), get length() { return local.size; }, key: i => [...local.keys()][i] ?? null },
     document: { hidden: false, addEventListener: on('doc:') }, navigator: { onLine: true }, Date: FakeDate, Blob, FileReader,
     fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array,
     btoa: s => Buffer.from(s, 'binary').toString('base64'), atob: s => Buffer.from(s, 'base64').toString('binary'),
@@ -99,7 +102,7 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   vm.runInContext(source, context);
   const store = window.CCStore.create(config);
   const changes = {}, statuses = [], photoTimes = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
-  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, Blob, get emits() { return emits; },
+  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, Blob, reloads, get emits() { return emits; },
     connect: () => store.start((col, items) => { if (col === 'meta') emits++; if (col === 'photos') photoTimes.push(Date.now() + clock.offset); changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
@@ -600,6 +603,28 @@ test('local mode keeps thumbnails in its data record as data URLs, never a blob:
   page.disk.set('full:old', IMG); // kept by an older version
   const full = await page.store.getFull('old'); await settle();
   assert.equal(bytes(full), 'YQ=='); assert.equal(bytes(page.disk.get('full:old')), 'YQ==');
+});
+
+// ---------- logging out ----------
+test('logging out waits until everything is on GitHub, then clears the private data kept on this device', async () => {
+  const remote = server(); remote.data.collections.photos = [{ id: 'p1', thumb: '' }, { id: 'p2', thumb: '' }];
+  for (const id of ['p1', 'p2']) remote.files.set(`photos/${id}-thumb.jpg`, { content: 'YQ==', sha: 't' + id });
+  const disk = new Map([['data', { version: 1, meta: {}, collections: {} }], ['full:p1', IMG]]); // 'data': local mode's own record, not this repo's
+  const page = browser(remote, { disk }); await page.start(); await waitFor(() => disk.has('thumb:p2'), 'thumbs kept');
+  page.local.set('olc:drafts:sijie', '{"diary":{"":{"text":"secret"}}}'); page.local.set('olc:drafts:zhenzhen', '{}'); page.local.set('olc:me', '"sijie"');
+  const refused = e => e.code === 'unsaved' && e.message === 'Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.';
+  await page.store.set('tasks', { id: 't1', title: 'not saved yet' });
+  await assert.rejects(page.store.signOut(), refused); // a change still waiting
+  remote.deleteStatus = [500]; await page.store.remove('photos', 'p2'); await page.flush();
+  assert.equal(page.store.pending(), false); assert.equal(remote.files.size, 2);
+  await assert.rejects(page.store.signOut(), refused); // a photo's files still to delete
+  assert.equal(page.reloads.n, 0); assert.ok(page.local.has('olc:github')); assert.ok(disk.has('github-state:test/private-data:main'));
+  assert.ok(await page.runTimers(20000)); await settle(); assert.equal(remote.files.size, 1); // the delete goes through on its retry
+  await page.store.signOut();
+  assert.equal(page.reloads.n, 1);
+  assert.deepEqual([...page.local.keys()], ['olc:me']);
+  assert.deepEqual([...disk.keys()], ['data']);
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1']);
 });
 
 // ---------- the file we already have is not downloaded again ----------
