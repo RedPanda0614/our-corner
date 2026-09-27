@@ -1,33 +1,55 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { CATEGORIES, BANK, bankFor, schedule, forDay, nextFreeDay } = require('../questions.js');
+const { CATEGORIES, BANK, MOODS, WEEKLY, bankFor, schedule, forDay, nextFreeDay, weekOf, forWeek } = require('../questions.js');
 
 const DAY = 864e5;
 const shift = (iso, n) => new Date(Date.parse(iso) + n * DAY).toISOString().slice(0, 10);
 const cycleQids = start => Array.from({ length: BANK.length }, (_, i) => bankFor(shift(start, i)).qid);
 const item = (id, date, extra = {}) => ({ id, date, text: `Question ${id}?`, by: 'Sijie', createdAt: 1, ...extra });
 const ons = list => Object.fromEntries(schedule(list).map(s => [s.q.id, s.on]));
+const DASH = /[–—]/;
+const wellFormed = (x, label) => {
+  assert.ok(x.en.trim() && x.en.endsWith('?'), `${label} en`);
+  assert.ok(x.zh.trim() && /[一-鿿]/.test(x.zh) && x.zh.endsWith('？'), `${label} zh`);
+  assert.doesNotMatch(x.zh, /[,.?!:;()]/, `${label} zh uses full-width punctuation`);
+  assert.doesNotMatch(x.en + x.zh, DASH, `${label} has a dash`);
+  assert.ok(x.en.length <= 130, `${label} en is too long`);
+};
 
-test('the bank has 180 well-formed bilingual questions, 30 per category', () => {
-  assert.equal(BANK.length, 180);
-  assert.deepEqual(BANK.map(b => b.id), Array.from({ length: 180 }, (_, i) => 'q' + String(i + 1).padStart(3, '0')));
+test('the bank has 360 well-formed bilingual questions', () => {
+  assert.equal(BANK.length, 360);
+  assert.deepEqual(BANK.map(b => b.id), Array.from({ length: 360 }, (_, i) => 'q' + String(i + 1).padStart(3, '0')));
   const perCat = {};
   for (const b of BANK) {
     assert.match(b.id, /^q\d{3}$/);
-    assert.ok(Object.hasOwn(CATEGORIES, b.cat) && b.cat !== 'custom', `${b.id} category ${b.cat}`);
+    assert.ok(Object.hasOwn(CATEGORIES, b.cat) && b.cat !== 'custom' && b.cat !== 'checkin', `${b.id} category ${b.cat}`);
     perCat[b.cat] = (perCat[b.cat] || 0) + 1;
-    assert.ok(b.en.trim() && b.en.endsWith('?'), `${b.id} en`);
-    assert.ok(b.zh.trim() && /[一-鿿]/.test(b.zh) && b.zh.endsWith('？'), `${b.id} zh`);
-    assert.doesNotMatch(b.en + b.zh, /[\u2013\u2014]/, `${b.id} has a dash`);
+    wellFormed(b, b.id);
+    if (b.cat === 'wyr') {
+      assert.match(b.en, /^Would you rather .+ or .+\?$/, `${b.id} wyr en`);
+      assert.match(b.zh, /^你更想.+还是.+？$/, `${b.id} wyr zh`);
+    }
   }
-  assert.deepEqual(perCat, { fun: 30, deep: 30, memory: 30, wyr: 30, know: 30, future: 30 });
-  assert.equal(new Set(BANK.map(b => b.id)).size, 180);
-  assert.equal(new Set(BANK.map(b => b.en.toLowerCase())).size, 180);
-  assert.equal(new Set(BANK.map(b => b.zh)).size, 180);
+  assert.deepEqual(perCat, { fun: 45, deep: 45, memory: 45, wyr: 45, know: 45, future: 45, week: 30, childhood: 30, food: 30 });
+  assert.equal(new Set(BANK.map(b => b.id)).size, 360);
+  assert.equal(new Set(BANK.map(b => b.en.toLowerCase())).size, 360);
+  assert.equal(new Set(BANK.map(b => b.zh)).size, 360);
 });
 
-test('every category has bilingual labels, including custom questions', () => {
-  for (const key of ['fun', 'deep', 'memory', 'wyr', 'know', 'future', 'custom']) {
+// Append-only guard. Answers point at question ids, so q001..q180 must never change. This is an FNV-1a hash of
+// `id|cat|en|zh` for each of them, joined by '\n'. If it fails, an existing question was edited, reordered or
+// removed: put it back and add new questions at the end instead. Do not update the expected hash.
+test('the original 180 questions are unchanged (append-only)', () => {
+  const fnv1a = s => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  };
+  assert.equal(fnv1a(BANK.slice(0, 180).map(b => [b.id, b.cat, b.en, b.zh].join('|')).join('\n')), 'a6a6840f');
+});
+
+test('every category has bilingual labels, including custom and weekly check-in questions', () => {
+  for (const key of ['fun', 'deep', 'memory', 'wyr', 'know', 'future', 'week', 'childhood', 'food', 'checkin', 'custom']) {
     assert.ok(CATEGORIES[key].en && /[一-鿿]/.test(CATEGORIES[key].zh), key);
   }
 });
@@ -119,4 +141,78 @@ test('the next free day skips days taken by custom questions, including bumped o
   assert.equal(nextFreeDay('2026-10-13', list), '2026-10-14');
   assert.equal(nextFreeDay('2026-10-10'), '2026-10-10');
   assert.equal(nextFreeDay('nope', list), null);
+});
+
+// ---------- weekly check-in ----------
+const shiftWeeks = (iso, n) => shift(iso, 7 * n);
+const MONDAY = '2026-01-05';
+
+test('moods run from sunny to stormy', () => {
+  assert.deepEqual(MOODS, [
+    { v: 5, glyph: '☀️', en: 'Sunny', zh: '晴' },
+    { v: 4, glyph: '🌤️', en: 'Mostly sunny', zh: '多云转晴' },
+    { v: 3, glyph: '☁️', en: 'Cloudy', zh: '多云' },
+    { v: 2, glyph: '🌧️', en: 'Rainy', zh: '小雨' },
+    { v: 1, glyph: '⛈️', en: 'Stormy', zh: '雷阵雨' }
+  ]);
+});
+
+test('the weekly pool has 26 well-formed bilingual prompts', () => {
+  assert.equal(WEEKLY.length, 26);
+  assert.deepEqual(WEEKLY.map(w => w.id), Array.from({ length: 26 }, (_, i) => 'w' + String(i + 1).padStart(2, '0')));
+  for (const w of WEEKLY) {
+    assert.deepEqual(Object.keys(w), ['id', 'en', 'zh'], w.id);
+    wellFormed(w, w.id);
+  }
+  assert.equal(new Set(WEEKLY.map(w => w.en.toLowerCase())).size, 26);
+  assert.equal(new Set(WEEKLY.map(w => w.zh)).size, 26);
+  const daily = new Set(BANK.flatMap(b => [b.en.toLowerCase(), b.zh]));
+  for (const w of WEEKLY) assert.ok(!daily.has(w.en.toLowerCase()) && !daily.has(w.zh), `${w.id} repeats a daily question`);
+});
+
+test('weekOf finds the Monday of a Monday to Sunday week', () => {
+  assert.equal(weekOf('2026-01-05'), '2026-01-05', 'a Monday is its own week');
+  assert.equal(weekOf('2026-01-11'), '2026-01-05', 'Sunday belongs to the Monday before');
+  assert.equal(weekOf('2026-01-07'), '2026-01-05');
+  assert.equal(weekOf('2026-01-12'), '2026-01-12');
+  assert.equal(weekOf('2026-01-01'), '2025-12-29', 'across a year boundary');
+  assert.equal(weekOf('2027-01-03'), '2026-12-28');
+  assert.equal(weekOf('2026-03-01'), '2026-02-23', 'across a month boundary');
+  assert.equal(weekOf('2024-03-03'), '2024-02-26', 'across a leap day');
+  for (const bad of ['', '2026-02-30', 'nope', '2026-1-5', null, undefined, 20260105]) assert.equal(weekOf(bad), null);
+});
+
+test('the weekly prompt is the same all week and deterministic', () => {
+  for (const mon of [MONDAY, '2026-09-21', '2025-12-29', '2019-07-01']) {
+    const q = forWeek(mon);
+    assert.deepEqual(Object.keys(q), ['qid', 'cat', 'en', 'zh']);
+    assert.equal(q.cat, 'checkin');
+    const w = WEEKLY.find(x => x.id === q.qid);
+    assert.deepEqual(q, { qid: w.id, cat: 'checkin', en: w.en, zh: w.zh });
+    for (let d = 0; d < 7; d++) assert.deepEqual(forWeek(shift(mon, d)), q, `${mon} + ${d}`);
+    assert.notEqual(forWeek(mon), forWeek(mon), 'returns a fresh copy');
+  }
+  const weeks = Array.from({ length: 10 }, (_, i) => forWeek(shiftWeeks(MONDAY, i)).qid);
+  assert.ok(new Set(weeks).size > 1, 'different weeks get different prompts');
+  for (const bad of ['', '2026-02-30', 'nope', null, undefined]) assert.equal(forWeek(bad), null);
+});
+
+test('no weekly prompt repeats within a cycle, before or after 2026', () => {
+  const L = WEEKLY.length;
+  const cycle = start => Array.from({ length: L }, (_, i) => forWeek(shiftWeeks(start, i)).qid);
+  for (const k of [0, 1, 2, -1, -3]) {
+    const qids = cycle(shiftWeeks(MONDAY, k * L));
+    assert.deepEqual([...qids].sort(), WEEKLY.map(w => w.id), `cycle ${k}`);
+  }
+  assert.notDeepEqual(cycle(MONDAY), cycle(shiftWeeks(MONDAY, L)), 'each cycle is shuffled differently');
+});
+
+test('a weekly prompt never comes back within 4 weeks, even across cycle boundaries', () => {
+  const L = WEEKLY.length, gap = Math.min(4, Math.floor(L / 3));
+  const seen = new Map();
+  for (let i = -3 * L; i < 5 * L; i++) {
+    const qid = forWeek(shiftWeeks(MONDAY, i)).qid;
+    if (seen.has(qid)) assert.ok(i - seen.get(qid) > gap, `${qid} repeats after ${i - seen.get(qid)} weeks`);
+    seen.set(qid, i);
+  }
 });
