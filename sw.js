@@ -2,8 +2,8 @@
 const PREFIX = 'olc:' + self.registration.scope + ':';
 const VERSION = PREFIX + 'v40';
 const SHELL = ['./', 'index.html', 'theme-vars.css', 'style.css', 'app.css', 'typography.css', 'neon-accent.css', 'config.js', 'calendar-import.js', 'calendar-export.js', 'pagination.js', 'questions.js', 'achievements.js', 'pixel-emoji.js', 'store.js', 'bgm.js', 'app.js',
-  'manifest.webmanifest', 'retro-window.css', 'assets/hero.jpg', 'assets/bunny-wallpaper.svg', 'assets/doto.ttf', 'assets/icon-192.png', 'assets/ipod.png',
-  'assets/clover-sky.png', 'assets/cd-y2k.png', 'assets/shooting-star-y2k.png', 'assets/wishlist-notes-sprite.png'];
+  'manifest.webmanifest', 'retro-window.css', 'assets/hero.jpg', 'assets/bunny-wallpaper.svg', 'assets/doto.woff2', 'assets/ark-pixel-squares.woff2', 'assets/icon-192.png', 'assets/ipod.png',
+  'assets/clover-sky.webp', 'assets/cd-y2k.png', 'assets/shooting-star-y2k.png', 'assets/wishlist-notes-sprite.webp'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith(PREFIX) && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
