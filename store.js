@@ -1,5 +1,5 @@
 // Data layer. Two modes with the same API:
-//  - github: everything is saved in a private GitHub repo (data.json + photos/), via the GitHub API.
+//  - github: everything is saved in a private GitHub repo (compressed files in data/, and photos/), via the GitHub API.
 //            Both of you log in with a token; changes show up on the other device within ~20 seconds.
 //  - local:  IndexedDB on this device only (used when config.js has no repo filled in).
 (function (scope) {
@@ -32,6 +32,10 @@
       async del(key) {
         const db = await dbPromise; if (!db) { memory.delete(key); return; }
         return new Promise(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(key); t.oncomplete = res; t.onerror = t.onabort = res; });
+      },
+      async putMany(entries, gone = []) { // several keys in one go: all of them are saved (and `gone` removed), or none
+        const db = await dbPromise; if (!db) { entries.forEach(([k, v]) => memory.set(k, structuredClone(v))); gone.forEach(k => memory.delete(k)); return; }
+        return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'), s = t.objectStore('kv'); entries.forEach(([k, v]) => s.put(v, k)); gone.forEach(k => s.delete(k)); t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error('Could not save on this device.')); });
       },
       async drop(test) { // every key that passes test, in one go
         const db = await dbPromise; if (!db) { [...memory.keys()].filter(test).forEach(k => memory.delete(k)); return; }
@@ -96,6 +100,7 @@
       return data;
     }
     if (op.type === 'setAll') { (op.items || []).forEach(({ col, item }) => applyOp(data, { type: 'set', col, id: item.id, item })); return data; } // records in several collections as one change, e.g. an entry and its photos
+    if (op.type === 'fold') return applyFold(data, op);
     const list = data.collections[op.col] || (data.collections[op.col] = []);
     const idx = op.id != null ? list.findIndex(x => x.id === op.id) : -1;
     switch (op.type) {
@@ -115,9 +120,51 @@
   function applyAll(base, ops) {
     const data = { ...base, collections: { ...base.collections } }, copied = new Set();
     for (const op of ops) {
-      for (const col of op.type === 'setAll' ? (op.items || []).map(x => x.col) : op.col ? [op.col] : []) if (!copied.has(col)) { copied.add(col); data.collections[col] = [...(data.collections[col] || [])]; }
+      for (const col of op.type === 'setAll' ? (op.items || []).map(x => x.col) : op.type === 'fold' ? Object.keys(op.cols || {}) : op.col ? [op.col] : []) if (!copied.has(col)) { copied.add(col); data.collections[col] = [...(data.collections[col] || [])]; }
       applyOp(data, op);
     }
+    return data;
+  }
+
+  // ---------- changes an older version of the app saved in data.json (GitHub mode, see foldIn) ----------
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const byId = list => new Map((Array.isArray(list) ? list : []).filter(x => isPlain(x) && x.id != null).map(x => [x.id, x]));
+  const changedKeys = (a, b) => ({ set: Object.fromEntries(Object.keys(b).filter(k => !same(a[k], b[k])).map(k => [k, b[k]])), unset: Object.keys(a).filter(k => !(k in b)) });
+  // One file's part of data.json at two of its versions -> one change with only what the older app changed in between (and the record):
+  // records added, the fields it changed, records it removed, and settings. The rest of the file is left as it is, so a
+  // record removed with the new version never comes back, and an edit made there is kept unless the older app edited that field.
+  function foldOp(before, after, from, to, at) {
+    const op = { type: 'fold', from, to, at, cols: {}, meta: {}, unset: [], sub: {}, reads: [] };
+    for (const c of new Set([...Object.keys(before.collections), ...Object.keys(after.collections)])) {
+      const was = byId(before.collections[c]), now = byId(after.collections[c]), d = { put: [], patch: [], del: [] };
+      now.forEach((item, id) => { const old = was.get(id); if (!old) d.put.push(item); else if (!same(old, item)) d.patch.push({ id, ...changedKeys(old, item) }); });
+      was.forEach((item, id) => { if (!now.has(id)) d.del.push(id); });
+      if (d.put.length || d.patch.length || d.del.length) op.cols[c] = d;
+    }
+    for (const k of new Set([...Object.keys(before.meta), ...Object.keys(after.meta)])) {
+      const a = before.meta[k], b = after.meta[k];
+      if (k === 'legacy' || same(a, b)) continue;
+      if (k === 'inboxReads' && isPlain(b)) { for (const [who, r] of Object.entries(b)) if (isPlain(r) && !same(isPlain(a) ? a[who] : undefined, r)) op.reads.push({ who, since: r.since, read: r.read }); } // merged, like a read on this version
+      else if (!(k in after.meta)) op.unset.push(k);
+      else if (isPlain(a) && isPlain(b)) op.sub[k] = changedKeys(a, b); // avatars, kindColors, mode: only the entries it changed
+      else op.meta[k] = b;
+    }
+    return op;
+  }
+  function applyFold(data, op) { // only onto the version it was worked out against, so it is made once however often it is replayed
+    if ((isPlain(data.meta?.legacy) ? data.meta.legacy.sha : null) !== op.from) return data;
+    for (const [c, d] of Object.entries(op.cols || {})) {
+      const gone = new Set(d.del || []), list = (data.collections[c] || []).filter(x => !gone.has(x.id)), at = new Map(list.map((x, i) => [x.id, i]));
+      for (const p of d.patch || []) { const i = at.get(p.id); if (i == null) continue; const next = { ...list[i], ...p.set }; (p.unset || []).forEach(k => delete next[k]); list[i] = next; } // removed here: stays removed
+      for (const item of d.put || []) { const i = at.get(item.id); if (i != null) list[i] = item; else { at.set(item.id, list.length); list.push(item); } }
+      data.collections[c] = list;
+    }
+    const meta = { ...data.meta, ...op.meta };
+    (op.unset || []).forEach(k => delete meta[k]);
+    for (const [k, s] of Object.entries(op.sub || {})) { const next = { ...(isPlain(meta[k]) ? meta[k] : {}), ...s.set }; (s.unset || []).forEach(x => delete next[x]); meta[k] = next; }
+    data.meta = meta;
+    for (const r of op.reads || []) applyOp(data, { type: 'inboxRead', who: r.who, since: r.since, cutoff: r.since, items: r.read });
+    data.meta = { ...data.meta, legacy: { sha: op.to, at: op.at } };
     return data;
   }
 
@@ -175,25 +222,109 @@
   }
 
   // ---------- GitHub mode ----------
-  const b64encode = text => { const bytes = new TextEncoder().encode(text); let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
-  const b64decode = b64 => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0)));
+  // The data is kept in data/ as gzip-compressed JSON files, each saved on its own:
+  //   main.json.gz      every collection and the shared settings (calendar events that were not imported)
+  //   imported.json.gz  calendar events brought in from a calendar file (they have an importKey)
+  //   <person>.json.gz  one per person: their own settings (keys ending in :<person>) and message read receipts
+  // The page sees them joined, the same as when everything was in one data.json. That data.json is left as it was when the
+  // first phone moved to the files (never changed or deleted); what an older version of the app still saves there is taken in (foldIn).
+  const PEOPLE = ['sijie', 'zhenzhen']; // the keys of PEOPLE in app.js
+  const SPLIT = ['imported', ...PEOPLE, 'main']; // saved in this order: main last, so the move to the files is complete once main exists
+  const JOIN = ['main', 'imported', ...PEOPLE]; // the page sees main's records first
+  const personOf = key => PEOPLE.find(p => typeof key === 'string' && key.endsWith(':' + p)) || null;
+  const readsHome = who => (PEOPLE.includes(who) ? who : 'main');
+  function emptyPart(name) { return { version: 2, meta: {}, collections: name === 'main' ? Object.fromEntries(COLLECTIONS.map(c => [c, []])) : name === 'imported' ? { events: [] } : {} }; }
+  const fillPart = (name, d) => { if (name === 'main') COLLECTIONS.forEach(c => { d.collections[c] ||= []; }); if (name === 'imported') d.collections.events ||= []; return d; };
+  // The one-file data -> the files, by the same rules as each change (route)
+  function splitData(data, stamp) {
+    const parts = Object.fromEntries(SPLIT.map(n => [n, emptyPart(n)]));
+    for (const [k, v] of Object.entries(data.meta || {})) {
+      if (k === 'legacy') continue;
+      if (k === 'inboxReads' && isPlain(v)) for (const [who, r] of Object.entries(v)) { const m = parts[readsHome(who)].meta; m.inboxReads = { ...m.inboxReads, [who]: r }; }
+      else parts[personOf(k) || 'main'].meta[k] = v;
+    }
+    for (const [c, list] of Object.entries(data.collections || {})) {
+      if (!Array.isArray(list)) continue;
+      if (c !== 'events') parts.main.collections[c] = list;
+      else { parts.main.collections.events = list.filter(e => !e.importKey); parts.imported.collections.events = list.filter(e => e.importKey); }
+    }
+    if (stamp) SPLIT.forEach(n => { parts[n].meta.legacy = stamp; });
+    return parts;
+  }
+  // The files -> what the page sees: records joined; main's settings plus each person's, read receipts merged one level deep
+  function joinParts(parts) {
+    const meta = {}, collections = {};
+    for (const n of JOIN) for (const [k, v] of Object.entries(parts[n].meta)) {
+      if (k !== 'legacy') meta[k] = k === 'inboxReads' && isPlain(v) && isPlain(meta.inboxReads) ? { ...meta.inboxReads, ...v } : v;
+    }
+    for (const c of COLLECTIONS) {
+      const lists = JOIN.map(n => parts[n].collections[c]).filter(l => l && l.length);
+      collections[c] = lists.length > 1 ? [].concat(...lists) : lists[0] || [];
+    }
+    return { version: 1, meta, collections };
+  }
+  // A file's shape, checked before it is trusted or saved: anything unexpected stops saving (nothing is guessed or overwritten)
+  const damaged = (name, why) => Object.assign(new Error(`Saving is paused: data/${name}.json.gz ${why}.`), { code: 'invalid' });
+  function checkPart(name, d) {
+    if (!isPlain(d) || d.version !== 2 || !isPlain(d.meta) || !isPlain(d.collections)) throw damaged(name, 'is not in the expected shape');
+    for (const [c, list] of Object.entries(d.collections)) if (!Array.isArray(list) || !list.every(isPlain)) throw damaged(name, `has a broken ${c} list`);
+    if ('legacy' in d.meta && !(isPlain(d.meta.legacy) && typeof d.meta.legacy.sha === 'string')) throw damaged(name, 'has a broken data.json record');
+    const ownReads = (k, v, who) => k === 'inboxReads' && isPlain(v) && Object.keys(v).every(w => readsHome(w) === who);
+    if (name === 'main') { for (const [k, v] of Object.entries(d.meta)) if (personOf(k) || (k === 'inboxReads' && isPlain(v) && !ownReads(k, v, 'main'))) throw damaged(name, `holds a personal setting (${k})`); }
+    else if (name === 'imported') { if (Object.keys(d.collections).some(c => c !== 'events')) throw damaged(name, 'holds more than calendar events'); if (Object.keys(d.meta).some(k => k !== 'legacy')) throw damaged(name, 'holds settings'); }
+    else {
+      if (Object.values(d.collections).some(l => l.length)) throw damaged(name, 'holds records');
+      for (const [k, v] of Object.entries(d.meta)) if (k !== 'legacy' && personOf(k) !== name && !ownReads(k, v, name)) throw damaged(name, `holds someone else's setting (${k})`);
+    }
+    return d;
+  }
+  function checkOld(d) { // data.json, as the one-file version saved it
+    const bad = () => Object.assign(new Error('data.json could not be read, so nothing was taken from it.'), { code: 'invalid' });
+    if (!isPlain(d) || !isPlain(d.collections) || (d.meta != null && !isPlain(d.meta))) throw bad();
+    for (const list of Object.values(d.collections)) if (!Array.isArray(list) || !list.every(isPlain)) throw bad();
+    d.meta ||= {}; return d;
+  }
+  const countItems = d => Object.values(d.collections).reduce((n, l) => n + l.length, 0);
+
+  // gzip in the browser (Safari 16.4+, Chrome 80+); the data is never saved uncompressed or by a browser without it
+  const canZip = () => typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+  const tooOld = () => Object.assign(new Error('This browser is too old for the new save format. Please update it.'), { code: 'oldbrowser' });
+  async function pipeBytes(bytes, stream) {
+    const w = stream.writable.getWriter(); w.write(bytes).catch(() => {}); w.close().catch(() => {}); // errors come out of the reader
+    const r = stream.readable.getReader(), parts = []; let n = 0;
+    for (;;) { const { done, value } = await r.read(); if (done) break; parts.push(value); n += value.length; }
+    const out = new Uint8Array(n); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out;
+  }
+  const gzip = text => pipeBytes(new TextEncoder().encode(text), new CompressionStream('gzip'));
+  const utf8 = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  const gunzip = async bytes => utf8(await pipeBytes(bytes, new DecompressionStream('gzip')));
+  const bytesToB64 = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
+  const b64ToBytes = b64 => Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0));
+  // a blob asked for raw but sent as JSON ({ sha, content, encoding }): its content
+  const unwrap = (d, sha) => (isPlain(d) && d.sha === sha && d.encoding === 'base64' && typeof d.content === 'string' ? b64ToBytes(d.content) : null);
 
   function githubStore(gh) {
     const api = (gh.apiBase || 'https://api.github.com') + `/repos/${gh.owner}/${gh.repo}`;
     const branch = gh.branch || 'main';
-    const FILE = 'data.json';
-    const stateKey = `github-state:${gh.owner}/${gh.repo}:${branch}`;
+    const oldKey = `github-state:${gh.owner}/${gh.repo}:${branch}`; // this device's copy as the one-file version kept it
+    const stateKey = oldKey + ':v2', fileKey = name => stateKey + ':' + name; // now: what the files share, and one copy per file
     const db = kv();
     const auth = { token: null, name: null };
     try { Object.assign(auth, JSON.parse(localStorage.getItem('olc:github') || '{}')); } catch {}
-    let base = emptyData(), sha = null, etag = null, pending = [], started = false, verified = false;
-    let mutationQueue = Promise.resolve(), revision = 0;
+    // Each file: base is the version GitHub has (at sha), pending the changes still to save on top of it; create: still to be made
+    // (the move to the files); synced: base is GitHub's (not yet for a copy taken over from the one-file version); broken: why saving stopped
+    const files = {};
+    for (const name of SPLIT) files[name] = { name, path: `data/${name}.json.gz`, sha: null, base: emptyPart(name), pending: [], create: false, synced: false, savedAt: 0, revision: 0, superseded: new Map(), broken: null, badSha: null };
+    const all = () => SPLIT.map(n => files[n]);
+    const unsaved = () => all().some(f => f.pending.length || f.create);
+    const stopped = () => (canZip() ? all().find(f => f.broken)?.broken || null : tooOld());
+    let dirEtag = null, rootEtag = null, legacyAt = 0, folding = null, started = false, verified = false;
+    let mutationQueue = Promise.resolve();
     let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null, listening = false, retryStart = null, uploading = 0;
     const thumbs = new Map(); // photo id -> thumbnail Blob (the page makes a link for it when it shows it)
     const loadingThumbs = new Set();
     const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
     const thumbQueue = []; let thumbActive = 0, thumbEmit = null, thumbLast = 0, shown = null; // shown: the photo list of the last full update
-    const superseded = new Map(); // data.json shas our own saves replaced -> when; GitHub can briefly serve those again
     const fileShas = new Map(); // photo id -> { full, thumb }: shas of its files uploaded in this session
     let fileDeletes = []; // photo files still to delete on GitHub, [{ path, sha }]; kept across reloads, retried until done
     let deleting = null, deleteFails = 0, deleteTimer = null;
@@ -230,29 +361,35 @@
       const tick = () => {
         const left = busyUntil - Date.now();
         if (left > 0) { status('ratelimited'); busyTimer = setTimeout(tick, left % 60000 || 60000); return; }
-        poll(); if (pending.length) scheduleFlush(); else deleteFiles();
+        poll(); if (unsaved()) scheduleFlush(); else deleteFiles();
       };
       clearTimeout(busyTimer); busyTimer = setTimeout(tick, (busyUntil - Date.now()) % 60000 || 60000);
       status('ratelimited');
       return busyError(busyUntil);
     }
     const status = (s, err) => { if (!onStatus) return; if (Date.now() < busyUntil) onStatus('ratelimited', busyError(busyUntil)); else onStatus(s, err); };
+    const settled = () => { const stop = stopped(); if (stop) status('error', stop); else status(unsaved() ? 'saving' : 'synced'); };
+    const failed = err => status(navigator.onLine === false ? 'offline' : 'error', err);
     // The device copy is a cache: when storage is full, drop old full photos and try once more, else carry on (logged once).
-    async function cachePut(key, value) {
+    async function cacheSave(entries, gone) {
       if (closed) return false;
-      try { await db.put(key, value); return true; } catch {}
+      try { await db.putMany(entries, gone); return true; } catch {}
       await evictFull();
-      try { await db.put(key, value); return true; }
+      try { await db.putMany(entries, gone); return true; }
       catch (err) { if (!warned) { warned = true; console.warn('This device is out of storage; the app keeps working but saves less for offline use.', err); } return false; }
     }
+    const cachePut = (key, value) => cacheSave([[key, value]]);
     async function evictFull() { // oldest half of the full-photo cache; the first time also copies cached before this list existed
-      const drop = fullCache.splice(0, Math.ceil(fullCache.length / 2));
-      if (!evictedOld) { evictedOld = true; const known = new Set(fullCache); drop.push(...(base.collections.photos || []).map(p => p.id).filter(id => !known.has(id)), ...(base.meta?.hero && !known.has(base.meta.hero) ? [base.meta.hero] : [])); }
+      const drop = fullCache.splice(0, Math.ceil(fullCache.length / 2)), main = files.main.base;
+      if (!evictedOld) { evictedOld = true; const known = new Set(fullCache); drop.push(...(main.collections.photos || []).map(p => p.id).filter(id => !known.has(id)), ...(main.meta?.hero && !known.has(main.meta.hero) ? [main.meta.hero] : [])); }
       await Promise.all(drop.map(id => db.del('full:' + id)));
     }
     const keepFull = id => { fullCache = [...fullCache.filter(x => x !== id), id]; };
-    const persist = () => cachePut(stateKey, { base, sha, pending, files: fileDeletes, fullCache }); // IndexedDB copies it; all of it is plain JSON already
-    const view = () => applyAll(base, pending);
+    // this device's copy: what the files share, and the files named (one change touches only its own); written together, all or nothing
+    const fileCopy = f => ({ sha: f.sha, base: f.base, pending: f.pending, create: f.create, synced: f.synced, savedAt: f.savedAt });
+    const persist = (names = SPLIT, gone) => cacheSave([[stateKey, { files: fileDeletes, fullCache, dirEtag, rootEtag }], ...names.map(n => [fileKey(n), fileCopy(files[n])])], gone);
+    const fileView = name => applyAll(files[name].base, files[name].pending);
+    const view = () => joinParts(Object.fromEntries(SPLIT.map(n => [n, fileView(n)])));
     const withThumbs = list => list.map(p => ({ ...p, thumb: thumbs.get(p.id) || '' }));
     function emit() {
       if (!onChange) return;
@@ -262,90 +399,276 @@
       shown.forEach(p => { if (!thumbs.has(p.id)) loadThumb(p.id); });
     }
 
-    async function pull(force) {
-      const observedRevision = revision;
-      const res = await gh$(`/contents/${FILE}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} });
-      if (res.status === 304) return false;
-      if (res.status === 404 && verified && !sha) { // the repo opens but has no data.json yet: start empty, the first save creates it
-        if (revision !== observedRevision) return false;
-        base = emptyData(); etag = null;
-        await persist();
-        return true;
+    // ---- which file a change belongs in; a change that spans files is split (one part per file)
+    function eventHomes() { // the file holding each calendar event now (its saved copy and the changes waiting)
+      const ids = n => new Set((fileView(n).collections.events || []).map(e => e.id)), imported = ids('imported'), main = ids('main');
+      const holder = id => (imported.has(id) ? 'imported' : main.has(id) ? 'main' : null);
+      return { holder, home: (id, item) => holder(id) || (item && item.importKey ? 'imported' : 'main') }; // a saved event stays where it is
+    }
+    function route(o) {
+      const out = new Map(), t = o.type, group = (list, fileOf) => { const by = new Map(); for (const x of list || []) { const n = fileOf(x); if (!by.has(n)) by.set(n, []); by.get(n).push(x); } return by; };
+      if (t === 'inboxRead') out.set(readsHome(o.who), o);
+      else if (t === 'meta') {
+        const by = new Map(), add = (n, patch) => by.set(n, { ...by.get(n), ...patch });
+        for (const [k, v] of Object.entries(o.patch || {})) {
+          if (k === 'inboxReads' && isPlain(v)) for (const [who, r] of Object.entries(v)) add(readsHome(who), { inboxReads: { ...by.get(readsHome(who))?.inboxReads, [who]: r } });
+          else add(personOf(k) || 'main', { [k]: v });
+        }
+        by.forEach((patch, n) => out.set(n, { ...o, patch }));
       }
-      if (res.status === 404) throw new Error('The private data file could not be opened. Check the repository and token access.');
-      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
-      if (!res.ok) throw new Error('GitHub error ' + res.status);
-      const json = await res.json();
-      if (!force && json.sha === sha && revision === observedRevision) { etag = res.headers.get('ETag'); return false; } // the file we have already (on launch, or the first check after our own save)
-      if (!force && json.sha !== sha && Date.now() - (superseded.get(json.sha) || 0) < 30000) return false; // a lagging copy from before our own save
-      let text = json.content ? b64decode(json.content) : '';
-      if (!text && json.size) { // files over 1 MB come without content
-        const raw = await gh$(`/contents/${FILE}?ref=${branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
-        if (!raw.ok) throw new Error('GitHub error ' + raw.status);
-        text = await raw.text();
+      else if (t === 'metaKey') out.set(o.key === 'inboxReads' ? readsHome(o.sub) : personOf(o.key) || 'main', o);
+      else if (t === 'mergeMeta' && o.key === 'inboxReads' && isPlain(o.value)) group(Object.entries(o.value), ([who]) => readsHome(who)).forEach((entries, n) => out.set(n, { ...o, value: Object.fromEntries(entries) }));
+      else if (t === 'mergeMeta') out.set(personOf(o.key) || 'main', o);
+      else if (t === 'setAll') { const { home } = eventHomes(); group(o.items, x => (x?.col === 'events' ? home(x.item?.id, x.item) : 'main')).forEach((items, n) => out.set(n, { ...o, items })); }
+      else if (o.col !== 'events') out.set('main', o);
+      else if (t === 'set') out.set(eventHomes().home(o.item?.id ?? o.id, o.item), o);
+      else if (t === 'setMany') { const { home } = eventHomes(); group(o.items, item => home(item?.id, item)).forEach((items, n) => out.set(n, { ...o, items })); }
+      else if (t === 'removeMany') { // an id this device doesn't know goes to both (a no-op where it isn't)
+        const { holder } = eventHomes(), ids = { main: [], imported: [] };
+        for (const id of o.ids || []) { const n = holder(id); if (n) ids[n].push(id); else { ids.main.push(id); ids.imported.push(id); } }
+        for (const n of ['main', 'imported']) if (ids[n].length) out.set(n, { ...o, ids: ids[n] });
       }
-      const parsed = text ? JSON.parse(text) : emptyData();
-      if (!parsed.collections || typeof parsed.collections !== 'object') throw new Error('The shared data file is invalid.');
-      COLLECTIONS.forEach(c => parsed.collections[c] ||= []); parsed.meta ||= {};
-      if (revision !== observedRevision) return false;
-      etag = res.headers.get('ETag');
-      base = parsed; sha = json.sha;
+      else out.set(eventHomes().holder(o.id) || 'main', o); // update, remove, addComment, removeComment
+      if (!out.size) out.set('main', o);
+      return [...out];
+    }
+    function addOp(o) { const parts = route(o); for (const [n, x] of parts) files[n].pending.push(x); return parts.map(([n]) => n); }
+
+    // ---- reading from GitHub
+    function refused(res) { // an answer that isn't the file (a rate limit was handled in gh$ already)
+      if (res.status === 401 || res.status === 403) return Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
+      return new Error('GitHub error ' + res.status);
+    }
+    async function list(path, etag) { // a folder: { list: name -> entry, etag }; list null when there is no such folder; same: unchanged (a 304 costs nothing)
+      const res = await gh$(`/contents/${path}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} });
+      if (res.status === 304) return { same: true };
+      if (res.status === 404) return { list: null, etag: null };
+      if (!res.ok) throw refused(res);
+      const body = await res.json();
+      if (!Array.isArray(body)) throw Object.assign(new Error(`GitHub sent something unexpected for ${path || 'the repository'}.`), { code: 'invalid' });
+      return { list: new Map(body.filter(e => e && typeof e.name === 'string').map(e => [e.name, e])), etag: res.headers.get('ETag') };
+    }
+    async function listData() { // data/: file name -> sha
+      const d = await list('data', dirEtag);
+      if (d.list) d.list = new Map([...d.list].filter(([name, e]) => e.type === 'file' && name.endsWith('.json.gz') && SPLIT.includes(name.slice(0, -8))).map(([name, e]) => [name.slice(0, -8), e.sha]));
+      return d;
+    }
+    async function blob(sha) { // one version of a file by its sha: it never changes (no stale copy) and it can be any size
+      const res = await gh$(`/git/blobs/${sha}`, { headers: { Accept: 'application/vnd.github.raw' } });
+      if (!res.ok) throw refused(res);
+      return new Uint8Array(await res.arrayBuffer());
+    }
+    async function decodePart(name, bytes, sha) {
+      let data;
+      try { if (bytes[0] !== 0x1f) bytes = unwrap(JSON.parse(utf8(bytes)), sha) || bytes; data = JSON.parse(await gunzip(bytes)); }
+      catch { throw damaged(name, 'could not be read'); }
+      return fillPart(name, checkPart(name, data));
+    }
+    async function readOld(sha) { // data.json at one of its versions
+      const bytes = await blob(sha);
+      let d = null;
+      try { d = bytes.length ? JSON.parse(utf8(bytes)) : emptyData(); const inner = unwrap(d, sha); if (inner) d = inner.length ? JSON.parse(utf8(inner)) : emptyData(); } catch {}
+      return checkOld(d);
+    }
+    function take(f, base, sha) { f.base = base; f.sha = sha; f.synced = true; f.create = false; f.broken = null; f.badSha = null; f.revision++; }
+    const missing = name => Object.assign(new Error(`Saving is paused: data/${name}.json.gz is missing on GitHub.`), { code: 'missing' });
+    async function reread(f) { // after a save that met someone else's: the file as GitHub has it now
+      const res = await gh$(`/contents/${f.path}?ref=${branch}`);
+      if (res.status === 404) { if (f.sha) throw (f.broken = missing(f.name)); return; } // not listed yet: the next try creates it
+      if (!res.ok) throw refused(res);
+      const j = await res.json();
+      try { take(f, await decodePart(f.name, j.content && j.encoding === 'base64' ? b64ToBytes(j.content) : await blob(j.sha), j.sha), j.sha); }
+      catch (err) { if (err.code === 'invalid') { f.broken = err; f.badSha = j.sha; } throw err; }
+    }
+
+    // What GitHub has, against this device's copy: one listing of data/ (a 304 when nothing changed), then each changed file
+    // by its sha. The first start on this version moves data.json into the files instead.
+    async function sync() {
+      if (!canZip()) throw tooOld();
+      const d = await listData();
+      if (d.same) return false;
+      const main = files.main; // known (or being made), or a new data repo whose files come with the first saves: the files are what there is
+      if ((d.list && d.list.has('main')) || main.sha || main.create || all().every(f => f.synced)) return applyListing(d.list || new Map(), d.etag);
+      return moveIn(d.list || new Map());
+    }
+    async function applyListing(listing, etag) {
+      let changed = false, complete = true; const touched = [];
+      for (const f of all()) {
+        const remote = listing.get(f.name) || null, observed = f.revision;
+        try {
+          if (remote && remote === f.sha) { f.broken = null; continue; }
+          if (!remote) {
+            if (f.sha) { if (Date.now() - f.savedAt < 30000) { complete = false; continue; } throw missing(f.name); } // gone (a listing can lag behind our own new file)
+            if (!f.synced && !f.create) { f.base = emptyPart(f.name); f.synced = true; changed = true; touched.push(f.name); } // not made yet: it is empty
+            continue;
+          }
+          if (Date.now() - (f.superseded.get(remote) || 0) < 30000) { complete = false; continue; } // a lagging listing from before our own save
+          if (remote === f.badSha) throw f.broken || damaged(f.name, 'could not be read');
+          let base;
+          try { base = await decodePart(f.name, await blob(remote), remote); } catch (err) { if (err.code === 'invalid') f.badSha = remote; throw err; }
+          if (f.revision !== observed) { complete = false; continue; } // saved meanwhile: ours is newer
+          take(f, base, remote); changed = true; touched.push(f.name);
+        } catch (err) {
+          if (err.code !== 'invalid' && err.code !== 'missing') throw err; // no answer, GitHub busy...: the next check tries again
+          f.broken = err; complete = false; // saving stops (see stopped); the other files still load
+        }
+      }
+      dirEtag = complete ? etag : null; // something left for later (a lag, a damaged file): the next check lists it all again
+      await persist(touched);
+      return changed;
+    }
+    // The move from data.json to the files (the first phone on this version; a move stopped part way goes on from where it was).
+    // Every file is created from data.json at one version, stamped with its sha (meta.legacy), and saved with a create that never
+    // replaces a file: one already there (the other phone moved at the same moment) is taken as it is, and its own stamp lets foldIn
+    // take in whatever it is missing. data.json is never changed or deleted. Main is created last.
+    async function moveIn(existing) {
+      const root = await list('', null), old = root.list && root.list.get('data.json');
+      let parts = null; // null: a new data repo (an empty one has no listing at all), its files are made by the first saves
+      if (old && old.type === 'file') parts = splitData(await readOld(old.sha), { sha: old.sha, at: Date.now() });
+      else if (!verified) throw new Error('The private data file could not be opened. Check the repository and token access.');
+      for (const f of all()) {
+        if (existing.has(f.name)) {
+          try { take(f, await decodePart(f.name, await blob(existing.get(f.name)), existing.get(f.name)), existing.get(f.name)); }
+          catch (err) { if (err.code === 'invalid') { f.broken = err; f.badSha = existing.get(f.name); } throw err; }
+        } else { f.base = parts ? parts[f.name] : emptyPart(f.name); f.sha = null; f.create = !!parts; f.synced = true; f.broken = null; f.revision++; }
+      }
       await persist();
       return true;
     }
+    // A new data repo's file made by its first save: only while there is still no data.json, which an older version of the app
+    // could have made meanwhile (then that is moved in first, and this change is saved on top)
+    async function stillNew() {
+      const root = await list('', null);
+      if (!root.list || !root.list.has('data.json')) return;
+      all().forEach(f => { if (!f.sha) f.synced = false; }); dirEtag = null;
+      throw new Error('Found data.json from an older version of the app: moving it into the new files first.');
+    }
+
+    // ---- changes an older version of the app still saves in data.json (a phone not updated yet)
+    // Each file records the data.json version it has taken in (meta.legacy). When data.json has moved on, that version and the
+    // new one are compared (both read by sha) and only the difference is made in the file (see foldOp), as a change that applies
+    // on top of that same version only: two phones doing it at once take it in once. Checked on start and every 10 minutes,
+    // until data.json has not changed for 30 days; the record stays.
+    function foldIn(force) {
+      if (folding) return folding;
+      if (!started || !auth.token || stopped() || all().some(f => !f.synced || f.create)) return Promise.resolve();
+      const stamps = all().map(f => [f, fileView(f.name).meta.legacy]).filter(([, s]) => isPlain(s) && typeof s.sha === 'string');
+      if (!stamps.length || Date.now() - Math.max(...stamps.map(([, s]) => +s.at || 0)) > 30 * 864e5) return Promise.resolve();
+      if (!force && Date.now() - legacyAt < 600000) return Promise.resolve();
+      legacyAt = Date.now();
+      folding = (async () => {
+        const root = await list('', rootEtag);
+        if (root.same || !root.list) return 0;
+        const entry = root.list.get('data.json'), to = entry && entry.type === 'file' ? entry.sha : null;
+        const todo = to ? stamps.filter(([, s]) => s.sha !== to) : []; // gone: nothing more to take in (never read as "everything removed")
+        let n = 0;
+        if (todo.length) {
+          const now = await readOld(to), after = splitData(now), before = new Map(), at = Date.now();
+          for (const [f, s] of todo) {
+            if (!before.has(s.sha)) {
+              const was = await readOld(s.sha);
+              if (countItems(was) && !countItems(now)) throw Object.assign(new Error('data.json was emptied by an older version of the app, so nothing was taken from it.'), { code: 'invalid' });
+              before.set(s.sha, splitData(was));
+            }
+            f.pending.push(foldOp(before.get(s.sha)[f.name], after[f.name], s.sha, to, at)); n++; // with nothing new, only its record moves on (so no phone reads these versions again)
+          }
+        }
+        rootEtag = root.etag; await persist(todo.map(([f]) => f.name));
+        return n;
+      })().then(n => { if (n) { emit(); status('saving'); scheduleFlush(); } }, err => failed(err)).finally(() => { folding = null; });
+      return folding;
+    }
+
     async function poll() {
       if (document.hidden || flushing || !auth.token || Date.now() < busyUntil) return;
       if (retryStart) { const retry = retryStart; retryStart = null; retry(); return; } // the first load failed: start() tries again
-      try { if (await pull()) emit(); else retryThumbs(); status(pending.length ? 'saving' : 'synced'); if (pending.length) scheduleFlush(); }
-      catch (err) { status(navigator.onLine === false ? 'offline' : 'error', err); }
+      try { if (await sync()) emit(); else retryThumbs(); settled(); if (unsaved()) scheduleFlush(); }
+      catch (err) { failed(err); return; }
+      await foldIn();
     }
     function schedulePoll() { clearInterval(pollTimer); pollTimer = setInterval(poll, (gh.pollSeconds || 20) * 1000); }
     function listen() {
       if (listening) return; listening = true;
       schedulePoll();
       document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-      scope.addEventListener('online', () => { thumbFails.forEach(f => { f.at = 0; }); deleteFails = 0; poll(); if (pending.length) scheduleFlush(); else deleteFiles(); });
-      scope.addEventListener('beforeunload', e => { if (pending.length || flushing) { e.preventDefault(); e.returnValue = ''; } });
+      scope.addEventListener('online', () => { thumbFails.forEach(f => { f.at = 0; }); deleteFails = 0; poll(); if (unsaved()) scheduleFlush(); else deleteFiles(); });
+      scope.addEventListener('beforeunload', e => { if (unsaved() || flushing) { e.preventDefault(); e.returnValue = ''; } });
     }
 
+    // Each file is saved on its own (one change to a person's file never uploads the others), one request at a time
     async function flush() {
       if (flushing) return flushing;
       if (Date.now() < busyUntil) { scheduleFlush(); return; }
+      const stop = stopped(); if (stop) { status('error', stop); return; } // nothing is written while a file looks wrong, or without gzip
+      let made = false;
       flushing = (async () => {
-        while (pending.length) {
-          const ops = pending.slice();
-          let ok = false;
-          for (let attempt = 0; attempt < 4 && !ok; attempt++) {
-            const next = applyAll(base, ops);
-            const who = auth.name || 'someone';
-            const res = await gh$(`/contents/${FILE}`, { method: 'PUT', body: JSON.stringify({ message: `${who}: ${describe(ops)}`, content: b64encode(JSON.stringify(next, null, 1)), branch, ...(sha ? { sha } : {}) }) });
-            if (res.ok) {
-              const j = await res.json(), now = Date.now();
-              if (sha) { superseded.forEach((at, s) => { if (now - at > 30000) superseded.delete(s); }); superseded.set(sha, now); }
-              base = next; sha = j.content.sha; etag = null; revision++; ok = true;
-            }
-            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); emit(); } // someone else saved first: reload, show theirs at once (even if our retry fails), replay ours
-            else if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token cannot write to this repo.'), { code: 'auth' });
-            else throw new Error('GitHub error ' + res.status);
-          }
-          if (!ok) throw new Error('Could not save after several tries.');
-          pending = pending.slice(ops.length);
-          await persist(); // what was saved is what the page shows already
-        }
+        for (let f; (f = all().find(x => x.synced && (x.pending.length || x.create))); ) { const stop = stopped(); if (stop) throw stop; made ||= f.create; await save(f); }
       })();
-      try { await flushing; status('synced'); }
-      catch (err) { status(navigator.onLine === false ? 'offline' : 'error', err); setTimeout(() => pending.length && scheduleFlush(), 15000); }
+      try { await flushing; settled(); }
+      catch (err) { failed(err); setTimeout(() => unsaved() && scheduleFlush(), 15000); }
       finally { flushing = null; }
+      if (made && !unsaved()) legacyAt = 0; // the move is done: the next check (files first) looks for anything saved in data.json meanwhile
       await deleteFiles();
     }
-    function describe(ops) {
+    async function save(f) {
+      const ops = f.pending.slice();
+      let ok = false;
+      for (let attempt = 0; attempt < 4 && !ok; attempt++) {
+        const next = applyAll(f.base, ops), text = JSON.stringify(next);
+        if (!f.create && text === JSON.stringify(f.base)) { ok = true; break; } // nothing changes (e.g. already taken in): no save
+        checkPart(f.name, next);
+        if (!f.sha && !f.create) await stillNew();
+        const zipped = await gzip(text);
+        if (await gunzip(zipped) !== text) throw new Error('The data could not be compressed, so it was not saved. Please try again.');
+        const res = await gh$(`/contents/${f.path}`, { method: 'PUT', body: JSON.stringify({ message: `${auth.name || 'someone'}: ${describe(f, ops)}`, content: bytesToB64(zipped), branch, ...(f.sha ? { sha: f.sha } : {}) }) });
+        if (res.ok) {
+          const j = await res.json(), now = Date.now();
+          if (f.sha) { f.superseded.forEach((at, s) => { if (now - at > 30000) f.superseded.delete(s); }); f.superseded.set(f.sha, now); } // GitHub can briefly list the old one again
+          f.base = next; f.sha = j.content.sha; f.create = false; f.savedAt = now; f.revision++; ok = true;
+        }
+        else if (res.status === 409 || res.status === 422) { await reread(f); emit(); } // someone else saved this file first (or made it): reload it, show theirs at once (even if our retry fails), replay ours
+        else if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token cannot write to this repo.'), { code: 'auth' });
+        else throw new Error('GitHub error ' + res.status);
+      }
+      if (!ok) throw new Error('Could not save after several tries.');
+      f.pending = f.pending.slice(ops.length);
+      await persist([f.name]); // what was saved is what the page shows already
+    }
+    function describe(f, ops) {
+      if (f.create) return `move data.json into ${f.path}${ops.length ? ` (+${ops.length} more)` : ''}`;
       const o = ops[0], n = ops.length;
-      const text = { set: 'save', setAll: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages' }[o.type] || 'update';
+      const text = { set: 'save', setAll: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages', fold: 'take in changes from data.json' }[o.type] || 'update';
       const col = o.col || [...new Set((o.items || []).map(x => x.col))].join(' + '); // setAll: 'diary + photos'
       return `${text} ${col}${n > 1 ? ` (+${n - 1} more)` : ''}`.trim();
     }
     function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, Math.max(700, busyUntil - Date.now())); }
-    async function op(o) { pending.push(clean(o)); await persist(); status('saving'); emit(); scheduleFlush(); }
+    async function op(o) { const names = addOp(clean(o)); await persist(names); status('saving'); emit(); scheduleFlush(); }
+
+    // This device's copy. One kept by the one-file version is split the same way (its changes still waiting go into the files
+    // and are saved once GitHub has been asked what it has), then removed. A damaged file copy is read from GitHub again.
+    async function loadCache() {
+      const shared = await db.get(stateKey), old = await db.get(oldKey);
+      let any = false;
+      if (isPlain(shared)) {
+        fileDeletes = shared.files || []; fullCache = shared.fullCache || []; dirEtag = shared.dirEtag || null; rootEtag = shared.rootEtag || null;
+        const copies = []; for (const f of all()) copies.push(await db.get(fileKey(f.name)));
+        const valid = (c, name) => { try { return isPlain(c) && Array.isArray(c.pending) && !!checkPart(name, c.base); } catch { return false; } };
+        const whole = all().every((f, i) => valid(copies[i], f.name));
+        all().forEach((f, i) => {
+          const c = copies[i]; if (isPlain(c) && Array.isArray(c.pending)) f.pending = c.pending;
+          if (whole) { f.base = fillPart(f.name, c.base); f.sha = c.sha || null; f.create = !!c.create; f.synced = !!c.synced; f.savedAt = +c.savedAt || 0; }
+        });
+        if (whole) any = true; else dirEtag = null; // all files are read again (their changes waiting are kept)
+      }
+      if (isPlain(old)) {
+        if (!any) { const parts = splitData(isPlain(old.base) && isPlain(old.base.collections) ? old.base : emptyData()); all().forEach(f => { f.base = parts[f.name]; }); any = true; } // shown until GitHub answers; never saved as it is
+        const paths = new Set(fileDeletes.map(x => x.path)); fileDeletes = [...fileDeletes, ...(old.files || []).filter(x => x && !paths.has(x.path))];
+        if (!isPlain(shared)) fullCache = old.fullCache || [];
+        for (const o of Array.isArray(old.pending) ? old.pending : []) { try { addOp(o); } catch { files.main.pending.push(o); } } // (one it can't place goes where all of them went before)
+        await persist(SPLIT, [oldKey]);
+      }
+      return any;
+    }
 
     // photos: stored as files photos/<id>.jpg (full) and photos/<id>-thumb.jpg
     async function putFile(path, dataUrl, message) { // resolves to the new file's sha
@@ -412,13 +735,13 @@
     // Files go only after the data change that removed their photo is saved (nothing pending), one at a time, retried later on failure.
     function deleteFiles() {
       if (deleting) return deleting;
-      if (flushing || pending.length || !fileDeletes.length || !auth.token || Date.now() < busyUntil) return;
+      if (flushing || unsaved() || !fileDeletes.length || !auth.token || Date.now() < busyUntil) return;
       clearTimeout(deleteTimer);
       let failed = false;
       deleting = (async () => {
         const listing = {};
         try {
-          while (fileDeletes.length && !pending.length) {
+          while (fileDeletes.length && !unsaved()) {
             const job = fileDeletes[0];
             await deleteFile(job.path, 'delete photo', job.sha, listing);
             fileDeletes = fileDeletes.filter(x => x !== job);
@@ -428,7 +751,7 @@
           failed = true; // a busy GitHub resumes the deletes when the wait is over
           if (err.code !== 'ratelimit') { deleteFails++; deleteTimer = setTimeout(deleteFiles, Math.min(600000, 20000 * 2 ** (deleteFails - 1))); }
         }
-        await persist();
+        await persist([]);
       })().finally(() => { deleting = null; if (!failed) deleteFiles(); });
       return deleting;
     }
@@ -457,7 +780,7 @@
     }
     function retryThumbs() { // missing thumbs: failed ones once their wait is over, and any skipped while GitHub was busy (emit only runs when data changes)
       const ids = new Set();
-      (base.collections.photos || []).forEach(p => { ids.add(p.id); if (!thumbs.has(p.id)) loadThumb(p.id); });
+      (files.main.base.collections.photos || []).forEach(p => { ids.add(p.id); if (!thumbs.has(p.id)) loadThumb(p.id); });
       thumbFails.forEach((f, id) => { if (!ids.has(id)) thumbFails.delete(id); });
     }
 
@@ -465,19 +788,20 @@
       mode: 'github',
       async start(cb, statusCb) {
         onChange = cb; onStatus = statusCb; status('connecting');
-        const cached = await db.get(stateKey);
-        if (cached) { base = cached.base; sha = cached.sha; pending = cached.pending || []; fileDeletes = cached.files || []; fullCache = cached.fullCache || []; emit(); }
+        const cached = await loadCache();
+        if (cached) emit();
         for (;;) {
-          try { const changed = await pull(); started = true; if (changed || !cached) emit(); status(pending.length ? 'saving' : 'synced'); break; }
+          try { const changed = await sync(); started = true; if (changed || !cached) emit(); settled(); break; }
           catch (err) {
-            if (cached) { started = true; status(navigator.onLine === false ? 'offline' : 'error', err); break; }
+            if (cached) { started = true; failed(err); break; } // the copy on this device stays readable
             if (err.code === 'auth') { if (listening) { clearInterval(pollTimer); auth.token = null; } throw err; }
             // nothing saved on this device yet: keep the error showing and try again on the next poll, when back online or back in the tab
-            listen(); status(navigator.onLine === false ? 'offline' : 'error');
+            listen(); failed(err.code === 'oldbrowser' || err.code === 'invalid' ? err : undefined); // what to do about it, when there is something
             await new Promise(res => { retryStart = res; });
           }
         }
-        listen(); if (pending.length) scheduleFlush(); else deleteFiles();
+        listen(); if (unsaved()) scheduleFlush(); else deleteFiles();
+        foldIn(true);
       },
       onAuth(cb) {
         if (!auth.token) { cb(null); return; }
@@ -500,14 +824,14 @@
       // Not while photos or changes are still on their way to GitHub; then this device forgets the token and the private data it
       // keeps: the saved copy, thumbnails, full photos and drafts. Unsent file deletions only leave spare files behind.
       async signOut() {
-        if (pending.length || flushing || uploading) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
+        if (unsaved() || flushing || uploading) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
         closed = true; clearInterval(pollTimer); localStorage.removeItem('olc:github');
         for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('olc:drafts:')) localStorage.removeItem(k); }
         await db.drop(k => typeof k === 'string' && /^(github-state:|thumb:|full:)/.test(k));
         location.reload();
       },
-      pending: () => pending.length > 0 || !!flushing,
-      async isSeeded() { if (!started) await pull(); return !!view().meta.seeded; },
+      pending: () => unsaved() || !!flushing,
+      async isSeeded() { if (!started) await sync(); return !!view().meta.seeded; },
       markSeeded: () => op({ type: 'meta', patch: { seeded: true } }),
       setMeta: patch => op({ type: 'meta', patch }),
       metaKey: (key, sub, value) => op({ type: 'metaKey', key, sub, value }),
@@ -525,12 +849,12 @@
       async dropFull(id) {
         const v = view(); if (!id || v.meta.hero === id || (v.collections.photos || []).some(p => p.id === id)) return;
         fileDeletes.push({ path: `photos/${id}.jpg`, sha: fileShas.get(id)?.full || null }); await forget(id);
-        await persist(); deleteFiles();
+        await persist([]); deleteFiles();
       },
       // files uploaded for photos whose records were never saved (a post that failed part way): deleted in the background
       async discard(ids) {
         for (const id of ids) { const s = fileShas.get(id) || {}; fileDeletes.push({ path: `photos/${id}-thumb.jpg`, sha: s.thumb || null }, { path: `photos/${id}.jpg`, sha: s.full || null }); await forget(id); }
-        await persist(); deleteFiles();
+        await persist([]); deleteFiles();
       },
       update: (col, id, patch) => op({ type: 'update', col, id, patch }),
       // Only the data change waits here (it works offline); the photo's files are deleted in the background once it is saved.
