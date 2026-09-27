@@ -7,7 +7,7 @@ const shift = (iso, n) => new Date(Date.parse(iso) + n * DAY).toISOString().slic
 const cycleQids = start => Array.from({ length: BANK.length }, (_, i) => bankFor(shift(start, i)).qid);
 const item = (id, date, extra = {}) => ({ id, date, text: `Question ${id}?`, by: 'Sijie', createdAt: 1, ...extra });
 const ons = list => Object.fromEntries(schedule(list).map(s => [s.q.id, s.on]));
-const DASH = /[–—]/;
+const DASH = /[\u2013\u2014]/;
 const wellFormed = (x, label) => {
   assert.ok(x.en.trim() && x.en.endsWith('?'), `${label} en`);
   assert.ok(x.zh.trim() && /[一-鿿]/.test(x.zh) && x.zh.endsWith('？'), `${label} zh`);
