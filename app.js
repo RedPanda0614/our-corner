@@ -91,13 +91,14 @@
   const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
   const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
   const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
+  let heroArt = null; // the top picture's link as last set
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
-    const hero = data.meta.hero && safeImage(ui.heroImages[data.meta.hero]);
-    if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
+    const hero = linkOf('hero', data.meta.hero ? ui.heroImages[data.meta.hero] : '');
+    if (hero !== heroArt) { heroArt = hero; if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art'); }
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
   }
@@ -636,8 +637,22 @@
   }
 
   // ---------- diary ----------
-  const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
-  const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  // Pictures go into the page as short blob: links this page makes when a picture is first shown, one per picture and place,
+  // not as data URLs pasted into every row (an avatar ~10 KB, the top picture ~500 KB). A place's old link is let go
+  // when its picture changes, a thumbnail's when its photo is gone. Synced strings still have to pass safeImage.
+  const links = new Map(); // place -> { v: the picture, url }
+  function linkOf(place, v) {
+    const cur = links.get(place); if (cur && cur.v === v) return cur.url;
+    if (cur?.url) URL.revokeObjectURL(cur.url);
+    const blob = v instanceof Blob ? v : safeImage(v, false) && CCStore.toBlob(v), url = blob ? URL.createObjectURL(blob) : '';
+    links.set(place, { v, url }); return url;
+  }
+  let linksFor = null; // the photo list the thumbnail links were last checked against
+  const thumbOf = p => { // '' shows the ▧ placeholder
+    if (linksFor !== data.photos) { linksFor = data.photos; const ids = new Set(data.photos.map(x => 't:' + x.id)); for (const [k, l] of links) if (k.startsWith('t:') && !ids.has(k)) { if (l.url) URL.revokeObjectURL(l.url); links.delete(k); } }
+    return p ? linkOf('t:' + p.id, p.thumb) : '';
+  };
+  const avatarOf = key => linkOf('a:' + key, (data.meta.avatars || {})[key]);
   let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
   function entryPhotoIds(entry) {
     // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
@@ -807,7 +822,7 @@
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
-    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = full; if (img.complete) applyPhotoZoom(); } }
+    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = linkOf('full', full); if (img.complete) applyPhotoZoom(); } } // one full photo's link at a time
   }
   function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; lightbox.pointer = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
 

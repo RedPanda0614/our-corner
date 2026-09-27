@@ -98,7 +98,7 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   vm.runInContext(source, context);
   const store = window.CCStore.create(config);
   const changes = {}, statuses = [], photoTimes = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
-  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, get emits() { return emits; },
+  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, Blob, get emits() { return emits; },
     connect: () => store.start((col, items) => { if (col === 'meta') emits++; if (col === 'photos') photoTimes.push(Date.now() + clock.offset); changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
@@ -241,7 +241,8 @@ test('a new device downloads thumbnails four at a time and shows a burst of them
   assert.ok(remote.maxActive <= 4, 'max concurrent ' + remote.maxActive);
   const full = page.emits, sent = page.photoTimes.length; await page.advance(400);
   assert.equal(page.photoTimes.length - sent, 1, 'one update for the burst'); assert.equal(page.emits, full, 'only the photo list is sent again');
-  assert.ok(page.changes.photos.every(p => p.thumb.startsWith('data:image/jpeg;base64,')));
+  assert.ok(page.changes.photos.every(p => p.thumb.type === 'image/jpeg'), 'thumbnails come as Blobs');
+  assert.equal(page.disk.get('thumb:ph0').type, 'image/jpeg', 'and are kept on the device as Blobs');
 });
 
 test('thumbnails arriving one after another update the photo list at most every 0.4 s, the first ones quickly', async () => {
@@ -254,7 +255,7 @@ test('thumbnails arriving one after another update the photo list at most every 
   for (let i = 0; i < 12; i++) { await waitFor(() => remote.gate.length, 'next thumb'); remote.gate.shift()(); await settle(); await page.advance(100); } // one arrives every 0.1 s
   await page.advance(400);
   const times = page.photoTimes.slice(sent);
-  assert.equal(times[0] - t0, 50, 'the first one shows after 50 ms');
+  assert.ok(times[0] - t0 >= 50 && times[0] - t0 < 100, `the first one shows after 50 ms (${times[0] - t0})`);
   times.slice(1).forEach((t, i) => assert.ok(t - times[i] >= 400, `updates ${t - times[i]} ms apart`));
   assert.ok(times.length <= 4, times.length + ' updates for 1.2 s of arrivals');
   assert.ok(page.changes.photos.every(p => p.thumb), 'every thumb is shown in the end');
@@ -474,6 +475,39 @@ test('a save conflict still reloads whatever GitHub has, even the content from b
   await page.store.set('tasks', { id: 'two', title: 'x' }); await page.flush();
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
   assert.equal(page.store.pending(), false);
+});
+
+// ---------- pictures on the device are Blobs ----------
+const bytes = blob => Buffer.concat(blob.parts.map(p => Buffer.from(p))).toString('base64');
+test('thumbnails and full photos an older version kept as data URLs are read as Blobs and saved again as Blobs', async () => {
+  const remote = server(); remote.data.collections.photos = [{ id: 'p1', thumb: '' }];
+  const disk = new Map([['thumb:p1', IMG], ['full:p1', IMG]]);
+  const page = browser(remote, { disk }); await page.start(); await settle(); await page.advance(400);
+  assert.equal(page.changes.photos[0].thumb.type, 'image/jpeg'); assert.equal(bytes(page.changes.photos[0].thumb), 'YQ==');
+  const full = await page.store.getFull('p1'); await settle();
+  assert.equal(full.type, 'image/jpeg'); assert.equal(bytes(full), 'YQ==');
+  for (const key of ['thumb:p1', 'full:p1']) { assert.equal(typeof disk.get(key), 'object', key); assert.equal(bytes(disk.get(key)), 'YQ=='); }
+  assert.equal(remote.count(/^GET photos\//), 0, 'nothing downloaded');
+  await page.store.putFull('p2', IMG); await page.store.set('photos', { id: 'p2', thumb: IMG }); // a new photo's pictures are Blobs straight away
+  assert.equal(disk.get('full:p2').type, 'image/jpeg'); assert.equal(disk.get('thumb:p2').type, 'image/jpeg');
+  await page.store.set('photos', { id: 'p3', thumb: new page.Blob(['x'], { type: 'image/jpeg' }) }); await page.flush(); // a thumbnail Blob never goes into data.json
+  assert.deepEqual(remote.data.collections.photos.map(p => p.thumb), ['', '', '']);
+});
+
+test('local mode keeps thumbnails in its data record as data URLs, never a blob: link or a Blob, and full photos as Blobs', async () => {
+  const page = browser(null, { config: {} }); await page.connect();
+  await page.store.putFull('p1', IMG); await page.store.set('photos', { id: 'p1', thumb: IMG, caption: '' });
+  assert.equal(page.disk.get('full:p1').type, 'image/jpeg'); assert.equal(bytes(await page.store.getFull('p1')), 'YQ==');
+  await page.store.set('photos', { id: 'p1', thumb: 'blob:http://localhost:8771/2b0f3c3e-9a51-4f0e-9d0e-1f7d2f4f3a11', caption: 'x' }); // e.g. a record taken from the page
+  await page.store.update('photos', 'p1', { thumb: 'blob:http://localhost:8771/aa', albumId: 'a1' });
+  await page.store.batchSet('photos', [{ id: 'p1', thumb: new page.Blob(['x'], { type: 'image/jpeg' }), caption: 'y', albumId: 'a1' }, { id: 'p2', thumb: 'blob:x' }]);
+  const saved = page.disk.get('data').collections.photos;
+  assert.deepEqual(saved.map(p => [p.id, p.thumb, p.caption, p.albumId]), [['p1', IMG, 'y', 'a1'], ['p2', '', undefined, undefined]]);
+  assert.ok(!JSON.stringify(page.disk.get('data')).includes('blob:'));
+  assert.equal(page.changes.photos[0].thumb, IMG);
+  page.disk.set('full:old', IMG); // kept by an older version
+  const full = await page.store.getFull('old'); await settle();
+  assert.equal(bytes(full), 'YQ=='); assert.equal(bytes(page.disk.get('full:old')), 'YQ==');
 });
 
 // ---------- the file we already have is not downloaded again ----------

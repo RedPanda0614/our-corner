@@ -35,6 +35,15 @@
       }
     };
   }
+  // Pictures are kept on the device as Blobs (older versions kept data URLs, a third bigger, which are turned into Blobs when read)
+  function dataUrlToBlob(url) {
+    try { const i = url.indexOf(','), bin = atob(url.slice(i + 1)), bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); return new Blob([bytes], { type: url.slice(5, url.indexOf(';')) || 'image/jpeg' }); }
+    catch { return null; }
+  }
+  async function readPicture(db, key) { // a Blob, or undefined; an old data URL is turned into a Blob and saved again as one
+    const v = await db.get(key); if (typeof v !== 'string') return v || undefined;
+    const blob = dataUrlToBlob(v); if (blob) db.put(key, blob).catch(() => {}); return blob || undefined;
+  }
 
   // ---------- operations (shared by both modes, so GitHub conflicts can be replayed) ----------
   function emptyData() { const d = { version: 1, meta: {}, collections: {} }; COLLECTIONS.forEach(c => d.collections[c] = []); return d; }
@@ -105,8 +114,17 @@
     let data = null, onChange = null, queue = Promise.resolve();
     async function load() { data = (await db.get('data')) || emptyData(); COLLECTIONS.forEach(c => data.collections[c] ||= []); }
     const emitAll = () => { if (!onChange) return; COLLECTIONS.forEach(c => onChange(c, data.collections[c])); onChange('meta', data.meta || {}); };
+    // here a photo's thumbnail lives in the data record as a data URL: anything else (a page's blob: link, a Blob) keeps the saved one
+    const odd = t => t != null && t !== '' && !(typeof t === 'string' && t.startsWith('data:'));
+    function keepThumbs(o) {
+      const saved = id => (data.collections.photos || []).find(p => p.id === id)?.thumb || '', fix = item => (odd(item.thumb) ? { ...item, thumb: saved(item.id) } : item);
+      if (o.col === 'photos' && o.type === 'set') o.item = fix(o.item);
+      if (o.col === 'photos' && o.type === 'setMany') o.items = o.items.map(fix);
+      if (o.col === 'photos' && o.type === 'update' && odd(o.patch?.thumb)) delete o.patch.thumb;
+      return o;
+    }
     function op(o) {
-      const job = queue.then(async () => { await load(); applyOp(data, clean(o)); await db.put('data', data); emitAll(); channel?.postMessage('changed'); });
+      const job = queue.then(async () => { await load(); applyOp(data, keepThumbs(clean(o))); await db.put('data', data); emitAll(); channel?.postMessage('changed'); });
       queue = job.catch(() => {}); return job;
     }
     if (channel) channel.onmessage = () => { queue = queue.then(async () => { await load(); emitAll(); }); };
@@ -129,15 +147,14 @@
       addComment: (id, comment) => op({ type: 'addComment', col: 'diary', id, comment }),
       removeComment: (id, commentId) => op({ type: 'removeComment', col: 'diary', id, commentId }),
       batchSet: (col, items) => op({ type: 'setMany', col, items }),
-      putFull: (id, dataUrl) => db.put('full:' + id, dataUrl),
-      getFull: id => db.get('full:' + id)
+      putFull: (id, dataUrl) => db.put('full:' + id, dataUrlToBlob(dataUrl) || dataUrl),
+      getFull: id => readPicture(db, 'full:' + id) // a Blob
     };
   }
 
   // ---------- GitHub mode ----------
   const b64encode = text => { const bytes = new TextEncoder().encode(text); let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
   const b64decode = b64 => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0)));
-  const blobToDataUrl = blob => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
 
   function githubStore(gh) {
     const api = (gh.apiBase || 'https://api.github.com') + `/repos/${gh.owner}/${gh.repo}`;
@@ -150,7 +167,7 @@
     let base = emptyData(), sha = null, etag = null, pending = [], started = false, verified = false;
     let mutationQueue = Promise.resolve(), revision = 0;
     let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null, listening = false, retryStart = null;
-    const thumbs = new Map(); // photo id -> object URL / data URL
+    const thumbs = new Map(); // photo id -> thumbnail Blob (the page makes a link for it when it shows it)
     const loadingThumbs = new Set();
     const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
     const thumbQueue = []; let thumbActive = 0, thumbEmit = null, thumbLast = 0, shown = null; // shown: the photo list of the last full update
@@ -321,10 +338,10 @@
       }
       throw new Error('The photo could not be uploaded. Please try again.');
     }
-    async function getFile(path) {
+    async function getFile(path) { // a photo file as a Blob
       const res = await gh$(`/contents/${path}?ref=${branch}`, { headers: { Accept: 'application/vnd.github.raw' } });
       if (!res.ok) return null;
-      return blobToDataUrl(new Blob([await res.arrayBuffer()], { type: 'image/jpeg' }));
+      return new Blob([await res.arrayBuffer()], { type: 'image/jpeg' });
     }
     // A file's sha without downloading it: one directory listing (names and shas only) serves every older photo in a batch;
     // a file missing from it (a listing stops at 1,000 files) falls back to reading the file's own details.
@@ -377,24 +394,24 @@
     async function loadThumb(id) {
       const fail = thumbFails.get(id);
       if (loadingThumbs.has(id) || (fail && Date.now() < fail.at) || Date.now() < busyUntil) return; loadingThumbs.add(id);
-      const url = await db.get('thumb:' + id);
-      if (url) { loadingThumbs.delete(id); thumbReady(id, url); } else { thumbQueue.push(id); pumpThumbs(); }
+      const blob = await readPicture(db, 'thumb:' + id);
+      if (blob) { loadingThumbs.delete(id); thumbReady(id, blob); } else { thumbQueue.push(id); pumpThumbs(); }
     }
     function pumpThumbs() { // at most 4 downloads at a time, so a new device doesn't send hundreds of requests at once
       while (thumbActive < 4 && thumbQueue.length) {
         const id = thumbQueue.shift(); thumbActive++;
-        getFile(`photos/${id}-thumb.jpg`).catch(err => err.code === 'ratelimit' ? undefined : null).then(url => {
+        getFile(`photos/${id}-thumb.jpg`).catch(err => err.code === 'ratelimit' ? undefined : null).then(blob => {
           thumbActive--; loadingThumbs.delete(id);
-          if (url) { thumbFails.delete(id); cachePut('thumb:' + id, url); thumbReady(id, url); }
-          else if (url === null) { const n = (thumbFails.get(id)?.n || 0) + 1; thumbFails.set(id, { n, at: Date.now() + Math.min(300000, 15000 * 2 ** (n - 1)) }); }
+          if (blob) { thumbFails.delete(id); cachePut('thumb:' + id, blob); thumbReady(id, blob); }
+          else if (blob === null) { const n = (thumbFails.get(id)?.n || 0) + 1; thumbFails.set(id, { n, at: Date.now() + Math.min(300000, 15000 * 2 ** (n - 1)) }); }
           pumpThumbs();
         });
       }
     }
     // Arriving thumbnails go out together, as the photo list alone (nothing else changed): at most one update every 0.4 s,
     // and the first ones after a quiet spell 50 ms after they arrive
-    function thumbReady(id, url) {
-      thumbs.set(id, url);
+    function thumbReady(id, blob) {
+      thumbs.set(id, blob);
       thumbEmit ||= setTimeout(() => { thumbEmit = null; thumbLast = Date.now(); if (shown && onChange) onChange('photos', withThumbs(shown)); else emit(); }, Math.max(50, thumbLast + 400 - Date.now()));
     }
     function retryThumbs() { // missing thumbs: failed ones once their wait is over, and any skipped while GitHub was busy (emit only runs when data changes)
@@ -448,10 +465,11 @@
       mergeMeta: (key, value, num = 'max') => op({ type: 'mergeMeta', key, value, num }),
       markInboxRead: (who, since, cutoff, items) => op({ type: 'inboxRead', who, since, cutoff, items }),
       async set(col, item) {
+        if (col === 'photos' && item.thumb && typeof item.thumb !== 'string') item = { ...item, thumb: '' }; // a thumbnail Blob from the page stays on this device
         if (col === 'photos' && item.thumb && item.thumb.startsWith('data:')) {
           const thumb = item.thumb;
           const thumbSha = await putFile(`photos/${item.id}-thumb.jpg`, thumb, `${auth.name || 'someone'}: add photo`);
-          thumbs.set(item.id, thumb); await cachePut('thumb:' + item.id, thumb);
+          const blob = dataUrlToBlob(thumb); if (blob) { thumbs.set(item.id, blob); await cachePut('thumb:' + item.id, blob); }
           const shas = { ...item.shas }, fullSha = fullShas.get(item.id); fullShas.delete(item.id);
           if (fullSha) shas.full = fullSha; if (thumbSha) shas.thumb = thumbSha;
           item = { ...item, thumb: '', ...(shas.full || shas.thumb ? { shas } : {}) }; // file shas let a later delete skip downloading the photo
@@ -478,13 +496,13 @@
       async putFull(id, dataUrl) {
         const fileSha = await putFile(`photos/${id}.jpg`, dataUrl, `${auth.name || 'someone'}: add photo`);
         if (fileSha) fullShas.set(id, fileSha);
-        if (await cachePut('full:' + id, dataUrl)) keepFull(id);
+        if (await cachePut('full:' + id, dataUrlToBlob(dataUrl) || dataUrl)) keepFull(id);
       },
-      async getFull(id) {
-        let url = await db.get('full:' + id);
-        if (url) keepFull(id);
-        else { url = await getFile(`photos/${id}.jpg`); if (url) cachePut('full:' + id, url).then(ok => ok && keepFull(id)); }
-        return url;
+      async getFull(id) { // a Blob
+        let blob = await readPicture(db, 'full:' + id);
+        if (blob) keepFull(id);
+        else { blob = await getFile(`photos/${id}.jpg`); if (blob) cachePut('full:' + id, blob).then(ok => ok && keepFull(id)); }
+        return blob;
       }
     };
   }
@@ -517,5 +535,5 @@
     });
   }
 
-  scope.CCStore = { create, uid, resizeImage, COLLECTIONS };
+  scope.CCStore = { create, uid, resizeImage, COLLECTIONS, toBlob: dataUrlToBlob };
 })(window);

@@ -54,7 +54,7 @@ function browser(remote, disk = new Map(), local = new Map()) {
   const window = { addEventListener() {} };
   const context = vm.createContext({ window, indexedDB, localStorage: { getItem: k => local.get(k), setItem: (k, v) => local.set(k, v), removeItem: k => local.delete(k) },
     document: { hidden: false, addEventListener() {} }, navigator: { onLine: true },
-    fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array,
+    fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array, Blob,
     btoa: s => Buffer.from(s, 'binary').toString('base64'), atob: s => Buffer.from(s, 'base64').toString('binary'),
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id), setInterval: () => ++timerId, clearInterval() {}, console
   });
