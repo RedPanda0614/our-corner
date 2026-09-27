@@ -666,7 +666,7 @@
     // repo that an older app then saved data.json in) takes it in from nothing: additions only. Checked on start and every
     // 10 minutes for as long as the app runs (one listing of the repository root, small, and a 304 when nothing changed).
     // A root listing can lag behind and name an older version (even one from before the move), so a new version is taken in only
-    // once a check about 5 minutes later still names it; the wait is kept on this device, so short sessions still get there. If
+    // once a check 5 to 15 minutes later still names it; the wait is kept on this device, so short sessions still get there. If
     // data.json keeps changing, it is taken in as it is once it has differed for 30 minutes (no listing lags that long).
     let back = null; // { sha, since, first }: the version a check named, when, and since when data.json has differed
     function foldIn(force) {
@@ -676,13 +676,13 @@
       legacyAt = Date.now();
       folding = (async () => {
         const root = await list('', rootEtag);
-        if (root.same || !root.list) return 0;
+        if (root.same || !root.list) { if (back) { back = null; await persist([]); } return 0; } // unchanged since the last full check: nothing to confirm
         const entry = root.list.get('data.json'), to = entry && entry.type === 'file' ? entry.sha : null;
         const stamps = all().map(f => { const s = fileView(f.name).meta.legacy; return [f, isPlain(s) && typeof s.sha === 'string' ? s : null]; });
         const todo = to ? stamps.filter(([, s]) => (s ? s.sha : null) !== to) : []; // gone: nothing more to take in (never read as "everything removed")
         if (todo.length) {
-          const now = Date.now(), first = back ? back.first : now;
-          if (!back || back.sha !== to) back = { sha: to, since: now, first };
+          const now = Date.now(), live = back && now - back.since <= 900000, first = live ? back.first : now; // a sighting counts for 15 minutes
+          if (!live || back.sha !== to) back = { sha: to, since: now, first };
           if (now - back.since < 300000 && now - first < 1800000) { legacyAt = now - 300000; await persist([]); return 0; } // asked again in 5 minutes
         }
         let n = 0;
