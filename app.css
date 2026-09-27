@@ -1,7 +1,10 @@
+/* Only the hero bar's '■ ■ ■' still renders in this family (typography.css overrides the rest),
+   so the file is a subset with just the space and ■. Re-subset the full font to use more characters. */
 @font-face {
   font-family: 'Ark Pixel 12px';
-  src: url('assets/ark-pixel-zh-hans.woff2') format('woff2');
+  src: url('assets/ark-pixel-squares.woff2') format('woff2');
   font-display: swap;
+  unicode-range: U+0020, U+25A0;
 }
 html, body { margin: 0; background: hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk))); color-scheme: light; }
 body { padding: 0; min-height: 100vh; }
