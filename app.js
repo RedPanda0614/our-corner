@@ -31,6 +31,12 @@
   const shiftDay = (iso, n) => { const d = utcDay(iso); d.setUTCDate(d.getUTCDate() + n); return dayISO(d); };
   const shiftMonth = (ym, n) => { const d = utcDay(ym + '-01'); d.setUTCMonth(d.getUTCMonth() + n); return dayISO(d).slice(0, 7); };
   const niceDate = (iso, o = { month: 'short', day: 'numeric', year: 'numeric' }) => new Intl.DateTimeFormat('en-US', { ...o, timeZone: 'UTC' }).format(utcDay(iso));
+  const timestamp = (ms, fallbackDate = '') => {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return fallbackDate ? niceDate(fallbackDate) : '';
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(value).map(p => [p.type, p.value]));
+    return `${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute}`;
+  };
   const weekStart = iso => shiftDay(iso, -((utcDay(iso).getUTCDay() + 6) % 7));
   const daysBetween = (a, b) => Math.round((utcDay(b) - utcDay(a)) / 86400000);
   const countdown = d => { const n = daysBetween(today, d); return n === 0 ? 'Today!' : n > 0 ? `In ${n} day${n === 1 ? '' : 's'}` : `${-n} day${n === -1 ? '' : 's'} ago`; };
@@ -302,6 +308,12 @@
   }
   const entryDisplayDate = entry => entry.updatedAt ? currentDayFor(entry.updatedAt) : (entry.date || today);
   const currentDayFor = timestamp => { const d = new Date(timestamp); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const entryTimestamp = entry => {
+    const at = entry.updatedAt || entry.createdAt;
+    if (!at) return niceDate(entryDisplayDate(entry));
+    const posted = timestamp(at);
+    return !entry.updatedAt && entry.date && entry.date !== currentDayFor(at) ? `${niceDate(entry.date)} · posted ${posted}` : posted;
+  };
   function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
   function renderMemory() {
     const pool = data.diary.filter(e => (e.text || '').trim() || (e.photoIds || []).length);
@@ -310,7 +322,7 @@
     const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
     const photo = data.photos.find(p => p.id === (e.photoIds || [])[0]);
     const text = (e.text || '').trim();
-    body.innerHTML = `<div class="cc-memory-label"><span>${esc(niceDate(entryDisplayDate(e)))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
+    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${photo.thumb ? `<img src="${photo.thumb}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
   }
 
   // ---------- daily question ----------
@@ -473,8 +485,8 @@
         return diaryEditForm(e);
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
-      const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b> ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(niceDate(entryDisplayDate(e)))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(e.photoIds)}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
     $('[data-panel="diary"]').innerHTML = panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${ui.busy ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page));
   }
@@ -525,28 +537,69 @@
   }
 
   // ---------- lightbox ----------
-  const lightbox = { id: null };
-  async function openPhoto(id) {
-    const list = ui.page === 'album' ? albumPhotos(photosSorted()) : data.photos;
+  const lightbox = { id: null, list: [], zoom: 1, panX: 0, panY: 0, pointer: null };
+  function photoSequence(p) {
+    if (ui.page === 'album') return albumPhotos(photosSorted()).map(x => x.id);
+    if (ui.page === 'diary' && p.entryId) {
+      const entry = data.diary.find(x => x.id === p.entryId);
+      if (entry) return (entry.photoIds || []).filter(id => data.photos.some(x => x.id === id));
+    }
+    return photosSorted().map(x => x.id);
+  }
+  function applyPhotoZoom() {
+    const stage = $('[data-lightbox-stage]'), img = stage?.querySelector('[data-full]');
+    if (!img) return;
+    if (lightbox.zoom === 1) lightbox.panX = lightbox.panY = 0;
+    const maxX = Math.max(0, (img.offsetWidth * lightbox.zoom - stage.clientWidth) / 2);
+    const maxY = Math.max(0, (img.offsetHeight * lightbox.zoom - stage.clientHeight) / 2);
+    lightbox.panX = Math.max(-maxX, Math.min(maxX, lightbox.panX));
+    lightbox.panY = Math.max(-maxY, Math.min(maxY, lightbox.panY));
+    img.style.transform = `translate(${lightbox.panX}px, ${lightbox.panY}px) scale(${lightbox.zoom})`;
+    stage.classList.toggle('is-zoomed', lightbox.zoom > 1);
+    const label = $('[data-photo-zoom-label]'); if (label) label.textContent = `${Math.round(lightbox.zoom * 100)}%`;
+    const out = $('[data-photo-zoom="out"]'); if (out) out.disabled = lightbox.zoom === 1;
+    const up = $('[data-photo-zoom="in"]'); if (up) up.disabled = lightbox.zoom === 4;
+  }
+  function setPhotoZoom(value) {
+    lightbox.zoom = Math.max(1, Math.min(4, value));
+    applyPhotoZoom();
+  }
+  function stepPhoto(direction) {
+    const i = lightbox.list.indexOf(lightbox.id);
+    if (i < 0 || lightbox.list.length < 2) return;
+    ui.confirm = null;
+    openPhoto(lightbox.list[(i + direction + lightbox.list.length) % lightbox.list.length], lightbox.list);
+  }
+  async function openPhoto(id, sequence = null) {
     const p = data.photos.find(x => x.id === id); if (!p) return;
-    lightbox.id = id; lightbox.list = list.map(x => x.id);
+    const chosen = sequence || photoSequence(p);
+    lightbox.id = id; lightbox.list = chosen.includes(id) ? chosen : [id];
+    lightbox.zoom = 1; lightbox.panX = lightbox.panY = 0; lightbox.pointer = null;
     const dlg = $('[data-lightbox]');
     const idx = lightbox.list.indexOf(id);
     const albumPicker = `<label class="cc-photo-album">Album<select data-photo-album="${esc(p.id)}" aria-label="Move photo to album"><option value="" ${!p.albumId ? 'selected' : ''}>Unsorted</option>${albumsSorted().map(a => `<option value="${esc(a.id)}" ${p.albumId === a.id ? 'selected' : ''}>${esc(a.title)}</option>`).join('')}</select></label>`;
-    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"> <img data-full src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(niceDate(p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-lightbox-step="-1" aria-label="Previous photo">‹</button><button type="button" class="cc-button" data-lightbox-step="1" aria-label="Next photo">›</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
+    const photoDate = p.date && p.createdAt && p.date !== currentDayFor(p.createdAt) ? `Photo date ${niceDate(p.date)} · uploaded ` : '';
+    dlg.innerHTML = `<div class="cc-bar"><span>▧ ${idx + 1} / ${lightbox.list.length}</span><button type="button" class="cc-min" data-lightbox-close aria-label="Close">×</button></div><div class="cc-lightbox-body"><div class="cc-lightbox-stage" data-lightbox-stage role="group" aria-label="Photo. Swipe left or right to browse."><button type="button" class="cc-lightbox-arrow previous" data-lightbox-step="-1" aria-label="Previous photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>‹</button><img data-full draggable="false" src="${p.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='}" alt="${esc(p.caption || '')}"><button type="button" class="cc-lightbox-arrow next" data-lightbox-step="1" aria-label="Next photo" ${lightbox.list.length < 2 ? 'disabled' : ''}>›</button></div><div class="cc-lightbox-meta"><span>${esc(p.author || '')} · ${esc(photoDate)}${esc(timestamp(p.createdAt, p.date || today))}${p.caption ? ' · ' + esc(p.caption) : ''}</span><span class="cc-plan-actions">${albumPicker}<button type="button" class="cc-button" data-photo-zoom="out" aria-label="Zoom out" disabled>−</button><span class="cc-zoom-label" data-photo-zoom-label>100%</span><button type="button" class="cc-button" data-photo-zoom="in" aria-label="Zoom in">＋</button>${p.entryId ? `<button type="button" class="cc-button" data-open-entry="${esc(p.entryId)}">Open diary</button>` : ''}${confirmButton('photo:' + p.id, 'Delete', `data-photo-delete="${esc(p.id)}"`)}</span></div></div>`;
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+    dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
-    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) img.src = full; }
+    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = full; if (img.complete) applyPhotoZoom(); } }
   }
-  function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
+  function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; lightbox.pointer = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
 
   // ---------- messages (like WeChat moments notifications) ----------
   const TAB_NAMES = { home: 'Home', diary: 'Diary', todo: 'Todo', wishlist: 'Wishlist', album: 'Album' };
   const inboxKey = () => 'inbox:' + (ui.me || 'x');
-  function inboxState() {
+  function localInboxState() {
     const st = ls.get(inboxKey(), null);
     if (st) return st;
     const fresh = { since: Date.now(), read: [] }; ls.set(inboxKey(), fresh); return fresh;
+  }
+  function inboxState() {
+    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
+    if (!shared) return local;
+    return { since: Math.max(Number(shared.since) || 0, Date.now() - 30 * 86400000),
+      read: [...new Set([...(local.read || []), ...(shared.read || []).map(item => item.key).filter(Boolean)])] };
   }
   const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
   function allMessages() {
@@ -594,16 +647,22 @@
     return out.sort((a, b) => b.at - a.at);
   }
   function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
-  function markRead(keys) { // anything older than 30 days counts as read, so the list stays short without old messages coming back
-    const st = inboxState(), at = new Map(allMessages().map(m => [m.key, m.at]));
-    st.since = Math.max(st.since, Date.now() - 30 * 86400000);
-    st.read = [...new Set([...st.read, ...keys])].filter(k => (at.get(k) || 0) > st.since);
-    ls.set(inboxKey(), st);
+  function syncInboxState() {
+    if (!ui.me) return;
+    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
+    const known = new Set((shared?.read || []).map(item => item.key));
+    const times = new Map(allMessages().map(m => [m.key, m.at]));
+    const items = (local.read || []).filter(key => !known.has(key) && times.has(key)).map(key => ({ key, at: times.get(key) }));
+    if (!shared || items.length) run(store.markInboxRead(ui.me, local.since, Date.now() - 30 * 86400000, items));
   }
-  function ago(ms) {
-    const s = Math.max(0, (Date.now() - ms) / 1000);
-    if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-    const d = new Date(ms); return s < 7 * 86400 ? Math.floor(s / 86400) + 'd ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  function markRead(keys) { // Persist per-person receipts, so another device does not alert again.
+    if (!keys.length || !ui.me) return;
+    const st = localInboxState(), at = new Map(allMessages().map(m => [m.key, m.at]));
+    const cutoff = Date.now() - 30 * 86400000;
+    st.since = Math.max(st.since, cutoff);
+    st.read = [...new Set([...(st.read || []), ...keys])].filter(k => (at.get(k) || 0) > st.since);
+    ls.set(inboxKey(), st);
+    run(store.markInboxRead(ui.me, st.since, cutoff, keys.filter(key => at.has(key)).map(key => ({ key, at: at.get(key) }))));
   }
   function renderBadges() {
     const unread = unreadMessages(), by = {};
@@ -629,7 +688,7 @@
     const tabs = [['all', 'All'], ...Object.entries(TAB_NAMES)];
     dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>✉ MESSAGES</span><button type="button" class="cc-min" data-close-inbox aria-label="Close">×</button></div><div class="cc-body">
       <div class="cc-filter-row">${tabs.map(([v, l]) => `<button type="button" class="cc-button" data-inbox-filter="${v}" aria-pressed="${filter === v}">${l}</button>`).join('')}</div>
-      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${ago(m.at)}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
+      <div class="cc-inbox-list">${list.map(m => `<button type="button" class="cc-inbox-item ${fresh.has(m.key) ? 'cc-fresh' : ''}" data-inbox-go="${esc(m.key)}">${mini(nameToKey(m.who))}<span class="cc-inbox-text"><b>${esc(m.who)}</b> ${esc(m.text)}<small>${esc(TAB_NAMES[m.tab])} · ${esc(timestamp(m.at))}</small></span>${m.target.thumb ? `<img src="${m.target.thumb}" alt="">` : '<span class="cc-inbox-arrow" aria-hidden="true">›</span>'}</button>`).join('') || '<p class="cc-empty-plan">No messages yet. When the other person adds or replies to something, it shows up here.</p>'}</div>
     </div></section>`;
   }
   function openInbox(filter) {
@@ -1069,16 +1128,43 @@
     }
     if (ds.photo) { ui.confirm = null; openPhoto(ds.photo); return; }
     if (el.hasAttribute('data-lightbox-close')) { closePhoto(); return; }
-    if (ds.lightboxStep) { const l = lightbox.list, i = l.indexOf(lightbox.id); ui.confirm = null; openPhoto(l[(i + +ds.lightboxStep + l.length) % l.length]); return; }
+    if (ds.lightboxStep) { stepPhoto(Number(ds.lightboxStep)); return; }
+    if (ds.photoZoom) { setPhotoZoom(lightbox.zoom + (ds.photoZoom === 'in' ? 1 : -1)); return; }
     if (ds.photoDelete) {
       const p = data.photos.find(x => x.id === ds.photoDelete); closePhoto(); if (!p) return;
       run((async () => { await store.remove('photos', p.id); if (p.entryId) { const en = data.diary.find(x => x.id === p.entryId); if (en) await store.update('diary', en.id, { photoIds: (en.photoIds || []).filter(x => x !== p.id) }); } })());
       flash('Photo deleted.'); return;
     }
   });
-  $('[data-lightbox]').addEventListener('keydown', e => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); $(`[data-lightbox-step="${e.key === 'ArrowRight' ? 1 : -1}"]`)?.click(); } });
+  $('[data-lightbox]').addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); stepPhoto(e.key === 'ArrowRight' ? 1 : -1); }
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); setPhotoZoom(lightbox.zoom + 1); }
+    if (e.key === '-') { e.preventDefault(); setPhotoZoom(lightbox.zoom - 1); }
+  });
+  $('[data-lightbox]').addEventListener('pointerdown', e => {
+    const stage = e.target.closest('[data-lightbox-stage]');
+    if (!stage || e.target.closest('button')) return;
+    lightbox.pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, panX: lightbox.panX, panY: lightbox.panY };
+    stage.setPointerCapture(e.pointerId);
+  });
+  $('[data-lightbox]').addEventListener('pointermove', e => {
+    const p = lightbox.pointer;
+    if (!p || p.id !== e.pointerId || lightbox.zoom === 1) return;
+    lightbox.panX = p.panX + e.clientX - p.x;
+    lightbox.panY = p.panY + e.clientY - p.y;
+    applyPhotoZoom();
+  });
+  $('[data-lightbox]').addEventListener('pointerup', e => {
+    const p = lightbox.pointer;
+    if (!p || p.id !== e.pointerId) return;
+    lightbox.pointer = null;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (lightbox.zoom === 1 && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.2) stepPhoto(dx < 0 ? 1 : -1);
+  });
+  $('[data-lightbox]').addEventListener('pointercancel', () => { lightbox.pointer = null; });
+  $('[data-lightbox]').addEventListener('dblclick', e => { if (e.target.closest('[data-lightbox-stage]') && !e.target.closest('button')) setPhotoZoom(lightbox.zoom === 1 ? 2 : 1); });
   $('[data-lightbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closePhoto(); });
-  $('[data-lightbox]').addEventListener('close', () => { lightbox.id = null; });
+  $('[data-lightbox]').addEventListener('close', () => { lightbox.id = null; lightbox.pointer = null; });
   $('[data-inbox]').addEventListener('close', () => { ui.inboxOpen = false; ui.inboxFresh = null; });
   $('[data-inbox]').addEventListener('click', e => { if (e.target === e.currentTarget) closeInbox(); });
   $('[data-comment-confirm-dialog]').addEventListener('close', () => { pendingCommentDelete = null; });
@@ -1230,7 +1316,7 @@
   render();
   if (store.mode === 'local') {
     showApp(true);
-    seedIfNeeded().then(() => store.start(onChange));
+    seedIfNeeded().then(() => store.start(onChange)).then(syncInboxState);
   } else {
     showApp(false);
     store.onAuth(async (user, err) => {
@@ -1238,7 +1324,7 @@
       if (!user) { if (err) $('[data-login-error]').textContent = err.message; ui.sync = 'signedout'; showApp(false); render(); return; }
       ui.me = nameToKey(user.name || '斯婕');
       showApp(true); render();
-      try { await store.start(onChange, onStatus); await seedIfNeeded(); }
+      try { await store.start(onChange, onStatus); await seedIfNeeded(); syncInboxState(); }
       catch (e) {
         console.error(e);
         if (e.code === 'auth') { $('[data-login-error]').textContent = e.message; localStorage.removeItem('olc:github'); showApp(false); }
