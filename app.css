@@ -316,6 +316,17 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-tag[aria-pressed=true] { background: hsl(calc(25deg + var(--a-dh)) calc(70% * var(--a-s)) calc(var(--lo) + 70% * var(--lk))); color: hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk))); }
 #couple-corner .cc-result-count { margin: 4px 0 0; }
 @media (max-width: 600px) { #couple-corner .cc-diary-search input { font-size: 16px; } }
+/* touch screens: the small diary controls look the same but get a bigger, invisible area to tap */
+@media (pointer: coarse) {
+  #couple-corner .cc-x, #couple-corner .cc-meta .cc-plan-actions .cc-button, #couple-corner .cc-tag { position: relative; }
+  #couple-corner .cc-x::after, #couple-corner .cc-meta .cc-plan-actions .cc-button::after, #couple-corner .cc-tag::after { content: ''; position: absolute; }
+  /* insets count from inside the border */
+  #couple-corner .cc-meta .cc-plan-actions .cc-button::after { inset: -12px -4px; } /* Edit / Delete: 24px tall, taps 44 */
+  #couple-corner .cc-x::after { inset: -12px; } /* reply ×: 18px, taps 40 */
+  #couple-corner .cc-tag::after { inset: -7px -3px; } /* tags: 21px tall, taps 33 */
+}
+/* iPhones zoom into any text field under 16px, so the small ones grow to 16px on phones */
+@media (max-width: 600px) { #couple-corner .cc-comment-form input, #couple-corner .cc-photo-album select, #couple-corner select.cc-plan-status { font-size: 16px; } }
 
 /* ===== v3: tear-off calendar, skins grid, modal, hero tools ===== */
 #couple-corner .cc-home-side .cc-memory-window > .cc-bar { background: hsl(calc(267deg + var(--l-dh)) calc(27% * var(--l-s)) calc(var(--lo) + 89.6% * var(--lk))); border-color: hsl(calc(266deg + var(--l-dh)) calc(21% * var(--l-s)) calc(var(--lo) + 72.2% * var(--lk))); color: hsl(calc(271deg + var(--l-dh)) calc(12% * var(--l-s)) calc(var(--lo) + 46.1% * var(--lk))); }
@@ -380,6 +391,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-caption-form { display: flex; gap: 4px; width: 100%; }
 #couple-corner .cc-caption-form input { flex: 1; min-width: 0; font: 13px var(--cc-pixel); padding: 3px 6px; border: 1px inset hsl(0 0% 50% / .4); background: var(--cc-white); color: inherit; }
 #couple-corner .cc-caption-form .cc-button { font-size: 11px; min-height: 26px; padding: 2px 6px; }
+@media (max-width: 600px) { #couple-corner .cc-caption-form input { font-size: 16px; } } /* no zoom-in on iPhones, see .cc-comment-form */
 
 /* ===== v4: wider sidebar, memory strip, iPod, simpler skins ===== */
 #couple-corner .cc-grid { grid-template-columns: 180px minmax(0, 1fr); gap: 16px; }
