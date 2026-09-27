@@ -314,7 +314,7 @@
     // Each file: base is the version GitHub has (at sha), pending the changes still to save on top of it; create: still to be made
     // (the move to the files); synced: base is GitHub's (not yet for a copy taken over from the one-file version); broken: why saving stopped
     const files = {};
-    for (const name of SPLIT) files[name] = { name, path: `data/${name}.json.gz`, sha: null, base: emptyPart(name), pending: [], create: false, synced: false, savedAt: 0, revision: 0, superseded: new Map(), broken: null, badSha: null };
+    for (const name of SPLIT) files[name] = { name, path: `data/${name}.json.gz`, sha: null, base: emptyPart(name), pending: [], create: false, synced: false, savedAt: 0, revision: 0, superseded: new Map(), broken: null, badSha: null, held: false };
     const all = () => SPLIT.map(n => files[n]);
     const unsaved = () => all().some(f => f.pending.length || f.create);
     const stopped = () => (canZip() ? all().find(f => f.broken)?.broken || null : tooOld());
@@ -437,7 +437,7 @@
     // ---- reading from GitHub
     function refused(res) { // an answer that isn't the file (a rate limit was handled in gh$ already)
       if (res.status === 401 || res.status === 403) return Object.assign(new Error('Token is not valid for this repo.'), { code: 'auth' });
-      return new Error('GitHub error ' + res.status);
+      return Object.assign(new Error('GitHub error ' + res.status), { status: res.status });
     }
     async function list(path, etag) { // a folder: { list: name -> entry, etag }; list null when there is no such folder; same: unchanged (a 304 costs nothing)
       const res = await gh$(`/contents${path ? '/' + path : ''}?ref=${branch}`, { headers: etag ? { 'If-None-Match': etag } : {} }); // the root is /contents (with a slash it may not be understood)
@@ -458,20 +458,19 @@
       if (!res.ok) throw refused(res);
       return new Uint8Array(await res.arrayBuffer());
     }
-    async function decodePart(name, bytes, sha) {
-      let data;
-      try { if (bytes[0] !== 0x1f) bytes = unwrap(JSON.parse(utf8(bytes)), sha) || bytes; data = JSON.parse(await gunzip(bytes)); }
+    async function parsePart(name, bytes, sha) { // a file as it is on GitHub, before any check
+      try { if (bytes[0] !== 0x1f) bytes = unwrap(JSON.parse(utf8(bytes)), sha) || bytes; return JSON.parse(await gunzip(bytes)); }
       catch { throw damaged(name, 'could not be read'); }
-      return fillPart(name, checkPart(name, data));
     }
+    const decodePart = async (name, bytes, sha) => fillPart(name, checkPart(name, await parsePart(name, bytes, sha)));
     async function readOld(sha) { // data.json at one of its versions
       const bytes = await blob(sha);
       let d = null;
       try { d = bytes.length ? JSON.parse(utf8(bytes)) : emptyData(); const inner = unwrap(d, sha); if (inner) d = inner.length ? JSON.parse(utf8(inner)) : emptyData(); } catch {}
       return checkOld(d);
     }
-    function take(f, base, sha) { f.base = base; f.sha = sha; f.synced = true; f.create = false; f.broken = null; f.badSha = null; f.revision++; }
-    const missing = name => Object.assign(new Error(`Saving is paused: data/${name}.json.gz is missing on GitHub.`), { code: 'missing' });
+    function take(f, base, sha) { f.base = base; f.sha = sha; f.synced = true; f.create = false; f.broken = null; f.badSha = null; f.held = false; f.revision++; }
+    const missing = name => Object.assign(new Error(`data/${name}.json.gz is missing. Restore it from the readable-backup branch; nothing was changed.`), { code: 'missing' });
     async function reread(f) { // after a save that met someone else's: the file as GitHub has it now
       const res = await gh$(`/contents/${f.path}?ref=${branch}`);
       if (res.status === 404) { if (f.sha) throw (f.broken = missing(f.name)); return; } // not listed yet: the next try creates it
@@ -487,18 +486,42 @@
       if (!canZip()) throw tooOld();
       const d = await listData();
       if (d.same) return false;
-      const main = files.main; // known (or being made), or a new data repo whose files come with the first saves: the files are what there is
-      if ((d.list && d.list.has('main')) || main.sha || main.create || all().every(f => f.synced)) return applyListing(d.list || new Map(), d.etag);
-      return moveIn(d.list || new Map());
+      const listing = d.list || new Map(), main = files.main;
+      if (!listing.has('main') && !main.sha && listing.size) { // files without main.json.gz, on a device that never saw it
+        if (!(await unfinishedMove(listing))) { main.broken = missing('main'); dirEtag = null; return false; } // nothing is made
+        if (main.broken?.code === 'missing') main.broken = null;
+      }
+      if (listing.has('main') || main.sha || main.create || all().every(f => f.synced)) return applyListing(listing, d.etag); // known (or being made): the files are what there is
+      return moveIn(listing);
+    }
+    // data/ without main.json.gz is carried on as a move only while it is one that stopped part way (on any phone): every file
+    // there is exactly the split of the data.json version its record names. Anything else (main deleted after later changes)
+    // stops all saving and makes nothing. Files this device made itself in the move are known; a verdict holds for its listing.
+    const canon = v => JSON.stringify(v, (k, x) => (isPlain(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x));
+    const pureShas = new Set(); let guard = null;
+    async function unfinishedMove(listing) {
+      const key = JSON.stringify([...listing].sort());
+      if (guard && guard.key === key) return guard.ok;
+      let ok = true; const olds = new Map();
+      for (const [name, sha] of listing) {
+        if (pureShas.has(sha)) continue;
+        let part = null; try { part = await parsePart(name, await blob(sha), sha); } catch (err) { if (err.code !== 'invalid') throw err; }
+        const stamp = isPlain(part) && isPlain(part.meta) ? part.meta.legacy : null;
+        if (!isPlain(stamp) || typeof stamp.sha !== 'string') { ok = false; break; }
+        if (!olds.has(stamp.sha)) olds.set(stamp.sha, await readOld(stamp.sha).catch(err => { if (err.code === 'invalid' || err.status === 404) return null; throw err; }));
+        if (!olds.get(stamp.sha) || canon(splitData(olds.get(stamp.sha), stamp)[name]) !== canon(part)) { ok = false; break; }
+        pureShas.add(sha);
+      }
+      guard = { key, ok }; return ok;
     }
     async function applyListing(listing, etag) {
       let changed = false, complete = true; const touched = [];
       for (const f of all()) {
         const remote = listing.get(f.name) || null, observed = f.revision;
         try {
-          if (remote && remote === f.sha) { f.broken = null; continue; }
-          if (!remote) {
-            if (f.sha) { if (Date.now() - f.savedAt < 30000) { complete = false; continue; } throw missing(f.name); } // gone (a listing can lag behind our own new file)
+          if (remote && remote === f.sha) { f.broken = null; f.held = false; continue; }
+          if (!remote) { // gone, or a listing lagging behind our own new file: nothing is saved to it until a listing shows it again
+            if (f.sha) { if (Date.now() - f.savedAt < 30000) { f.held = true; complete = false; continue; } throw missing(f.name); }
             if (!f.synced && !f.create) { f.base = emptyPart(f.name); f.synced = true; changed = true; touched.push(f.name); } // not made yet: it is empty
             continue;
           }
@@ -522,15 +545,20 @@
     // replaces a file: one already there (the other phone moved at the same moment) is taken as it is, and its own stamp lets foldIn
     // take in whatever it is missing. data.json is never changed or deleted. Main is created last.
     async function moveIn(existing) {
+      const got = new Map();
+      for (const [name, sha] of existing) {
+        try { got.set(name, [await decodePart(name, await blob(sha), sha), sha]); }
+        catch (err) { if (err.code === 'invalid') { files[name].broken = err; files[name].badSha = sha; } throw err; }
+      }
       const root = await list('', null), old = root.list && root.list.get('data.json');
+      const began = [...got.values()].map(([part]) => part.meta.legacy).find(st => isPlain(st) && typeof st.sha === 'string'); // a move that stopped part way
       let parts = null; // null: a new data repo (an empty one has no listing at all), its files are made by the first saves
       if (old && old.type === 'file') parts = splitData(await readOld(old.sha), { sha: old.sha, at: Date.now() });
+      else if (began) parts = splitData(await readOld(began.sha), began); // data.json gone since that move began: finished from its version
       else if (!verified) throw new Error('The private data file could not be opened. Check the repository and token access.');
       for (const f of all()) {
-        if (existing.has(f.name)) {
-          try { take(f, await decodePart(f.name, await blob(existing.get(f.name)), existing.get(f.name)), existing.get(f.name)); }
-          catch (err) { if (err.code === 'invalid') { f.broken = err; f.badSha = existing.get(f.name); } throw err; }
-        } else { f.base = parts ? parts[f.name] : emptyPart(f.name); f.sha = null; f.create = !!parts; f.synced = true; f.broken = null; f.revision++; }
+        if (got.has(f.name)) take(f, ...got.get(f.name));
+        else { f.base = parts ? parts[f.name] : emptyPart(f.name); f.sha = null; f.create = !!parts; f.synced = true; f.broken = null; f.revision++; }
       }
       await persist();
       return true;
@@ -602,7 +630,7 @@
       const stop = stopped(); if (stop) { status('error', stop); return; } // nothing is written while a file looks wrong, or without gzip
       let made = false;
       flushing = (async () => {
-        for (let f; (f = all().find(x => x.synced && (x.pending.length || x.create))); ) { const stop = stopped(); if (stop) throw stop; made ||= f.create; await save(f); }
+        for (let f; (f = nextToSave()); ) { const stop = stopped(); if (stop) throw stop; made ||= f.create; await save(f); }
       })();
       try { await flushing; settled(); }
       catch (err) { failed(err); setTimeout(() => unsaved() && scheduleFlush(), 15000); }
@@ -610,20 +638,28 @@
       if (made && !unsaved()) legacyAt = 0; // the move is done: the next check (files first) looks for anything saved in data.json meanwhile
       await deleteFiles();
     }
+    // The move's files are made first, exactly as split from data.json and main last, and changes are saved only once main is
+    // there: until then every file in data/ is a pure split (see unfinishedMove). In a new data repo main is made first.
+    function nextToSave() {
+      const f = all().find(x => x.synced && x.create) || all().find(x => x.synced && !x.held && x.pending.length);
+      if (f && f !== files.main && !f.sha && !f.create && !files.main.sha && files.main.synced) { files.main.create = true; return files.main; }
+      return f;
+    }
     async function save(f) {
-      const ops = f.pending.slice();
+      const ops = f.create ? [] : f.pending.slice();
       let ok = false;
       for (let attempt = 0; attempt < 4 && !ok; attempt++) {
         const next = applyAll(f.base, ops), text = JSON.stringify(next);
         if (!f.create && text === JSON.stringify(f.base)) { ok = true; break; } // nothing changes (e.g. already taken in): no save
         checkPart(f.name, next);
-        if (!f.sha && !f.create) await stillNew();
+        if (!f.sha && !files.main.sha && !isPlain(f.base.meta?.legacy)) await stillNew(); // a new repo's first file: data.json still not there?
         const zipped = await gzip(text);
         if (await gunzip(zipped) !== text) throw new Error('The data could not be compressed, so it was not saved. Please try again.');
         const res = await gh$(`/contents/${f.path}`, { method: 'PUT', body: JSON.stringify({ message: `${auth.name || 'someone'}: ${describe(f, ops)}`, content: bytesToB64(zipped), branch, ...(f.sha ? { sha: f.sha } : {}) }) });
         if (res.ok) {
           const j = await res.json(), now = Date.now();
           if (f.sha) { f.superseded.forEach((at, s) => { if (now - at > 30000) f.superseded.delete(s); }); f.superseded.set(f.sha, now); } // GitHub can briefly list the old one again
+          if (f.create && isPlain(f.base.meta?.legacy)) pureShas.add(j.content.sha); // made by this move, exactly as split
           f.base = next; f.sha = j.content.sha; f.create = false; f.savedAt = now; f.revision++; ok = true;
         }
         else if (res.status === 409 || res.status === 422) { await reread(f); emit(); } // someone else saved this file first (or made it): reload it, show theirs at once (even if our retry fails), replay ours
@@ -635,7 +671,7 @@
       await persist([f.name]); // what was saved is what the page shows already
     }
     function describe(f, ops) {
-      if (f.create) return `move data.json into ${f.path}${ops.length ? ` (+${ops.length} more)` : ''}`;
+      if (f.create) return `${isPlain(f.base.meta?.legacy) ? 'move data.json into' : 'create'} ${f.path}`;
       const o = ops[0], n = ops.length;
       const text = { set: 'save', setAll: 'save', setMany: 'import', update: 'edit', remove: 'delete', removeMany: 'delete', addComment: 'reply', removeComment: 'delete reply', meta: 'setup', metaKey: 'setup', mergeMeta: 'sync', inboxRead: 'read messages', fold: 'take in changes from data.json' }[o.type] || 'update';
       const col = o.col || [...new Set((o.items || []).map(x => x.col))].join(' + '); // setAll: 'diary + photos'
