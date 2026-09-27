@@ -716,6 +716,179 @@
       : `<button type="button" class="cc-caption-text" data-caption-edit title="Edit caption">${esc(cap)}</button><span class="cc-hero-tools"><span class="cc-button cc-file-btn">${ui.busy === 'hero' ? 'Saving…' : '✎ Photo'}<input type="file" accept="image/*" data-hero-file aria-label="Change the top picture"></span>${custom ? '<button type="button" class="cc-button" data-hero-reset>Reset</button>' : ''}</span>`;
   }
 
+  // ---------- status ----------
+  // Like WeChat 状态: one status per person in meta ('status:<key>' = { emoji, text, at } or null),
+  // so the two of us never overwrite each other. Shown in a slide-out tab on the right edge of every page.
+  // every emoji in this UI goes through emojiHtml (pixel-art versions can plug in here); data keeps plain characters
+  const emojiHtml = ch => (window.CCPixelEmoji ? CCPixelEmoji.html(ch, { decorative: true }) : `<span class="cc-emoji">${esc(ch)}</span>`);
+  const STATUS_PRESETS = [
+    { emoji: '😴', en: 'Sleepy', zh: '犯困' },
+    { emoji: '💼', en: 'Busy', zh: '忙碌' },
+    { emoji: '🍜', en: 'Eating', zh: '干饭' },
+    { emoji: '🚗', en: 'On my way', zh: '在路上' },
+    { emoji: '🥰', en: 'Missing you', zh: '想你' },
+    { emoji: '🤒', en: 'Unwell', zh: '不舒服' },
+    { emoji: '📚', en: 'Studying', zh: '学习中' },
+    { emoji: '🏃', en: 'Working out', zh: '运动' },
+    { emoji: '🎮', en: 'Gaming', zh: '游戏' },
+    { emoji: '🛁', en: 'Relaxing', zh: '放松' },
+    { emoji: '🎧', en: 'Music on', zh: '听歌' },
+    { emoji: '😤', en: 'Grumpy', zh: '有点烦' },
+    { emoji: '✈️', en: 'Travelling', zh: '出行' },
+    { emoji: '🌙', en: 'Good night', zh: '晚安' }
+  ];
+  const STATUS_DAY = 86400000, STATUS_MAX = 40;
+  const statusDraft = { emoji: '', text: '', dirty: false, owner: null }; // survives re-renders while typing
+  let statusShown = null, statusSwipe = null, statusSwipedAt = -1e9;
+  const statusKey = key => 'status:' + key;
+  function statusOf(key) {
+    const s = key ? data.meta[statusKey(key)] : null;
+    return s && typeof s === 'object' && s.emoji && Number.isFinite(+s.at) ? { emoji: String(s.emoji), text: String(s.text || ''), at: +s.at } : null;
+  }
+  const statusStale = s => Date.now() - s.at >= STATUS_DAY; // older statuses stay, just dimmed
+  function statusWhen(s) {
+    if (!statusStale(s)) return ago(s.at);
+    const n = Math.floor((Date.now() - s.at) / STATUS_DAY);
+    return `set ${n} day${n === 1 ? '' : 's'} ago`;
+  }
+  const statusPreset = emoji => STATUS_PRESETS.find(p => p.emoji === emoji);
+  const statusChars = t => (typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter().segment(t)].map(x => x.segment) : Array.from(t));
+  const statusClip = (t, n = 12) => { const c = statusChars(String(t).replace(/\s+/g, ' ').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
+  // "seen" bookkeeping: always go through these two, so the storage behind them can change
+  function statusSeenAt() { return +ls.get('statusSeen:' + ui.me, 0) || 0; }
+  function markStatusSeen(at) { if (ui.me && at > statusSeenAt()) ls.set('statusSeen:' + ui.me, at); }
+  function statusUnseen() {
+    const s = statusOf(partnerKey()); if (!s) return false;
+    const seen = statusSeenAt();
+    return seen ? s.at > seen : Date.now() - s.at < STATUS_DAY; // first run: only a fresh status counts as new
+  }
+  function statusBubble(key) { // the player card's speech bubble shows the status when there is one
+    const s = statusOf(key);
+    if (!s) return `<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span>`;
+    return `<span class="cc-baby-bubble cc-status-bubble${statusStale(s) ? ' cc-status-stale' : ''}">${emojiHtml(s.emoji)} ${esc(statusClip(s.text, 10))}</span>`;
+  }
+  function statusCardHtml() {
+    const key = partnerKey(), s = statusOf(key);
+    const who = `<div class="cc-status-who">${mini(key)}<b>${esc(PEOPLE[key])}</b>${s ? `<small class="cc-plan-tag">${esc(statusWhen(s))}</small>` : ''}</div>`;
+    if (!s) return `<div class="cc-status-card cc-status-none ${key}">${who}<p class="cc-status-text cc-small">No status yet.</p></div>`;
+    return `<div class="cc-status-card ${key}${statusStale(s) ? ' cc-status-stale' : ''}">${who}<div class="cc-status-now"><span class="cc-status-emoji">${emojiHtml(s.emoji)}</span><p class="cc-status-text">${esc(s.text)}</p></div></div>`;
+  }
+  function statusMineHtml() {
+    const s = statusOf(ui.me), d = statusDraft, pick = statusPreset(d.emoji);
+    const current = s
+      ? `<div class="cc-status-mine${statusStale(s) ? ' cc-status-stale' : ''}"><span class="cc-status-emoji-sm">${emojiHtml(s.emoji)}</span><span class="cc-status-mine-text">${esc(s.text)}<small class="cc-plan-tag">${esc(statusWhen(s))}</small></span><button type="button" class="cc-button" data-status-clear>Clear</button></div>`
+      : '<p class="cc-small cc-status-mine-empty">Not set yet. Pick one below.</p>';
+    const presets = STATUS_PRESETS.map((p, i) => `<button type="button" class="cc-button cc-status-preset" data-status-preset="${i}" aria-pressed="${d.emoji === p.emoji}" aria-label="${esc(`${p.en} ${p.zh}`)}" title="${esc(`${p.en} · ${p.zh}`)}">${emojiHtml(p.emoji)}</button>`).join('');
+    return `<h3 class="cc-status-sub">Your status · <span lang="zh-CN">我的状态</span></h3>${current}
+      <div class="cc-status-presets" role="group" aria-label="Pick a status">${presets}</div>
+      <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${emojiHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Tap an emoji, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
+  }
+  function renderStatus(soft = passive) {
+    const box = $('[data-status-root]'); if (!box) return;
+    const tab = box.querySelector('[data-status-toggle]'), panel = box.querySelector('[data-status-panel]'), body = panel.querySelector('[data-status-body]');
+    box.hidden = !ui.me || $('[data-app]').hidden;
+    if (box.hidden) ui.statusOpen = false;
+    const open = !!ui.statusOpen;
+    box.classList.toggle('cc-open', open);
+    tab.setAttribute('aria-expanded', String(open));
+    panel.toggleAttribute('inert', !open);
+    if (open) panel.removeAttribute('aria-hidden'); else panel.setAttribute('aria-hidden', 'true');
+    if (box.hidden) { body.innerHTML = ''; statusShown = null; return; }
+    if (statusDraft.owner !== ui.me) Object.assign(statusDraft, { owner: ui.me, emoji: '', text: '', dirty: false });
+    const key = partnerKey(), theirs = statusOf(key);
+    if (open && theirs) markStatusSeen(theirs.at); // looking at it counts as seeing it
+    const unseen = statusUnseen();
+    tab.setAttribute('aria-label', `${PEOPLE[key]}'s status${theirs ? `: ${theirs.emoji} ${theirs.text}` : ''}${unseen ? ' (new)' : ''}`);
+    tab.innerHTML = `${mini(key)}${theirs ? `<span class="cc-status-tab-emoji${statusStale(theirs) ? ' cc-status-stale' : ''}">${emojiHtml(theirs.emoji)}</span>` : ''}<span class="cc-status-chev" aria-hidden="true">${open ? '›' : '‹'}</span>${unseen ? '<i class="cc-status-dot" aria-hidden="true"></i>' : ''}`;
+    const html = `<div data-status-partner>${statusCardHtml()}</div>${statusMineHtml()}`;
+    if (html === statusShown) return;
+    const a = document.activeElement, inside = !!a && body.contains(a);
+    // a sync while typing only refreshes the other person's card, so the keyboard and IME stay put
+    if (soft && inside && a.matches('input')) { const card = body.querySelector('[data-status-partner]'); if (card) card.innerHTML = statusCardHtml(); statusShown = null; return; }
+    const sel = !inside ? null : a.name ? `[name="${a.name}"]` : a.dataset.statusPreset != null ? `[data-status-preset="${a.dataset.statusPreset}"]` : a.hasAttribute('data-status-clear') ? '[data-status-clear]' : a.type === 'submit' ? '[data-status-form] [type=submit]' : null;
+    const range = inside && a.matches('input') ? [a.selectionStart, a.selectionEnd] : null;
+    body.innerHTML = html; statusShown = html;
+    if (inside) {
+      const el = (sel && body.querySelector(sel)) || panel.querySelector('[data-status-close]');
+      el.focus({ preventScroll: true });
+      if (range && el.setSelectionRange) try { el.setSelectionRange(...range); } catch {}
+    }
+  }
+  function openStatus(open, restoreFocus = true) {
+    if (open && !ui.me) return;
+    const was = !!ui.statusOpen, box = $('[data-status-root]');
+    ui.statusOpen = open;
+    if (open && !was && !statusDraft.dirty) { const mine = statusOf(ui.me); Object.assign(statusDraft, { owner: ui.me, emoji: mine?.emoji || '', text: mine?.text || '' }); }
+    renderStatus(false);
+    if (open && !was) box.querySelector('[data-status-panel] :is(button, input):not([disabled])')?.focus({ preventScroll: true });
+    if (!open && was && restoreFocus) box.querySelector('[data-status-toggle]')?.focus({ preventScroll: true });
+  }
+  function setMyStatus(value) {
+    if (!ui.me) return;
+    const key = statusKey(ui.me);
+    data.meta = { ...data.meta, [key]: value };
+    run(store.setMeta({ [key]: value }));
+    render();
+  }
+  function pickStatusPreset(i) {
+    const p = STATUS_PRESETS[i]; if (!p) return;
+    const t = statusDraft.text.trim(); // replace the words only while they are still a preset's label
+    if (!t || STATUS_PRESETS.some(x => [x.zh, x.en, `${x.zh} ${x.en}`].includes(t))) statusDraft.text = p.zh;
+    Object.assign(statusDraft, { emoji: p.emoji, dirty: true });
+    renderStatus(false);
+  }
+  function saveStatus(form) {
+    const field = form.elements.text, text = String(field.value || '').trim().slice(0, STATUS_MAX), pick = statusPreset(statusDraft.emoji);
+    if (!statusDraft.emoji) { flash('Pick an emoji for your status first.'); $('[data-status-preset]')?.focus(); return; }
+    const value = { emoji: statusDraft.emoji, text: text || pick?.zh || '', at: Date.now() };
+    Object.assign(statusDraft, { emoji: value.emoji, text: value.text, dirty: false });
+    setMyStatus(value);
+    flash('Status saved.');
+  }
+  {
+    const box = $('[data-status-root]'), panel = box.querySelector('[data-status-panel]');
+    root.addEventListener('click', e => {
+      const el = e.target.closest('button'); if (!el || !box.contains(el)) return;
+      if (el.hasAttribute('data-status-toggle')) openStatus(!ui.statusOpen);
+      else if (el.hasAttribute('data-status-close')) openStatus(false);
+      else if (el.dataset.statusPreset != null) pickStatusPreset(+el.dataset.statusPreset);
+      else if (el.hasAttribute('data-status-clear')) { Object.assign(statusDraft, { emoji: '', text: '', dirty: false }); setMyStatus(null); flash('Status cleared.'); }
+    });
+    root.addEventListener('input', e => { if (e.target.name === 'text' && e.target.closest('[data-status-form]')) Object.assign(statusDraft, { text: e.target.value, dirty: true }); });
+    root.addEventListener('submit', e => { if (e.target.matches('[data-status-form]')) { e.preventDefault(); saveStatus(e.target); } });
+    // tapping anywhere else closes it (composedPath: a re-render may already have detached the target)
+    document.addEventListener('click', e => {
+      if (!ui.statusOpen || e.composedPath().includes(box)) return;
+      const a = document.activeElement;
+      openStatus(false, !a || a === document.body || panel.contains(a));
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || e.isComposing || !ui.statusOpen || root.querySelector('dialog[open]')) return;
+      e.preventDefault(); openStatus(false);
+    });
+    // swipe left on the tab opens, swipe right on the tab or the open panel closes
+    box.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const onTab = !!e.target.closest('[data-status-toggle]');
+      if (!onTab && !(ui.statusOpen && e.target.closest('[data-status-panel]'))) return;
+      if (e.target.closest('input, textarea, select')) return; // let text selection be
+      statusSwipe = { id: e.pointerId, x: e.clientX, y: e.clientY, onTab };
+    });
+    document.addEventListener('pointerup', e => {
+      const s = statusSwipe; if (!s || s.id !== e.pointerId) return;
+      statusSwipe = null;
+      const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (Math.abs(dx) < 30 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (dx < 0 && s.onTab && !ui.statusOpen) { statusSwipedAt = performance.now(); openStatus(true); }
+      else if (dx > 0 && ui.statusOpen) { statusSwipedAt = performance.now(); openStatus(false); }
+    });
+    document.addEventListener('pointercancel', e => { if (statusSwipe?.id === e.pointerId) statusSwipe = null; });
+    box.addEventListener('dragstart', e => e.preventDefault()); // dragging selected text or an avatar would cancel the swipe
+    // the click that ends a swipe must not toggle it straight back (or count as an outside tap)
+    document.addEventListener('click', e => { if (performance.now() - statusSwipedAt < 400) { statusSwipedAt = -1e9; e.stopPropagation(); e.preventDefault(); } }, true);
+    setInterval(() => { if (ui.statusOpen && !document.hidden) renderStatus(true); }, 60000); // keep "2h ago" fresh
+  }
+
   // ---------- chrome: player card, hero, sync ----------
   function renderChrome() {
     $$('[data-panel]').forEach(p => p.hidden = p.dataset.panel !== ui.page);
@@ -724,7 +897,7 @@
     const local = store.mode === 'local';
     const avatars = data.meta.avatars || {};
     const badge = key => `<span class="cc-badge ${key}">${avatars[key] ? `<img src="${avatars[key]}" alt="">` : PEOPLE[key].slice(0, 1)}</span>`;
-    const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span></span>`;
+    const playerAvatar = key => `<span class="cc-player-avatar ${key}">${badge(key)}${statusBubble(key)}</span>`;
     const canBadge = 'setAppBadge' in navigator && 'Notification' in window && Notification.permission === 'default' && (matchMedia('(display-mode: standalone)').matches || navigator.standalone);
     const picture = `<div class="cc-avatar-tools"><span class="cc-button cc-file-btn">${ui.busy === 'avatar' ? 'Saving…' : 'Change my picture'}<input type="file" accept="image/*" data-avatar-file aria-label="Change my profile picture"></span>${avatars[ui.me] ? '<button type="button" class="cc-link" data-avatar-reset>Remove picture</button>' : ''}${canBadge ? '<button type="button" class="cc-link" data-enable-badge>Show a count on the app icon</button>' : ''}</div>`;
     $('[data-player-card]').innerHTML = (local
@@ -757,7 +930,7 @@
     const a = document.activeElement, fa = a && root.contains(a) ? a.closest('form') : null;
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
-    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    renderChrome(); renderCalendar(); renderSpecialDays(); renderQuestion(); renderStatus(); renderMemory(); renderTodo(); renderWishlist(); renderDiary(); renderAlbum(); renderQuestionDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
