@@ -143,6 +143,19 @@ test('the next free day skips days taken by custom questions, including bumped o
   assert.equal(nextFreeDay('nope', list), null);
 });
 
+test('asking never gives away a day the other person booked: mine keeps its day, the schedule moves it on when shown', () => {
+  // Zhenzhen books Oct 10 first. Sijie's ask form only looks at Sijie's own bookings (none yet).
+  const theirs = item('a', '2026-10-10', { by: 'Zhenzhen', createdAt: 1 }), own = list => list.filter(q => q.by === 'Sijie');
+  assert.equal(nextFreeDay('2026-10-10', own([theirs])), '2026-10-10', 'the default date and the saved date are the day picked');
+  const mine = item('b', '2026-10-10', { by: 'Sijie', createdAt: 2 }), all = [theirs, mine];
+  assert.deepEqual(schedule(own(all)).map(s => [s.q.id, s.on]), [['b', '2026-10-10']], 'the waiting list shows the day picked');
+  // the real schedule (delivery, the inbox, the other person's view) delivers the later booking the next free day
+  assert.deepEqual(ons(all), { a: '2026-10-10', b: '2026-10-11' });
+  assert.deepEqual([forDay('2026-10-10', all).qid, forDay('2026-10-11', all).qid], ['c:a', 'c:b']);
+  // a clash with one of your own still moves on (and the form says so)
+  assert.equal(nextFreeDay('2026-10-10', own(all)), '2026-10-11');
+});
+
 // ---------- weekly check-in ----------
 const shiftWeeks = (iso, n) => shift(iso, 7 * n);
 const MONDAY = '2026-01-05';

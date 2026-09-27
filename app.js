@@ -379,6 +379,9 @@
     const first = data.answers.filter(a => a.date === date && a.q).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
     return first ? first.q : Q.forDay(date, data.questions);
   }
+  // the ask form only looks at your own bookings, so it never gives away a day the other person has booked; when both
+  // of you pick one day, Q.schedule quietly moves the later one on when it is shown
+  const myQuestions = () => data.questions.filter(q => q?.by === meName());
   function questionHtml(q) {
     if (!q) return '';
     const cat = Q.CATEGORIES[q.cat] || Q.CATEGORIES.fun;
@@ -427,9 +430,9 @@
     if (!ui.questionOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
     const a = document.activeElement;
     if (passive && a && dlg.contains(a) && (a.matches('input, textarea') || a.closest('[data-checkin-form], [data-question-form]'))) return;
-    const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask;
-    const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, data.questions))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
-    const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
+    const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask, mine = myQuestions();
+    const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, mine))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
+    const waiting = Q.schedule(mine).filter(s => s.on > day);
     const scheduled = waiting.length ? `<h3 class="cc-q-sub">Waiting to be asked</h3>${waiting.map(({ q, on }) => `<div class="cc-q-sched"><span><b>${esc(niceDate(on))}</b> ${esc(q.text)}</span>${removeButton('questions', q.id, 'Cancel')}</div>`).join('')}` : '';
     const page = pageList('questions', questionArchive());
     const past = page.items.map(({ id: date }) => date.startsWith('wk:') ? checkinArticle(date.slice(3)) : `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
@@ -1432,7 +1435,7 @@
       const text = String(d.text || '').trim().slice(0, 200), tomorrow = shiftDay(qDay(), 1);
       if (!text) { form.elements.text.setCustomValidity('Write a question first.'); form.elements.text.reportValidity(); return; }
       if (!validDay(d.date || '') || d.date < tomorrow) { form.elements.date.setCustomValidity('Pick tomorrow or later.'); form.elements.date.reportValidity(); return; }
-      const on = Q.nextFreeDay(d.date, data.questions), partner = PEOPLE[partnerKey()];
+      const on = Q.nextFreeDay(d.date, myQuestions()), partner = PEOPLE[partnerKey()];
       run(store.set('questions', { id: newId(), date: on, text, by: meName(), createdAt: Date.now() }).then(() => render()));
       planner.drafts.ask = { text: '', date: '' }; dropDraft('ask');
       flash(on === d.date ? `Scheduled for ${niceDate(on)}. ${partner} won’t see it until then.` : `${niceDate(d.date)} already has a question, so yours is on ${niceDate(on)}.`);
