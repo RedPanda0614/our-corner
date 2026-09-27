@@ -180,7 +180,7 @@
     if (left <= 0) ui.undo = null;
     ui.message = text; ui.showUndo = !!undo;
     clearTimeout(ui.messageTimer); // an Undo still waiting comes back beside its own message once this one has been read
-    ui.messageTimer = undo ? setTimeout(end, 9000) : setTimeout(() => { if (ui.undo && ui.undoUntil - Date.now() > 1000) { ui.message = ui.undoText; ui.showUndo = true; renderMessage(); ui.messageTimer = setTimeout(end, ui.undoUntil - Date.now()); } else end(); }, left > 0 ? Math.min(3500, left) : 4000);
+    ui.messageTimer = undo ? setTimeout(end, 9000) : setTimeout(() => { if (ui.undo && ui.undoUntil - Date.now() > 1000) { ui.message = ui.undoText; ui.showUndo = true; renderMessage(); ui.messageTimer = setTimeout(end, ui.undoUntil - Date.now()); } else end(); }, left > 4500 ? 3500 : 4000); // this one gets its full time either way
     renderMessage();
   }
   function renderMessage() {
@@ -1138,7 +1138,7 @@
     const at = Math.min(...Object.keys(PEOPLE).map(statusOf).filter(s => s && !statusStale(s)).map(s => s.at + STATUS_DAY));
     if (at === fadeAt) return;
     clearTimeout(fadeTimer); fadeAt = at;
-    if (at < Infinity) fadeTimer = setTimeout(() => { fadeAt = 0; scheduleRender(); }, at - Date.now());
+    if (at < Infinity) fadeTimer = setTimeout(() => { fadeAt = 0; scheduleRender(); }, Math.min(at - Date.now(), 864e5)); // a clock set far ahead waits a day at a time
   }
   function statusWhen(s) {
     if (!statusStale(s)) return ago(s.at);
@@ -1707,7 +1707,10 @@
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
     if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit'); render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
-    if (el.hasAttribute('data-logout')) { Promise.resolve(store.signOut()).catch(err => flash(err.message)); return; } // refused while changes are still saving
+    if (el.hasAttribute('data-logout')) { // refused while photos are uploading or changes are still saving
+      if (Object.values(busy).some(n => n > 0)) { flash('Still uploading. Log out once it has finished, so nothing is lost.'); return; }
+      Promise.resolve(store.signOut()).catch(err => flash(err.message)); return;
+    }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
     if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve().then(u).then(() => flash('Restored.'), err => { console.error(err); flash('Could not undo. Please try again.', u); }); return; }
     if (ds.confirm) { ui.confirm = ds.confirm; lightbox.id ? openPhoto(lightbox.id) : render(); return; }

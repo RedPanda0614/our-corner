@@ -73,9 +73,9 @@ function server() {
 }
 
 // A page in a fake browser. `quota(key, value, disk)` returning true makes that IndexedDB write fail like a full disk.
-function browser(remote, { disk = new Map(), local = new Map(), quota = null, config = { github: { owner: 'test', repo: 'private-data' } } } = {}) {
+function browser(remote, { disk = new Map(), local = new Map(), quota = null, idb = true, config = { github: { owner: 'test', repo: 'private-data' } } } = {}) {
   const timers = new Map(), intervals = [], listeners = {}, warnings = [], clock = { offset: 0 }; let timerId = 0;
-  const indexedDB = { open() {
+  const indexedDB = { open() { if (!idb) throw new Error('IndexedDB is not available here');
     const request = { result: { transaction() {
       const tx = { objectStore() { return {
         get(key) { const req = {}; queueMicrotask(() => { req.result = clone(disk.get(key)); req.onsuccess?.(); }); return req; },
@@ -94,16 +94,16 @@ function browser(remote, { disk = new Map(), local = new Map(), quota = null, co
   const context = vm.createContext({ window, indexedDB, location: { reload: () => { reloads.n++; } },
     localStorage: { getItem: k => local.get(k), setItem: (k, v) => local.set(k, v), removeItem: k => local.delete(k), get length() { return local.size; }, key: i => [...local.keys()][i] ?? null },
     document: { hidden: false, addEventListener: on('doc:') }, navigator: { onLine: true }, Date: FakeDate, Blob, FileReader,
-    fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array,
+    fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array, structuredClone,
     btoa: s => Buffer.from(s, 'binary').toString('base64'), atob: s => Buffer.from(s, 'base64').toString('binary'),
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms, at: Date.now() + clock.offset + ms }); return id; }, clearTimeout: id => timers.delete(id),
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return ++timerId; }, clearInterval() {}, console: { ...console, warn: (...a) => warnings.push(a) }
   });
   vm.runInContext(source, context);
   const store = window.CCStore.create(config);
-  const changes = {}, statuses = [], photoTimes = [], photoHints = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
-  const page = { store, disk, local, changes, statuses, timers, intervals, listeners, warnings, clock, photoTimes, photoHints, Blob, reloads, get emits() { return emits; },
-    connect: () => store.start((col, items, hint) => { if (col === 'meta') emits++; if (col === 'photos') { photoTimes.push(Date.now() + clock.offset); photoHints.push(hint); } changes[col] = clone(items); }, (state, error) => statuses.push({ state, error })),
+  const changes = {}, lists = {}, statuses = [], photoTimes = [], photoHints = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
+  const page = { store, disk, local, changes, lists, statuses, timers, intervals, listeners, warnings, clock, photoTimes, photoHints, Blob, reloads, get emits() { return emits; },
+    connect: () => store.start((col, items, hint) => { if (col === 'meta') emits++; if (col === 'photos') { photoTimes.push(Date.now() + clock.offset); photoHints.push(hint); } changes[col] = clone(items); lists[col] = items; }, (state, error) => statuses.push({ state, error })),
     async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
     async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
     async flush() { assert.ok(await page.runTimers(700), 'save scheduled'); },
@@ -690,4 +690,41 @@ test('removeMany also works in local mode', async () => {
   await page.store.removeMany('events', ['a', 'c']);
   assert.deepEqual(page.disk.get('data').collections.events.map(e => e.id), ['b']);
   assert.deepEqual(page.changes.events.map(e => e.id), ['b']);
+});
+
+// ---------- from the review of the merged speed-ups ----------
+test('a partner change found in a save conflict shows even when our retry then fails', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  await page.store.set('tasks', { id: 'mine', title: 'x' }); await page.flush();
+  remote.conflict = data => data.collections.tasks.push({ id: 'theirs', title: 'y' });
+  let puts = 0; const fetch = remote.fetch.bind(remote);
+  remote.fetch = async (url, o = {}) => { if (o.method === 'PUT' && /data\.json/.test(url) && ++puts === 2) throw new TypeError('Failed to fetch'); return fetch(url, o); };
+  await page.store.set('tasks', { id: 'second', title: 'z' }); await page.flush(); await settle(50); // 409, reload, then the retry fails
+  assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs', 'second']);
+  await page.advance(16000); await settle(50); // the retry goes through
+  assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['mine', 'theirs', 'second']);
+  await page.intervals[0].fn();
+  assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs', 'second']);
+});
+
+test('logging out is refused while a photo is still uploading', async () => {
+  const remote = server(), page = browser(remote); await page.start();
+  page.local.set('olc:drafts:sijie', '{"diary":{"":{"text":"our trip to the lake"}}}');
+  let release; const fetch = remote.fetch.bind(remote);
+  remote.fetch = async (url, o = {}) => { if (o.method === 'PUT' && /photos\//.test(url) && !release) await new Promise(r => { release = r; }); return fetch(url, o); };
+  const posting = post(page, 'e1', ['p1']); await settle(20);
+  await assert.rejects(page.store.signOut(), e => e.code === 'unsaved');
+  assert.equal(page.reloads.n, 0); assert.ok(page.local.has('olc:drafts:sijie'));
+  release(); await posting; await page.flush();
+  await page.store.signOut(); assert.equal(page.reloads.n, 1);
+});
+
+test('without IndexedDB, local mode still hands the page new lists after each change', async () => {
+  const page = browser(null, { config: {}, idb: false }); await page.connect();
+  await page.store.set('events', { id: 'a', title: 'Dinner' });
+  const held = page.lists.events; // the page's memoised views key on the list itself
+  await page.store.set('events', { id: 'b', title: 'Walk' });
+  assert.notEqual(page.lists.events, held);
+  assert.deepEqual(Array.from(held, e => e.id), ['a'], 'the list the page already has is never edited');
+  assert.deepEqual(Array.from(page.lists.events, e => e.id), ['a', 'b']);
 });

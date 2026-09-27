@@ -21,11 +21,11 @@
     });
     return {
       async get(key) {
-        const db = await dbPromise; if (!db) return memory.get(key);
+        const db = await dbPromise; if (!db) return structuredClone(memory.get(key)); // copies, as IndexedDB gives, so a change never edits what the page holds
         return new Promise(res => { const r = db.transaction('kv').objectStore('kv').get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(undefined); });
       },
       async put(key, value) {
-        const db = await dbPromise; if (!db) { memory.set(key, value); return; }
+        const db = await dbPromise; if (!db) { memory.set(key, structuredClone(value)); return; }
         // a full disk aborts the transaction (QuotaExceededError) instead of firing error, so listen for both
         return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(value, key); t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error('Could not save on this device.')); });
       },
@@ -188,7 +188,7 @@
     try { Object.assign(auth, JSON.parse(localStorage.getItem('olc:github') || '{}')); } catch {}
     let base = emptyData(), sha = null, etag = null, pending = [], started = false, verified = false;
     let mutationQueue = Promise.resolve(), revision = 0;
-    let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null, listening = false, retryStart = null;
+    let onChange = null, onStatus = null, flushTimer = null, flushing = null, pollTimer = null, listening = false, retryStart = null, uploading = 0;
     const thumbs = new Map(); // photo id -> thumbnail Blob (the page makes a link for it when it shows it)
     const loadingThumbs = new Set();
     const thumbFails = new Map(); // photo id -> { n, at }: a failed thumb download waits until `at` before trying again
@@ -314,7 +314,7 @@
       flushing = (async () => {
         while (pending.length) {
           const ops = pending.slice();
-          let ok = false, merged = false;
+          let ok = false;
           for (let attempt = 0; attempt < 4 && !ok; attempt++) {
             const next = applyAll(base, ops);
             const who = auth.name || 'someone';
@@ -324,14 +324,13 @@
               if (sha) { superseded.forEach((at, s) => { if (now - at > 30000) superseded.delete(s); }); superseded.set(sha, now); }
               base = next; sha = j.content.sha; etag = null; revision++; ok = true;
             }
-            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); merged = true; } // someone else saved first: reload, replay our changes
+            else if (res.status === 409 || res.status === 422) { etag = null; await pull(true); emit(); } // someone else saved first: reload, show theirs at once (even if our retry fails), replay ours
             else if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token cannot write to this repo.'), { code: 'auth' });
             else throw new Error('GitHub error ' + res.status);
           }
           if (!ok) throw new Error('Could not save after several tries.');
           pending = pending.slice(ops.length);
-          await persist();
-          if (merged) emit(); // else what was saved is what the page shows already
+          await persist(); // what was saved is what the page shows already
         }
       })();
       try { await flushing; status('synced'); }
@@ -350,6 +349,9 @@
 
     // photos: stored as files photos/<id>.jpg (full) and photos/<id>-thumb.jpg
     async function putFile(path, dataUrl, message) { // resolves to the new file's sha
+      uploading++; try { return await putFileOnce(path, dataUrl, message); } finally { uploading--; }
+    }
+    async function putFileOnce(path, dataUrl, message) {
       const content = dataUrl.split(',')[1];
       let fileSha;
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -495,10 +497,10 @@
         try { await this.verify(); } catch (e) { auth.token = null; throw e.code === 'ratelimit' ? busyError(e.until, true) : e; }
         localStorage.setItem('olc:github', JSON.stringify({ token: auth.token, name }));
       },
-      // Not while changes are still on their way to GitHub; then this device forgets the token and the private data it
+      // Not while photos or changes are still on their way to GitHub; then this device forgets the token and the private data it
       // keeps: the saved copy, thumbnails, full photos and drafts. Unsent file deletions only leave spare files behind.
       async signOut() {
-        if (pending.length || flushing) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
+        if (pending.length || flushing || uploading) throw Object.assign(new Error('Still saving to GitHub. Log out once it says SYNCED, so nothing is lost.'), { code: 'unsaved' });
         closed = true; clearInterval(pollTimer); localStorage.removeItem('olc:github');
         for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('olc:drafts:')) localStorage.removeItem(k); }
         await db.drop(k => typeof k === 'string' && /^(github-state:|thumb:|full:)/.test(k));
