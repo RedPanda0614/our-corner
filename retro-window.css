@@ -42,7 +42,7 @@
   flex: 0 0 22px;
   width: 22px;
   height: 22px;
-  background: url('assets/cd-y2k.webp') center / 44px 44px no-repeat;
+  background: url('assets/cd-y2k.png') center / 44px 44px no-repeat;
   image-rendering: pixelated;
 }
 #couple-corner .cc-window > .cc-bar > .cc-min {
@@ -79,7 +79,7 @@
   display: inline-block;
   width: 22px;
   height: 22px;
-  background: url('assets/cd-y2k.webp') center / 44px 44px no-repeat;
+  background: url('assets/cd-y2k.png') center / 44px 44px no-repeat;
   image-rendering: pixelated;
 }
 
@@ -127,7 +127,7 @@
   flex: 0 0 24px;
   width: 24px;
   height: 24px;
-  background: url('assets/cd-y2k.webp') center / 48px 48px no-repeat;
+  background: url('assets/cd-y2k.png') center / 48px 48px no-repeat;
   image-rendering: pixelated;
 }
 #couple-corner .cc-hero-bar-status {
@@ -173,7 +173,7 @@
   flex: 0 0 44px;
   width: 44px;
   height: 24px;
-  background: url('assets/shooting-star-y2k.webp') center / 84px 42px no-repeat;
+  background: url('assets/shooting-star-y2k.png') center / 84px 42px no-repeat;
   image-rendering: pixelated;
 }
 #couple-corner .cc-top .cc-user-btn { box-shadow: 1px 1px 0 hsl(190 28% 30% / .55); }
