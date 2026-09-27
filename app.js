@@ -5,9 +5,9 @@
   const $$ = sel => [...root.querySelectorAll(sel)];
   const cfg = window.CC_CONFIG || {};
   const store = CCStore.create(cfg);
-  { // stamp every edit so the other person gets a message about it
+  { // stamp every edit so the other person gets a message about it; { quiet: true } is for housekeeping that isn't an edit
     const rawUpdate = store.update;
-    store.update = (col, id, patch) => rawUpdate(col, id, { ...patch, updatedAt: Date.now(), updatedBy: PEOPLE[ui.me] || '', updatedWhat: Object.keys(patch).join(',') });
+    store.update = (col, id, patch, opts = {}) => rawUpdate(col, id, opts.quiet ? patch : { ...patch, updatedAt: Date.now(), updatedBy: PEOPLE[ui.me] || '', updatedWhat: Object.keys(patch).join(',') });
   }
   const PAGES = ['home', 'diary', 'album', 'todo', 'wishlist'];
   const PEOPLE = { sijie: '斯婕', zhenzhen: '真真' };
@@ -46,7 +46,7 @@
   const localMidnight = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
 
   // ---------- state ----------
-  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], answers: [], questions: [], meta: {} };
+  const data = { events: [], trips: [], tasks: [], dates: [], wishes: [], diary: [], photos: [], albums: [], answers: [], questions: [], checkins: [], meta: {} };
   // Skins: shift the hue (dh) and scale the saturation (s) of each colour family in style.css / app.css.
   // c = contrast (1 normal), dark = invert lightness.
   const T = (id, zh, group, g, a, l, p, c = 1, dark = false) => ({ id, zh, group, v: { g, a, l, p }, lo: dark ? 50 * (1 + c) : 50 * (1 - c), lk: dark ? -c : c });
@@ -514,11 +514,11 @@
     return { thumb, full };
   }
   async function savePhotos(list, extra) {
-    const ids = [];
+    const ids = [], batch = newId(); // photos from one upload share a batch, so they make one message
     for (const p of list) {
       const id = newId();
       await store.putFull(id, p.full);
-      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), ...extra });
+      await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
       ids.push(id);
     }
     return ids;
@@ -542,12 +542,31 @@
 
   // ---------- messages (like WeChat moments notifications) ----------
   const TAB_NAMES = { home: 'Home', diary: 'Diary', todo: 'Todo', wishlist: 'Wishlist', album: 'Album' };
+  // Read state lives in the shared data under a key per person (so the two never overwrite each other),
+  // plus a local copy that is right immediately and offline. Merging only ever moves things towards "read".
   const inboxKey = () => 'inbox:' + (ui.me || 'x');
-  function inboxState() {
-    const st = ls.get(inboxKey(), null);
-    if (st) return st;
-    const fresh = { since: Date.now(), read: [] }; ls.set(inboxKey(), fresh); return fresh;
+  function mergeReadState(a, b) {
+    const x = a || {}, y = b || {}, out = { ...y, ...x };
+    out.since = Math.max(x.since || 0, y.since || 0);
+    out.read = [...new Set([...(y.read || []), ...(x.read || [])])];
+    const seen = Math.max(x.statusSeen || 0, y.statusSeen || 0); if (seen) out.statusSeen = seen; else delete out.statusSeen;
+    return out;
   }
+  const sameReadState = (a, b) => !!a && !!b && a.since === b.since && (a.statusSeen || 0) === (b.statusSeen || 0) && (a.read || []).length === (b.read || []).length && (a.read || []).every(k => (b.read || []).includes(k));
+  function inboxState() {
+    const key = inboxKey(), local = ls.get(key, null), synced = data.meta[key] || null;
+    if (local || synced) return mergeReadState(local, synced);
+    const fresh = { since: Date.now(), read: [] };
+    if (ui.dataReady) ls.set(key, fresh); // before the data loads, a synced copy may still arrive
+    return fresh;
+  }
+  function saveInboxState(st) {
+    const key = inboxKey(); ls.set(key, st);
+    if (!ui.me || !ui.dataReady || sameReadState(st, data.meta[key])) return;
+    data.meta = { ...data.meta, [key]: st };
+    run(store.setMeta({ [key]: st }));
+  }
+  function pushReadState() { if (ui.me && (ls.get(inboxKey(), null) || data.meta[inboxKey()])) saveInboxState(inboxState()); } // first run after the update uploads the local copy
   const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
   function allMessages() {
     const me = meName(), out = [];
@@ -582,7 +601,10 @@
       if (edited(e) && /text|tags|date/.test(e.updatedWhat || '')) add('diary', `dy-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a diary entry · ${clip(e.text)}`, { type: 'entry', id: e.id });
       for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
     }
-    for (const p of data.photos) if (!p.entryId) add('album', 'ph:' + p.id, p.author, p.createdAt, 'added a photo to the album', { type: 'photo', id: p.id, thumb: p.thumb });
+    for (const g of photoUploads()) {
+      const first = g[0], n = g.length, album = data.albums.find(a => a.id === first.albumId);
+      add('album', 'ph:' + first.id, first.author, g[n - 1].createdAt, `added ${n === 1 ? 'a photo' : n + ' photos'} to ${album ? clip(album.title, 24) : 'the album'}`, { type: 'photo', id: first.id, thumb: first.thumb });
+    }
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
     for (const a of data.answers) {
@@ -593,12 +615,22 @@
     for (const { q, on } of Q.schedule(data.questions)) if (on <= day) add('home', 'cq:' + q.id, q.by, localMidnight(on), `asked you ${on === day ? 'today’s' : 'a'} question · ${clip(q.text)}`, { type: 'question', date: on });
     return out.sort((a, b) => b.at - a.at);
   }
+  function photoUploads() { // album photos grouped by upload; older photos without a batch group by person + album + within 10 minutes
+    const groups = new Map(), open = new Map();
+    for (const p of data.photos.filter(x => !x.entryId && x.author && x.createdAt).sort((a, b) => a.createdAt - b.createdAt)) {
+      if (p.batch) { const g = groups.get('b:' + p.batch); g ? g.push(p) : groups.set('b:' + p.batch, [p]); continue; }
+      const k = p.author + '|' + (p.albumId || ''), g = open.get(k);
+      if (g && p.createdAt - g[g.length - 1].createdAt < 10 * 60000) g.push(p);
+      else { const fresh = [p]; open.set(k, fresh); groups.set('p:' + p.id, fresh); }
+    }
+    return [...groups.values()];
+  }
   function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !read.has(m.key)); }
   function markRead(keys) { // anything older than 30 days counts as read, so the list stays short without old messages coming back
     const st = inboxState(), at = new Map(allMessages().map(m => [m.key, m.at]));
     st.since = Math.max(st.since, Date.now() - 30 * 86400000);
     st.read = [...new Set([...st.read, ...keys])].filter(k => (at.get(k) || 0) > st.since);
-    ls.set(inboxKey(), st);
+    saveInboxState(st);
   }
   function ago(ms) {
     const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -1072,7 +1104,7 @@
     if (ds.lightboxStep) { const l = lightbox.list, i = l.indexOf(lightbox.id); ui.confirm = null; openPhoto(l[(i + +ds.lightboxStep + l.length) % l.length]); return; }
     if (ds.photoDelete) {
       const p = data.photos.find(x => x.id === ds.photoDelete); closePhoto(); if (!p) return;
-      run((async () => { await store.remove('photos', p.id); if (p.entryId) { const en = data.diary.find(x => x.id === p.entryId); if (en) await store.update('diary', en.id, { photoIds: (en.photoIds || []).filter(x => x !== p.id) }); } })());
+      run((async () => { await store.remove('photos', p.id); if (p.entryId) { const en = data.diary.find(x => x.id === p.entryId); if (en) await store.update('diary', en.id, { photoIds: (en.photoIds || []).filter(x => x !== p.id) }, { quiet: true }); } })());
       flash('Photo deleted.'); return;
     }
   });
@@ -1220,7 +1252,7 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); scheduleRender(); };
+  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') ui.dataReady = true; scheduleRender(); };
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
@@ -1230,7 +1262,7 @@
   render();
   if (store.mode === 'local') {
     showApp(true);
-    seedIfNeeded().then(() => store.start(onChange));
+    seedIfNeeded().then(() => store.start(onChange)).then(pushReadState);
   } else {
     showApp(false);
     store.onAuth(async (user, err) => {
@@ -1238,7 +1270,7 @@
       if (!user) { if (err) $('[data-login-error]').textContent = err.message; ui.sync = 'signedout'; showApp(false); render(); return; }
       ui.me = nameToKey(user.name || '斯婕');
       showApp(true); render();
-      try { await store.start(onChange, onStatus); await seedIfNeeded(); }
+      try { await store.start(onChange, onStatus); await seedIfNeeded(); pushReadState(); }
       catch (e) {
         console.error(e);
         if (e.code === 'auth') { $('[data-login-error]').textContent = e.message; localStorage.removeItem('olc:github'); showApp(false); }

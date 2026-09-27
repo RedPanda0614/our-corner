@@ -134,6 +134,7 @@ test('older shared data accepts daily answers and custom questions', async () =>
   const page = browser(remote); await page.start();
   assert.deepEqual(page.changes.answers, []);
   assert.deepEqual(page.changes.questions, []);
+  assert.deepEqual(page.changes.checkins, []);
   await page.store.set('answers', { id: '2026-09-27:sijie', date: '2026-09-27', text: 'Dumplings', createdAt: 1 });
   await page.store.set('questions', { id: 'q-1', date: '2026-09-28', text: 'Best trip so far?', createdAt: 2 });
   await page.flush();
