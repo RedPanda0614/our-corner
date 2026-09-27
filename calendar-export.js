@@ -27,7 +27,12 @@
     return out.join('\r\n');
   };
 
-  function build(kind, data, today, timestamp = Date.now()) {
+  // Events and special days that came in from a calendar file (Apple Calendar import, or the first-run
+  // seed) are already in that calendar. Exported again they would get new UIDs there and show up twice,
+  // so they are left out unless the export asks for them.
+  const isImported = item => !!(item && (item.importKey || item.source || (Array.isArray(item.importUIDs) && item.importUIDs.length)));
+
+  function build(kind, data, today, timestamp = Date.now(), { includeImported = false } = {}) {
     if (!Object.prototype.hasOwnProperty.call(labels, kind)) throw new Error('Unknown calendar category.');
     const lines = [];
     const stamp = utcStamp(timestamp);
@@ -42,9 +47,10 @@
       lines.push('END:VEVENT');
     };
 
-    let count = 0;
+    let count = 0, skipped = 0;
     for (const item of data.events || []) {
       if ((item.kind || 'plan') !== kind) continue;
+      if (!includeImported && isImported(item)) { skipped++; continue; }
       const timed = item.startMs && item.endMs && item.allDay === false;
       event('ev-' + item.id, item.title, timed
         ? [`DTSTART:${utcStamp(item.startMs)}`, `DTEND:${utcStamp(item.endMs)}`]
@@ -64,6 +70,7 @@
     }
     if (['birthday', 'holiday', 'anniversary'].includes(kind)) for (const item of data.dates || []) {
       if ((item.kind || 'anniversary') !== kind) continue;
+      if (!includeImported && isImported(item)) { skipped++; continue; }
       // A yearly Feb 29 repeats on day 60 of the year: Feb 29 in leap years, Mar 1 otherwise (a plain yearly rule skips 3 years in 4).
       const yearly = item.date.slice(5) === '02-29' ? 'RRULE:FREQ=YEARLY;BYYEARDAY=60' : 'RRULE:FREQ=YEARLY';
       event('day-' + item.id, '♡ ' + item.title, [...allDay(item.date), ...(item.repeat ? [yearly] : [])], labels[kind]);
@@ -74,8 +81,8 @@
     const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bibo and Bobi//Calendar//EN',
       'CALSCALE:GREGORIAN', `X-WR-CALNAME:${escapeText('Bibo & Bobi · ' + labels[kind])}`,
       ...lines, 'END:VCALENDAR'].map(fold).join('\r\n') + '\r\n';
-    return { ics, count, kind, label: labels[kind], filename: `bibo-bobi-${kind}-${today}.ics` };
+    return { ics, count, skipped, kind, label: labels[kind], filename: `bibo-bobi-${kind}-${today}.ics` };
   }
 
-  return { KINDS, build };
+  return { KINDS, build, isImported };
 });

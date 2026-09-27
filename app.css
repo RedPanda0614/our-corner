@@ -1,7 +1,10 @@
+/* Only the hero bar's '■ ■ ■' still renders in this family (typography.css overrides the rest),
+   so the file is a subset with just the space and ■. Re-subset the full font to use more characters. */
 @font-face {
   font-family: 'Ark Pixel 12px';
-  src: url('assets/ark-pixel-zh-hans.woff2') format('woff2');
+  src: url('assets/ark-pixel-squares.woff2') format('woff2');
   font-display: swap;
+  unicode-range: U+0020, U+25A0;
 }
 html, body { margin: 0; background: hsl(calc(0deg + var(--p-dh)) calc(0% * var(--p-s)) calc(var(--lo) + 100.0% * var(--lk))); color-scheme: light; }
 body { padding: 0; min-height: 100vh; }
@@ -198,7 +201,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-wishlist-grid .cc-wish-note.cc-plan-card:nth-child(even) {
   display: flex; flex-direction: column; aspect-ratio: var(--note-ratio); min-height: 0;
   padding: var(--note-top) 13% 11%; overflow: hidden; border: 0; box-shadow: none;
-  background-color: transparent; background-image: url('assets/wishlist-notes-sprite.png');
+  background-color: transparent; background-image: url('assets/wishlist-notes-sprite.webp');
   background-size: var(--note-size) auto; background-position: var(--note-x) var(--note-y); background-repeat: no-repeat;
   --note-font: var(--cc-font-readable);
   color: #244659; font-family: var(--note-font);
@@ -537,6 +540,7 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-export-row { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin-top: 9px; }
 #couple-corner .cc-export-row .cc-field { flex: 1 1 135px; margin: 0; }
 #couple-corner .cc-export-row .cc-button { min-height: 33px; }
+#couple-corner .cc-export-row .cc-inline-check { flex-basis: 100%; }
 @media (min-width: 900px) { #couple-corner .cc-cal-wrap { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } #couple-corner .cc-cal-side .cc-agenda { margin-top: 0; } #couple-corner .cc-cal-side .cc-home-grid .cc-fields, #couple-corner .cc-cal-side .cc-fields { grid-template-columns: 1fr; } }
 #couple-corner .cc-calendar-grid { gap: 3px; }
 #couple-corner .cc-day, #couple-corner .cc-day-blank { min-height: 34px; font-size: 13px; padding-top: 3px; }
@@ -656,6 +660,8 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-q-sub { margin: 18px 0 6px; font-size: 13px; font-weight: 600; }
 #couple-corner .cc-q-sched { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12px; border-bottom: 1px dashed hsl(0 0% 50% / .35); }
 #couple-corner .cc-q-sched b { margin-right: 6px; font-weight: 600; }
+#couple-corner .cc-q-sched > span { min-width: 0; overflow-wrap: anywhere; }
+#couple-corner .cc-q-sched .cc-button { flex: none; }
 #couple-corner .cc-q-day { padding: 10px 8px; border-top: 1px dashed hsl(0 0% 50% / .35); }
 #couple-corner .cc-q-day .cc-q-answers { margin-bottom: 4px; }
 @media (max-width: 600px) {

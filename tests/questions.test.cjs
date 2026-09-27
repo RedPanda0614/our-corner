@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { CATEGORIES, BANK, MOODS, WEEKLY, bankFor, schedule, forDay, nextFreeDay, weekOf, forWeek } = require('../questions.js');
+const { CATEGORIES, BANK, MOODS, WEEKLY, BANK_SIZES, WEEKLY_SIZES, bankFor, bankIndex, schedule, forDay, nextFreeDay, weekOf, forWeek, weekIndex } = require('../questions.js');
 
 const DAY = 864e5;
 const shift = (iso, n) => new Date(Date.parse(iso) + n * DAY).toISOString().slice(0, 10);
@@ -143,6 +143,19 @@ test('the next free day skips days taken by custom questions, including bumped o
   assert.equal(nextFreeDay('nope', list), null);
 });
 
+test('asking never gives away a day the other person booked: mine keeps its day, the schedule moves it on when shown', () => {
+  // Zhenzhen books Oct 10 first. Sijie's ask form only looks at Sijie's own bookings (none yet).
+  const theirs = item('a', '2026-10-10', { by: 'Zhenzhen', createdAt: 1 }), own = list => list.filter(q => q.by === 'Sijie');
+  assert.equal(nextFreeDay('2026-10-10', own([theirs])), '2026-10-10', 'the default date and the saved date are the day picked');
+  const mine = item('b', '2026-10-10', { by: 'Sijie', createdAt: 2 }), all = [theirs, mine];
+  assert.deepEqual(schedule(own(all)).map(s => [s.q.id, s.on]), [['b', '2026-10-10']], 'the waiting list shows the day picked');
+  // the real schedule (delivery, the inbox, the other person's view) delivers the later booking the next free day
+  assert.deepEqual(ons(all), { a: '2026-10-10', b: '2026-10-11' });
+  assert.deepEqual([forDay('2026-10-10', all).qid, forDay('2026-10-11', all).qid], ['c:a', 'c:b']);
+  // a clash with one of your own still moves on (and the form says so)
+  assert.equal(nextFreeDay('2026-10-10', own(all)), '2026-10-11');
+});
+
 // ---------- weekly check-in ----------
 const shiftWeeks = (iso, n) => shift(iso, 7 * n);
 const MONDAY = '2026-01-05';
@@ -215,4 +228,59 @@ test('a weekly prompt never comes back within 4 weeks, even across cycle boundar
     if (seen.has(qid)) assert.ok(i - seen.get(qid) > gap, `${qid} repeats after ${i - seen.get(qid)} weeks`);
     seen.set(qid, i);
   }
+});
+
+// ---------- size tables: questions appended later only rotate in from their own row's day ----------
+const fnv1a = s => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+};
+const range = (from, to, step = 1) => { const out = []; for (let d = from; d <= to; d = shift(d, step)) out.push(d); return out; };
+
+// Every day's built-in question and every week's prompt from 2019 to 2032, hashed as they were before the size
+// tables existed. If it fails, a day's question moved: put the old mapping back. Do not update the expected hash.
+test('the size tables keep every day and week on the question it always had', () => {
+  assert.equal(fnv1a(range('2019-01-01', '2032-12-31').map(d => bankFor(d).qid).join(',')), '50e2a81c');
+  assert.equal(fnv1a(range('2019-01-07', '2032-12-27', 7).map(d => forWeek(d).qid).join(',')), '21335491');
+});
+
+test('the size tables are append-only and cover the whole bank and pool', () => {
+  for (const [table, list, label] of [[BANK_SIZES, BANK, 'BANK_SIZES'], [WEEKLY_SIZES, WEEKLY, 'WEEKLY_SIZES']]) {
+    assert.deepEqual(table[0], label === 'BANK_SIZES' ? { from: '2026-01-01', size: 360 } : { from: '2026-01-05', size: 26 }, `${label}: the first row never changes`);
+    table.forEach((row, i) => {
+      assert.equal(bankFor(row.from) === null, false, `${label}[${i}].from is a real date`);
+      if (label === 'WEEKLY_SIZES') assert.equal(weekOf(row.from), row.from, `${label}[${i}] starts on a Monday`);
+      if (i) assert.ok(row.from > table[i - 1].from && row.size > table[i - 1].size, `${label}[${i}] comes after the row before and is bigger`);
+      assert.ok(row.size <= list.length, `${label}[${i}].size fits the list`);
+    });
+    // appended questions need a row of their own, or they would never be asked
+    assert.equal(table[table.length - 1].size, list.length, `${label}: add a row for the questions appended last`);
+  }
+});
+
+test('appending a question only changes days on or after its row', () => {
+  const FROM = '2027-03-01', grown = [...BANK_SIZES, { from: FROM, size: BANK.length + 1 }];
+  for (const d of range('2019-01-01', shift(FROM, -1))) assert.equal(bankIndex(d, grown), bankIndex(d), d);
+  // from then on the new question is in the rotation: a full cycle of the new size, no repeats, and nothing back
+  // within 30 days, across the row boundary too
+  const cycle = range(FROM, shift(FROM, BANK.length)).map(d => bankIndex(d, grown));
+  assert.equal(new Set(cycle).size, BANK.length + 1);
+  assert.ok(cycle.includes(BANK.length));
+  const around = range(shift(FROM, -400), shift(FROM, 3 * (BANK.length + 1))).map(d => bankIndex(d, grown)), last = new Map();
+  around.forEach((i, n) => { if (last.has(i)) assert.ok(n - last.get(i) > 30, `${i} back after ${n - last.get(i)} days`); last.set(i, n); });
+  assert.notDeepEqual(range(FROM, shift(FROM, 60)).map(d => bankIndex(d, grown)), range(FROM, shift(FROM, 60)).map(d => bankIndex(d)), 'the new row takes effect');
+  // a second row later on: the days of the first added row stay as they were
+  const twice = [...grown, { from: '2028-01-03', size: BANK.length + 5 }];
+  for (const d of range('2019-01-01', '2028-01-02')) assert.equal(bankIndex(d, twice), bankIndex(d, grown), d);
+});
+
+test('appending a weekly prompt only changes weeks on or after its row', () => {
+  const FROM = '2027-03-01', grown = [...WEEKLY_SIZES, { from: FROM, size: WEEKLY.length + 1 }];
+  for (const d of range('2018-12-31', shift(FROM, -7), 7)) assert.equal(weekIndex(d, grown), weekIndex(d), d);
+  for (let k = 0; k < 7; k++) assert.equal(weekIndex(shift(FROM, k), grown), weekIndex(FROM, grown), 'the same all week');
+  const cycle = range(FROM, shift(FROM, 7 * WEEKLY.length), 7).map(d => weekIndex(d, grown));
+  assert.equal(new Set(cycle).size, WEEKLY.length + 1);
+  const around = range(shift(FROM, -7 * 60), shift(FROM, 7 * 90), 7).map(d => weekIndex(d, grown)), last = new Map();
+  around.forEach((i, n) => { if (last.has(i)) assert.ok(n - last.get(i) > 4, `${i} back after ${n - last.get(i)} weeks`); last.set(i, n); });
 });

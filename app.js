@@ -30,11 +30,14 @@
   const validDay = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso) && Number.isFinite(+utcDay(iso)) && dayISO(utcDay(iso)) === iso;
   const shiftDay = (iso, n) => { const d = utcDay(iso); d.setUTCDate(d.getUTCDate() + n); return dayISO(d); };
   const shiftMonth = (ym, n) => { const d = utcDay(ym + '-01'); d.setUTCMonth(d.getUTCMonth() + n); return dayISO(d).slice(0, 7); };
-  const niceDate = (iso, o = { month: 'short', day: 'numeric', year: 'numeric' }) => new Intl.DateTimeFormat('en-US', { ...o, timeZone: 'UTC' }).format(utcDay(iso));
+  // a date format is slow to build, so each one is built once (per time zone, for local times: the device may travel)
+  const formats = new Map();
+  const dateFormat = o => { const k = JSON.stringify(o) + (o.timeZone ? '' : new Date().getTimezoneOffset()); let f = formats.get(k); if (!f) formats.set(k, f = new Intl.DateTimeFormat('en-US', o)); return f; };
+  const niceDate = (iso, o = { month: 'short', day: 'numeric', year: 'numeric' }) => dateFormat({ ...o, timeZone: 'UTC' }).format(utcDay(iso));
   const timestamp = (ms, fallbackDate = '') => {
     const value = Number(ms);
     if (!Number.isFinite(value) || value <= 0) return fallbackDate ? niceDate(fallbackDate) : '';
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(value).map(p => [p.type, p.value]));
+    const parts = Object.fromEntries(dateFormat({ year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(value).map(p => [p.type, p.value]));
     return `${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute}`;
   };
   const weekStart = iso => shiftDay(iso, -((utcDay(iso).getUTCDay() + 6) % 7));
@@ -56,6 +59,11 @@
   const yearlyDay = (date, year) => (date.slice(5) === '02-29' && !isLeapYear(year) ? `${year}-03-01` : `${year}-${date.slice(5)}`);
   // the next time a valid yearly date comes round, on or after `from`
   const nextYearly = (date, from) => { const y0 = Math.max(+from.slice(0, 4), +date.slice(0, 4)); for (let y = y0; y < y0 + 9; y++) { const d = yearlyDay(date, y); if (d >= from) return d; } return date; };
+  // diary tags as typed: "travel, food", "#旅行 #美食", "旅行、美食" or "旅行；美食" (up to 8, 20 characters each, no repeats)
+  function parseTags(text) {
+    const seen = new Set();
+    return String(text || '').split(/[,，、;；#＃\s]+/).map(t => t.trim().slice(0, 20)).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 8);
+  }
   // ---------- end pure helpers ----------
   const repeatDate = item => (item.repeat && validDay(item.date || '') ? nextYearly(item.date, today) : item.date);
   const kindLabel = k => ({ plan: 'PLAN', trip: 'TRIP', task: 'LITTLE THING', birthday: 'BIRTHDAY', holiday: 'HOLIDAY', anniversary: 'ANNIVERSARY' })[k] || 'PLAN';
@@ -80,24 +88,25 @@
     T('nightmatcha', '夜抹茶', 'dark', [0, 1.5], [0, 1.5], [0, 1.2], [0, 1], 0.95, true),
     T('nighthigh', '夜抹茶 · 高对比', 'dark', [0, 2], [0, 1.9], [0, 1.5], [0, 1.1], 1.25, true)
   ];
-  function currentMode() {
-    const m = data.meta.mode; if (m) return { dark: !!m.dark, high: !!m.high };
-    return { dark: /night|dark/.test(data.meta.theme || ''), high: false };   // older saved skins
+  function currentMode() { // shared by the two of us; each flag is saved on its own, so two toggles at once both land
+    const m = data.meta.mode && typeof data.meta.mode === 'object' ? data.meta.mode : {};
+    return { dark: 'dark' in m ? !!m.dark : /night|dark/.test(data.meta.theme || ''), high: !!m.high };   // not saved yet: older saved skins
   }
   const themeFor = m => (m.dark ? (m.high ? 'nighthigh' : 'nightmatcha') : (m.high ? 'matchahigh' : 'matcha'));
   const themeVars = t => Object.entries(t.v).map(([f, [dh, sat]]) => `--${f}-dh:${dh}deg;--${f}-s:${sat}`).join(';') + `;--lo:${t.lo}%;--lk:${t.lk}`;
   const KINDS = [['plan', 'Plan'], ['trip', 'Trip'], ['task', 'Little thing'], ['birthday', 'Birthday'], ['holiday', 'Holiday'], ['anniversary', 'Anniversary']];
   const DEFAULT_KIND_COLORS = { plan: '#6fa35a', trip: '#f08a4b', task: '#9a7ad8', birthday: '#e0506a', holiday: '#e8b33c', anniversary: '#d85fb0' };
-  const SWATCHES = ['#e0506a', '#f06a8f', '#d85fb0', '#9a7ad8', '#6c6fd8', '#4a9fd8', '#3fae9c', '#6fa35a', '#a8c43c', '#e8b33c', '#f08a4b', '#b0714a', '#8a8f98', '#3d4a5c'];
+  const SWATCHES = [['#e0506a', 'Red'], ['#f06a8f', 'Pink'], ['#d85fb0', 'Magenta'], ['#9a7ad8', 'Purple'], ['#6c6fd8', 'Indigo'], ['#4a9fd8', 'Blue'], ['#3fae9c', 'Teal'], ['#6fa35a', 'Green'], ['#a8c43c', 'Lime'], ['#e8b33c', 'Yellow'], ['#f08a4b', 'Orange'], ['#b0714a', 'Brown'], ['#8a8f98', 'Grey'], ['#3d4a5c', 'Slate']]; // [colour, name read out]
   const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
   const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
+  let heroArt = null; // the top picture's link as last set
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
     for (const [f, [dh, sat]] of Object.entries(t.v)) { root.style.setProperty(`--${f}-dh`, dh + 'deg'); root.style.setProperty(`--${f}-s`, sat); }
     root.style.setProperty('--lo', t.lo + '%'); root.style.setProperty('--lk', t.lk);
     root.dataset.dark = String(t.lk < 0); document.body.style.background = getComputedStyle(root).backgroundColor;
-    const hero = data.meta.hero && safeImage(ui.heroImages[data.meta.hero]);
-    if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art');
+    const hero = linkOf('hero', data.meta.hero ? ui.heroImages[data.meta.hero] : '');
+    if (hero !== heroArt) { heroArt = hero; if (hero) root.style.setProperty('--cc-hero-art', `url("${hero}")`); else root.style.removeProperty('--cc-hero-art'); }
     KINDS.forEach(([k]) => root.style.setProperty('--k-' + k, kindColor(k)));
     const bar = getComputedStyle($('.cc-top')).backgroundColor; document.querySelector('meta[name=theme-color]')?.setAttribute('content', bar);
   }
@@ -107,7 +116,7 @@
     sync: store.mode === 'local' ? 'local' : 'connecting',
     user: null,
     me: store.mode === 'local' ? ls.get('me', 'sijie') : null,
-    message: null, undo: null, messageTimer: null,
+    message: null, undo: null, undoText: null, showUndo: false, messageTimer: null,
     confirm: null, // key of a two-step delete button
     memory: 0, highlight: null, busy: false, tearView: 0, heroImages: {}, editCaption: false, newEntryOpen: false,
     pages: { diary: 1, todo: 1, wishlist: 1, album: 1, special: 1, questions: 1 },
@@ -138,7 +147,7 @@
   const initialSelected = today;
   const planner = {
     view: ls.get('calView', 'month'), month: today.slice(0, 7), year: +today.slice(0, 4), selected: initialSelected,
-    filter: 'all', todoFilter: 'all', exportKind: ls.get('exportKind', 'plan'), forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
+    filter: 'all', todoFilter: 'all', exportKind: ls.get('exportKind', 'plan'), exportImported: false, forms: { event: false, todo: false, wish: false }, specialOpen: false, editing: null,
     drafts: {
       event: { title: '', kind: 'plan', date: today, endDate: '', note: '', repeat: true },
       edit: { title: '', date: '', endDate: '', note: '' },
@@ -162,16 +171,22 @@
   }
 
   // ---------- messages ----------
+  // an upload or save that failed because the phone is offline or GitHub is busy says so; anything else keeps its own message
+  const failText = (e, what, retry, other) => e?.code === 'offline' ? `Could not ${what}: you seem to be offline. ${retry} when you are back online.`
+    : e?.code === 'ratelimit' ? `Could not ${what}: GitHub is busy. ${retry} in ${Math.max(1, Math.ceil((e.until - Date.now()) / 60000))} min.` : other;
   function flash(text, undo = null) {
-    ui.message = text; ui.undo = undo;
-    clearTimeout(ui.messageTimer);
-    ui.messageTimer = setTimeout(() => { ui.message = null; ui.undo = null; renderMessage(); }, undo ? 9000 : 4000);
+    if (undo) { ui.undo = undo; ui.undoText = text; ui.undoUntil = Date.now() + 9000; }
+    const left = ui.undo ? ui.undoUntil - Date.now() : 0, end = () => { ui.message = null; ui.undo = null; renderMessage(); };
+    if (left <= 0) ui.undo = null;
+    ui.message = text; ui.showUndo = !!undo;
+    clearTimeout(ui.messageTimer); // an Undo still waiting comes back beside its own message once this one has been read
+    ui.messageTimer = undo ? setTimeout(end, 9000) : setTimeout(() => { if (ui.undo && ui.undoUntil - Date.now() > 1000) { ui.message = ui.undoText; ui.showUndo = true; renderMessage(); ui.messageTimer = setTimeout(end, ui.undoUntil - Date.now()); } else end(); }, left > 4500 ? 3500 : 4000); // this one gets its full time either way
     renderMessage();
   }
   function renderMessage() {
     const el = $('#cc-planner-message');
     el.hidden = !ui.message;
-    el.innerHTML = ui.message ? `<span>${esc(ui.message)}</span>${ui.undo ? '<button type="button" class="cc-button" data-undo>Undo</button>' : ''}<button type="button" class="cc-button" data-dismiss aria-label="Dismiss">OK</button>` : '';
+    el.innerHTML = ui.message ? `<span>${esc(ui.message)}</span>${ui.undo && ui.showUndo ? '<button type="button" class="cc-button" data-undo>Undo</button>' : ''}<button type="button" class="cc-button" data-dismiss aria-label="Dismiss">OK</button>` : '';
   }
 
   // ---------- window chrome ----------
@@ -214,13 +229,28 @@
   }
 
   // ---------- calendar ----------
+  // what is on each day, sorted out once per change of the data instead of once per day drawn (a year asks 365 times);
+  // the store hands over new lists whenever something changes. One-day plans are looked up by date, longer ones checked
+  let dayIndex = null;
   function dayEvents(iso) {
-    return [
-      ...data.events.filter(e => e.date <= iso && (e.endDate || e.date) >= iso).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
+    const src = [data.events, data.trips, data.tasks, data.dates];
+    if (!dayIndex || src.some((s, i) => s !== dayIndex.src[i])) {
+      const one = new Map(), spans = [], tasks = new Map(), put = (m, k, v) => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
+      data.events.forEach((e, i) => { if (typeof e.date === 'string' && (!e.endDate || e.endDate === e.date)) put(one, e.date, i); else spans.push(i); });
+      data.tasks.forEach(e => put(tasks, e.date, e));
+      dayIndex = { src, one, spans, tasks, days: new Map() };
+    }
+    if (dayIndex.days.has(iso)) return dayIndex.days.get(iso);
+    const long = dayIndex.spans.filter(i => { const e = data.events[i]; return e.date <= iso && (e.endDate || e.date) >= iso; });
+    const events = long.length ? [...(dayIndex.one.get(iso) || []), ...long].sort((a, b) => a - b) : dayIndex.one.get(iso) || []; // in list order, as before
+    const list = [
+      ...events.map(i => data.events[i]).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
-      ...data.tasks.filter(e => e.date === iso).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
+      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
       ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
+    dayIndex.days.set(iso, list);
+    return list;
   }
   function calendarTitle() {
     if (planner.view === 'year') return String(planner.year);
@@ -303,10 +333,10 @@
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
-      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(c => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${c}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
+      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(([c, name]) => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${name}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
       <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
-      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button></div>${form}${renderImport()}</div></div>`));
+      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button><label class="cc-inline-check"><input type="checkbox" data-export-imported ${planner.exportImported ? 'checked' : ''}><span>Include imported events</span></label></div>${form}${renderImport()}</div></div>`));
   }
 
   // ---------- special days + memory ----------
@@ -354,6 +384,9 @@
     const first = data.answers.filter(a => a.date === date && a.q).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
     return first ? first.q : Q.forDay(date, data.questions);
   }
+  // the ask form only looks at your own bookings, so it never gives away a day the other person has booked; when both
+  // of you pick one day, Q.schedule quietly moves the later one on when it is shown
+  const myQuestions = () => data.questions.filter(q => q?.by === meName());
   function questionHtml(q) {
     if (!q) return '';
     const cat = Q.CATEGORIES[q.cat] || Q.CATEGORIES.fun;
@@ -389,22 +422,30 @@
       const cell = body.querySelector('[data-q-partner]'); if (cell) cell.innerHTML = partnerAnswerCell(date);
       return;
     }
+    // past midnight, the day before stays while you are still writing its answer (until you send or clear it)
+    const held = body.querySelector(`[data-question-form].${ui.me}`)?.dataset.questionForm;
+    heldDay = held && held !== date && (!answerOf(held, ui.me) || ui.editingAnswer === held) && ((a && body.contains(a) && a.closest('[data-question-form]')) || String(questionDrafts[held] || '').trim()) ? held : null;
+    if (heldDay) { const cell = body.querySelector('[data-q-partner]'); if (cell) cell.innerHTML = partnerAnswerCell(heldDay); return; }
     body.dataset.key = key;
     body.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase())}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${qaBlock(date)}<div class="cc-plan-actions"><button type="button" class="cc-button" data-question-open="past">Past questions</button><button type="button" class="cc-button" data-question-open="ask">Ask ${esc(PEOPLE[partnerKey()])} a question</button></div>`;
   }
+  let heldDay = null, heldWeek = null; // still on the home card after midnight (see renderQuestion), so not in the archive yet
+  // an answer or check-in typed but not sent for a day that is over waits here, so it can still be sent
+  const unsentDays = () => Object.keys(questionDrafts).filter(d => String(questionDrafts[d] || '').trim() && !answerOf(d, ui.me));
+  const unsentWeeks = () => Object.keys(checkinDrafts).filter(w => (checkinDrafts[w].mood || checkinDrafts[w].text.trim()) && !checkinOf(w, ui.me));
   function questionArchive() {
     const day = qDay();
-    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on)];
-    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day).sort().reverse().map(id => ({ id })));
+    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on), ...unsentDays()];
+    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day && d !== heldDay).sort().reverse().map(id => ({ id })));
   }
   function renderQuestionDialog() {
     const dlg = $('[data-question-dialog]');
     if (!ui.questionOpen || !ui.me) { if (dlg.open) dlg.close(); return; }
     const a = document.activeElement;
     if (passive && a && dlg.contains(a) && (a.matches('input, textarea') || a.closest('[data-checkin-form], [data-question-form]'))) return;
-    const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask;
-    const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, data.questions))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
-    const waiting = Q.schedule(data.questions).filter(s => s.q.by === meName() && s.on > day);
+    const day = qDay(), tomorrow = shiftDay(day, 1), partner = esc(PEOPLE[partnerKey()]), ask = planner.drafts.ask, mine = myQuestions();
+    const askForm = `<form class="cc-plan-form" data-planner-form="ask"><h3>Ask ${partner} a question</h3><div class="cc-fields"><label class="cc-field cc-field-wide">Your question<textarea name="text" maxlength="200" rows="2" placeholder="Something you have always wanted to know…">${esc(ask.text)}</textarea></label><label class="cc-field">Show it on<input name="date" type="date" min="${tomorrow}" value="${esc(ask.date || Q.nextFreeDay(tomorrow, mine))}"></label></div><p class="cc-small">It replaces the built-in question that day. ${partner} won’t see it until then.</p><div class="cc-form-footer"><button class="cc-button" type="submit">+ Schedule it</button></div></form>`;
+    const waiting = Q.schedule(mine).filter(s => s.on > day);
     const scheduled = waiting.length ? `<h3 class="cc-q-sub">Waiting to be asked</h3>${waiting.map(({ q, on }) => `<div class="cc-q-sched"><span><b>${esc(niceDate(on))}</b> ${esc(q.text)}</span>${removeButton('questions', q.id, 'Cancel')}</div>`).join('')}` : '';
     const page = pageList('questions', questionArchive());
     const past = page.items.map(({ id: date }) => date.startsWith('wk:') ? checkinArticle(date.slice(3)) : `<article class="cc-q-day ${ui.highlight === date ? 'cc-highlight' : ''}" id="qday-${date}"><div class="cc-memory-label cc-q-head"><span>${esc(niceDate(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase())}</span></div>${questionHtml(questionFor(date))}${qaBlock(date)}</article>`).join('') || '<p class="cc-empty-plan">Answered questions collect here, one day at a time.</p>';
@@ -426,13 +467,19 @@
     go('home');
     $('[data-win="question"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
+  // sent from the keyboard: once the form has turned into the answer, the keyboard carries on from its Edit link, not <body>
+  function focusBack(form, sel) {
+    const box = form.closest('dialog, [data-question]'), typed = !pointerLast && form.contains(document.activeElement);
+    return () => { const a = document.activeElement; if (typed && (!a || a === document.body)) box?.querySelector(sel)?.focus({ preventScroll: true }); };
+  }
   function submitAnswer(form) {
     const date = form.dataset.questionForm, field = form.elements.answer, text = String(field.value || '').trim();
     if (!ui.me || !validDay(date) || date > qDay()) return;
     if (!text) { field.setCustomValidity('Write an answer first.'); field.reportValidity(); return; }
     const mine = answerOf(date, ui.me), theirs = answerOf(date, partnerKey());
     const job = mine ? store.update('answers', mine.id, { text }) : store.set('answers', { id: `${date}:${ui.me}`, date, q: questionFor(date), author: meName(), text, createdAt: Date.now() });
-    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); }));
+    const back = focusBack(form, `[data-answer-edit="${date}"]`);
+    run(job.then(() => { delete questionDrafts[date]; dropDraft('answer', date); if (ui.editingAnswer === date) ui.editingAnswer = null; render(); back(); }));
     flash(mine ? 'Saved.' : theirs ? `Answered. ${PEOPLE[partnerKey()]}’s answer is unlocked ♡` : `Answered. You’ll see ${PEOPLE[partnerKey()]}’s once they answer.`);
   }
 
@@ -484,19 +531,23 @@
       const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(week);
       return;
     }
+    // like the daily question: past Sunday midnight, last week's card stays while you are still filling it in
+    const held = box.querySelector(`[data-checkin-form].${ui.me}`)?.dataset.checkinForm, dr = held && checkinDrafts[held];
+    heldWeek = held && held !== week && (!checkinOf(held, ui.me) || editingCheckin === held) && ((a && box.contains(a) && a.closest('[data-checkin-form]')) || dr?.mood || dr?.text.trim()) ? held : null;
+    if (heldWeek) { const cell = box.querySelector('[data-ck-partner]'); if (cell) cell.innerHTML = partnerCheckinCell(heldWeek); return; }
     box.dataset.key = key;
     box.innerHTML = `<div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week))}</span>${mine ? '<span aria-hidden="true">✧ ♡</span>' : '<span class="cc-q-new">NEW</span>'}</div>${questionHtml(q)}${checkinBlock(week)}`;
   }
   function withCheckinWeeks(items) { // past weeks with a check-in join the Past questions list, just above their Monday
-    const current = thisWeek(), weeks = [...new Set(data.checkins.map(c => c.week))].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current);
+    const current = thisWeek(), weeks = [...new Set([...data.checkins.map(c => c.week), ...unsentWeeks()])].filter(w => validDay(w || '') && Q.weekOf(w) === w && w < current && w !== heldWeek);
     const at = it => (isWeekItem(it.id) ? it.id.slice(3) + '~' : it.id);
     return [...items, ...weeks.map(w => ({ id: 'wk:' + w }))].sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0));
   }
   const checkinArticle = week => `<article class="cc-q-day cc-ck-day ${ui.highlight === 'wk:' + week ? 'cc-highlight' : ''}" id="qweek-${week}"><div class="cc-memory-label cc-q-head"><span>${esc(weekLabel(week, true))}</span></div>${questionHtml(checkinPromptFor(week))}${checkinBlock(week)}</article>`;
   function checkinMessages(add, edited) { // for allMessages: nothing about their week shows before you check in for it
-    const current = thisWeek();
+    const current = thisWeek(), me = meName();
     for (const c of data.checkins) {
-      if (!validDay(c.week || '')) continue;
+      if (!validDay(c.week || '') || (c.author === me && (!c.updatedBy || c.updatedBy === me))) continue;
       const open = !!checkinOf(c.week, ui.me), target = { type: 'checkin', week: c.week };
       const which = c.week === current ? 'for the week' : `for the week of ${niceDate(c.week, { month: 'short', day: 'numeric' })}`;
       const said = [moodOf(c.mood)?.glyph, clip(c.text)].filter(Boolean).join(' ');
@@ -512,7 +563,8 @@
     const text = String(field.value || '').trim().slice(0, 600), mood = draft.mood;
     const mine = checkinOf(week, ui.me), theirs = checkinOf(week, partnerKey()), partner = PEOPLE[partnerKey()];
     const job = mine ? store.update('checkins', mine.id, { mood, text }) : store.set('checkins', { id: `${week}:${ui.me}`, week, mood, text, q: checkinPromptFor(week), author: meName(), createdAt: Date.now() });
-    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); }));
+    const back = focusBack(form, `[data-checkin-edit="${week}"]`);
+    run(job.then(() => { delete checkinDrafts[week]; dropDraft('checkin', week); if (editingCheckin === week) editingCheckin = null; render(); back(); }));
     flash(mine ? 'Saved.' : theirs ? `Checked in. Now you can see how ${partner}’s week went ♡` : `Checked in. You’ll see ${partner}’s once they check in.`);
   }
   root.addEventListener('input', e => { const f = e.target.closest('[data-checkin-form]'); if (f && e.target.name === 'text') { checkinDraft(f.dataset.checkinForm).text = e.target.value; keepDraft('checkin', f.dataset.checkinForm); } });
@@ -535,8 +587,8 @@
   const achKey = key => 'achievements:' + key;
   const mergeKept = (...all) => { const out = {}; for (const k of all) for (const [id, at] of Object.entries(k || {})) if (typeof at === 'number' && !(out[id] <= at)) out[id] = at; return out; };
   function achState() { // this person's seen list, plus "kept": once earned, never taken back even if the item is deleted
-    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null;
-    return { seen: [...new Set([...(synced?.seen || []), ...(local?.seen || [])])], kept: mergeKept(local?.kept, synced?.kept) };
+    const local = ls.get(achKey(ui.me || 'x'), null), synced = ui.me ? data.meta[achKey(ui.me)] : null, seen = x => (Array.isArray(x?.seen) ? x.seen : []);
+    return { seen: [...new Set([...seen(synced), ...seen(local)])], kept: mergeKept(local?.kept, synced?.kept) };
   }
   function saveAchState(st) {
     const key = achKey(ui.me); ls.set(key, st);
@@ -636,8 +688,22 @@
   }
 
   // ---------- diary ----------
-  const thumbOf = p => safeImage(p?.thumb); // '' shows the ▧ placeholder
-  const avatarOf = key => safeImage((data.meta.avatars || {})[key], false);
+  // Pictures go into the page as short blob: links this page makes when a picture is first shown, one per picture and place,
+  // not as data URLs pasted into every row (an avatar ~10 KB, the top picture ~500 KB). A place's old link is let go
+  // when its picture changes, a thumbnail's when its photo is gone. Synced strings still have to pass safeImage.
+  const links = new Map(); // place -> { v: the picture, url }
+  function linkOf(place, v) {
+    const cur = links.get(place); if (cur && cur.v === v) return cur.url;
+    if (cur?.url) URL.revokeObjectURL(cur.url);
+    const blob = v instanceof Blob ? v : safeImage(v, false) && CCStore.toBlob(v), url = blob ? URL.createObjectURL(blob) : '';
+    links.set(place, { v, url }); return url;
+  }
+  let linksFor = null; // the photo list the thumbnail links were last checked against
+  const thumbOf = p => { // '' shows the ▧ placeholder
+    if (linksFor !== data.photos) { linksFor = data.photos; const ids = new Set(data.photos.map(x => 't:' + x.id)); for (const [k, l] of links) if (k.startsWith('t:') && !ids.has(k)) { if (l.url) URL.revokeObjectURL(l.url); links.delete(k); } }
+    return p ? linkOf('t:' + p.id, p.thumb) : '';
+  };
+  const avatarOf = key => linkOf('a:' + key, (data.meta.avatars || {})[key]);
   let photoIndex = null; // photo ids and photos per diary entry, rebuilt when the photo list changes
   function entryPhotoIds(entry) {
     // an entry's photos: its photoIds that still exist, then any other photo saved for it. photoIds is saved as a whole
@@ -655,10 +721,6 @@
     const photos = (ids || []).map(id => data.photos.find(p => p.id === id)).filter(Boolean);
     return photos.length ? `<div class="cc-feed-photos n${Math.min(photos.length, 3)}">${photos.map(p => { const src = thumbOf(p); return `<button type="button" class="cc-thumb" data-photo="${esc(p.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>`; }).join('')}</div>` : '';
   }
-  function parseTags(text) {
-    const seen = new Set();
-    return String(text || '').split(/[,，#\s]+/).map(t => t.trim().slice(0, 20)).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 8);
-  }
   function entryMatches(e) {
     if (diaryFilter.tag && !(e.tags || []).some(t => t.toLowerCase() === diaryFilter.tag.toLowerCase())) return false;
     const q = diaryFilter.q.trim().toLowerCase(); if (!q) return true;
@@ -675,7 +737,7 @@
   }
   function renderDiary() {
     const pending = diaryDraft.pending.map((p, i) => `<span class="cc-pending"><img src="${esc(p.thumb)}" alt=""><button type="button" data-pending-remove="${i}" aria-label="Remove photo">×</button></span>`).join('');
-    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
+    const composer = `<div id="cc-diary-composer" ${ui.newEntryOpen ? '' : 'hidden'}><form class="cc-plan-form cc-diary-form" data-diary-form><h3>New entry · ${esc(meName())}</h3><div class="cc-fields"><label class="cc-field cc-field-wide">What happened?<textarea name="text" maxlength="3000" rows="4">${esc(diaryDraft.text)}</textarea></label><label class="cc-field">Date<input name="date" type="date" value="${esc(diaryDraft.date)}"></label><label class="cc-field">Tags (optional)<input name="tags" type="text" maxlength="120" placeholder="travel, food" value="${esc(diaryDraft.tags)}"></label><label class="cc-field cc-field-wide">Photos (up to 9)<span class="cc-button cc-file-btn">＋ Choose photos<input type="file" accept="image/*" multiple data-diary-photos ${busy.diary ? 'disabled' : ''}></span></label></div>${pending ? `<div class="cc-pending-row">${pending}</div>` : ''}<div class="cc-form-footer"><button class="cc-button" type="submit" ${busy.diary ? 'disabled' : ''}>${busy.diary ? 'Saving…' : 'Post ✎'}</button><button class="cc-button" type="button" data-toggle-diary ${busy.diary ? 'disabled' : ''}>Close</button></div></form></div>`;
     const tagCounts = new Map();
     data.diary.forEach(e => (e.tags || []).forEach(t => { const k = t.toLowerCase(); const cur = tagCounts.get(k) || { t, n: 0 }; cur.n++; tagCounts.set(k, cur); }));
     const tagsRow = [...tagCounts.values()].sort((a, b) => b.n - a.n || a.t.localeCompare(b.t)).map(({ t, n }) => `<button type="button" class="cc-tag" data-tag="${esc(t)}" aria-pressed="${diaryFilter.tag.toLowerCase() === t.toLowerCase()}">#${esc(t)} <small>${n}</small></button>`).join('');
@@ -723,28 +785,30 @@
     const heading = `<div class="cc-album-heading"><div><h3>${esc(title)}</h3><span class="cc-small">${visible.length} photo${visible.length === 1 ? '' : 's'}</span></div>${selected ? `<div class="cc-plan-actions"><button type="button" class="cc-button" data-album-rename="${esc(selected.id)}">Rename</button>${confirmButton('album:' + selected.id, 'Delete album', `data-album-delete="${esc(selected.id)}"`)}</div>` : ''}</div>`;
     const grid = page.items.map(p => `<button type="button" class="cc-photo" data-photo="${esc(p.id)}">${thumbOf(p) ? `<img class="cc-photo-img" src="${esc(thumbOf(p))}" alt="${esc(p.caption || '')}" loading="lazy">` : '<span class="cc-photo-img cc-img-wait" aria-hidden="true">▧</span>'}<span>${esc(p.caption || niceDate(p.date || today, { month: 'short', day: 'numeric', year: 'numeric' }))}</span></button>`).join('');
     fill($('[data-panel="album"]'), panelShell('album', '▧ PHOTOS & KEEPSAKES', '相册',
-      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
+      `${pageToolbar('Albums for our photos', `<span class="cc-album-actions"><button type="button" class="cc-button" data-album-new>＋ New album</button><span class="cc-button cc-file-btn">${busy.album ? 'Uploading…' : '＋ Upload photos'}<input type="file" accept="image/*" multiple data-album-photos aria-label="Upload photos" ${busy.album ? 'disabled' : ''}></span></span>`)}${form}${shelf}${heading}${grid ? `<div class="cc-photos" data-page-list="album">${grid}</div>` : '<p class="cc-empty-plan" data-page-list="album">No photos here yet.</p>'}${pageNav('album', page)}`));
   }
   async function makePhoto(file) {
     const [thumb, full] = await Promise.all([CCStore.resizeImage(file, 480, 0.72), CCStore.resizeImage(file, 1600, 0.82)]);
     return { thumb, full };
   }
-  async function savePhotos(list, extra, { keepPartial = false } = {}) {
-    const ids = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
+  // Every photo's files go up first, then the records are saved as one change, with the entry when there is one
+  // (entry: photo ids -> the diary entry); an album upload (keepPartial) saves each photo as it goes, as before.
+  async function savePhotos(list, extra, { keepPartial = false, entry = null } = {}) {
+    const items = [], tried = [], batch = newId(); // photos from one upload share a batch, so they make one message
     try {
       for (const p of list) {
         const id = newId(); tried.push(id);
-        await store.putFull(id, p.full);
-        await store.set('photos', { id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra });
-        ids.push(id);
+        const item = await store.uploadPhoto({ id, thumb: p.thumb, caption: p.caption || '', author: meName(), createdAt: Date.now(), batch, ...extra }, p.full);
+        if (keepPartial) await store.set('photos', item); else items.push(item);
       }
+      if (!keepPartial && (entry || items.length)) await store.saveAll([...(entry ? [{ col: 'diary', item: entry(tried) }] : []), ...items.map(item => ({ col: 'photos', item }))]);
     } catch (err) {
-      // a diary photo is no use without its entry: when a post fails part way, take back what this try stored,
-      // so nothing is left pointing at an entry that was never saved and trying again doesn't add them twice
-      if (!keepPartial) for (const id of tried) await Promise.resolve(store.remove('photos', id)).catch(e => console.error(e));
+      // a diary photo is no use without its entry: when a post fails part way, take back the files this try uploaded,
+      // so nothing is left for an entry that was never saved and trying again doesn't add them twice
+      if (!keepPartial) await Promise.resolve(store.discard(tried)).catch(e => console.error(e));
       throw err;
     }
-    return ids;
+    return tried;
   }
 
   // ---------- lightbox ----------
@@ -807,7 +871,7 @@
     if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
     dlg.tabIndex = -1; dlg.focus({ preventScroll: true });
     const full = await store.getFull(id).catch(() => null);
-    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = full; if (img.complete) applyPhotoZoom(); } }
+    if (full && lightbox.id === id) { const img = dlg.querySelector('[data-full]'); if (img) { img.onload = applyPhotoZoom; img.src = linkOf('full', full); if (img.complete) applyPhotoZoom(); } } // one full photo's link at a time
   }
   function closePhoto() { const dlg = $('[data-lightbox]'); lightbox.id = null; lightbox.pointer = null; ui.confirm = null; dlg.close?.(); dlg.removeAttribute('open'); }
 
@@ -819,11 +883,12 @@
     if (st) return st;
     const fresh = { since: Date.now(), read: [] }; ls.set(inboxKey(), fresh); return fresh;
   }
+  const sharedReadKeys = shared => (Array.isArray(shared?.read) ? shared.read : []).map(item => item?.key).filter(k => k && typeof k === 'string'); // synced, so it may be odd
   function inboxState() {
     const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
     if (!shared) return local;
     return { since: Math.max(Number(shared.since) || 0, Date.now() - 30 * 86400000),
-      read: [...new Set([...(local.read || []), ...(shared.read || []).map(item => item.key).filter(Boolean)])] };
+      read: [...new Set([...(local.read || []), ...sharedReadKeys(shared)])] };
   }
   function ago(ms) { // "5m ago", "2h ago", "3d ago", then a date
     const sec = Math.max(0, (Date.now() - ms) / 1000);
@@ -831,7 +896,15 @@
     return sec < 7 * 86400 ? Math.floor(sec / 86400) + 'd ago' : new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
   const clip = (t, n = 40) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+  // every render asks (the badges), so the list is only rebuilt when what it is made from changes;
+  // the store hands over new lists whenever something changes
+  let messages = null;
   function allMessages() {
+    const deps = [ui.me, qDay(), today, data.events, data.dates, data.tasks, data.trips, data.wishes, data.diary, data.photos, data.albums, data.answers, data.checkins, data.questions];
+    if (!messages || deps.some((d, i) => d !== messages.deps[i])) messages = { deps, list: buildMessages() };
+    return messages.list;
+  }
+  function buildMessages() {
     const me = meName(), out = [];
     const add = (tab, key, who, at, text, target) => { if (who && who !== me && at) out.push({ tab, key, who, at, text, target }); };
     const edited = x => x.updatedBy && x.updatedAt && x.updatedAt - (x.createdAt || 0) > 2000;
@@ -871,8 +944,9 @@
     const day = qDay(), answered = new Set(data.answers.filter(a => a.author === me).map(a => a.date));
     const whichQ = date => (date === day ? 'today’s question' : `the question for ${niceDate(date, { month: 'short', day: 'numeric' })}`);
     for (const a of data.answers) {
+      if (!validDay(a.date || '') || (a.author === me && (!a.updatedBy || a.updatedBy === me))) continue; // nothing to tell you about your own answers
       const open = answered.has(a.date), target = { type: 'question', date: a.date }; // no spoilers before you answer
-      add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
+      if (a.author !== me) add('home', 'qa:' + a.id, a.author, a.createdAt, `answered ${whichQ(a.date)} · ${open ? clip(a.text) : 'your turn 🔒'}`, target);
       if (open && edited(a)) add('home', `qa-u:${a.id}:${a.updatedAt}`, a.updatedBy, a.updatedAt, `edited their answer · ${clip(a.text)}`, target);
     }
     checkinMessages(add, edited);
@@ -898,11 +972,12 @@
   function unreadMessages() { const st = inboxState(), read = new Set(st.read); return allMessages().filter(m => m.at > st.since && !isRead(m.key, read)); }
   function syncInboxState() {
     if (!ui.me) return;
-    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me];
-    const known = new Set((shared?.read || []).map(item => item.key));
-    const times = new Map(allMessages().map(m => [m.key, m.at]));
-    const items = (local.read || []).filter(key => !known.has(key) && times.has(key)).map(key => ({ key, at: times.get(key) }));
-    if (!shared || items.length) run(store.markInboxRead(ui.me, local.since, Date.now() - 30 * 86400000, items));
+    const local = localInboxState(), shared = data.meta.inboxReads?.[ui.me], cutoff = Date.now() - 30 * 86400000;
+    const known = new Set(sharedReadKeys(shared)), times = new Map(allMessages().map(m => [m.key, m.at]));
+    // the shared list only keeps what is newer than its "since" (applyOp in store.js), so older keys would be sent on every start for nothing
+    const since = Math.max(Number(shared?.since) || Number(local.since) || 0, cutoff);
+    const items = (local.read || []).filter(key => !known.has(key) && times.get(key) > since).map(key => ({ key, at: times.get(key) }));
+    if (!shared || items.length) run(store.markInboxRead(ui.me, local.since, cutoff, items));
   }
   function markRead(keys) { // Persist per-person receipts, so another device does not alert again.
     if (!keys.length || !ui.me) return;
@@ -944,7 +1019,7 @@
     const unread = unreadMessages();
     ui.inboxFresh = new Set(unread.map(m => m.key)); ui.inboxFilter = filter || 'all'; ui.inboxOpen = true;
     markRead(unread.filter(m => ui.inboxFilter === 'all' || m.tab === ui.inboxFilter).map(m => m.key));
-    renderInbox(); renderBadges();
+    renderBadges(); // draws the inbox too, now that it is open
     const dlg = $('[data-inbox]'); if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
   }
   function closeInbox() { ui.inboxOpen = false; const dlg = $('[data-inbox]'); if (dlg.open) dlg.close(); }
@@ -955,8 +1030,9 @@
   function goToTarget(t) { // shared by the inbox and the achievements shelf
     if (t.type === 'date') { select(t.date); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (t.type === 'photo') { ui.album = 'all'; ui.pages.album = pageForItem(photosSorted(), t.id); go('album'); openPhoto(t.id, t.ids?.filter(id => data.photos.some(p => p.id === id))); }
-    else if (t.type === 'question') { if (t.date === qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
-    else if (t.type === 'checkin') { if (t.week === thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
+    // a day this device has not reached yet (the other person is ahead in another time zone) shows today's card, like today
+    else if (t.type === 'question') { if (t.date >= qDay()) showTodayQuestion(); else { go('home'); openQuestions(true, t.date); } }
+    else if (t.type === 'checkin') { if (t.week >= thisWeek()) showTodayQuestion(); else { go('home'); openQuestions(true, 'wk:' + t.week); } }
     else if (t.type === 'album') { ui.album = data.albums.some(a => a.id === t.id) ? t.id : 'all'; ui.albumForm = ''; ui.pages.album = 1; go('album'); }
     else {
       ui.highlight = t.id;
@@ -1057,6 +1133,13 @@
     return s && typeof s === 'object' && s.emoji && Number.isFinite(+s.at) ? { emoji: String(s.emoji), text: String(s.text || ''), at: +s.at } : null;
   }
   const statusStale = s => Date.now() - s.at >= STATUS_DAY; // older statuses stay, just dimmed
+  let fadeTimer = 0, fadeAt = 0;
+  function timeStatusFade() { // dim a status the moment it turns a day old, not at whatever render comes next
+    const at = Math.min(...Object.keys(PEOPLE).map(statusOf).filter(s => s && !statusStale(s)).map(s => s.at + STATUS_DAY));
+    if (at === fadeAt) return;
+    clearTimeout(fadeTimer); fadeAt = at;
+    if (at < Infinity) fadeTimer = setTimeout(() => { fadeAt = 0; scheduleRender(); }, Math.min(at - Date.now(), 864e5)); // a clock set far ahead waits a day at a time
+  }
   function statusWhen(s) {
     if (!statusStale(s)) return ago(s.at);
     const n = Math.floor((Date.now() - s.at) / STATUS_DAY);
@@ -1095,7 +1178,7 @@
       <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${emojiHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Tap an emoji, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
   }
   function renderStatus(soft = passive) {
-    const box = $('[data-status-root]'); if (!box) return;
+    const box = $('[data-status-root]'); timeStatusFade(); if (!box) return;
     const tab = box.querySelector('[data-status-toggle]'), panel = box.querySelector('[data-status-panel]'), body = panel.querySelector('[data-status-body]');
     box.hidden = !ui.me || $('[data-app]').hidden;
     if (box.hidden) ui.statusOpen = false;
@@ -1209,6 +1292,7 @@
     answer: id => questionDrafts[id] || null,
     checkin: id => { const c = checkinDrafts[id]; return c && (c.mood || c.text) ? { mood: c.mood, text: c.text } : null; },
     ask: () => (planner.drafts.ask.text ? { text: planner.drafts.ask.text, date: planner.drafts.ask.date || '' } : null),
+    entryedit: () => { const d = planner.drafts.entryedit; return ui.editingEntry ? { id: ui.editingEntry, text: d.text, tags: d.tags, photoIds: d.photoIds } : null; }, // photos picked for it are not kept
     status: () => (statusDraft.dirty ? { emoji: statusDraft.emoji, text: statusDraft.text } : null)
   };
   const obj = v => (v && typeof v === 'object' ? v : {}), str = v => (typeof v === 'string' ? v : '');
@@ -1231,16 +1315,25 @@
     const ask = one('ask'); planner.drafts.ask = { text: str(ask.text), date: str(ask.date) };
     const st = one('status'); Object.assign(statusDraft, { owner: ui.me, emoji: str(st.emoji), text: str(st.text), dirty: !!(st.emoji || st.text) });
     if (diaryDraft.text || diaryDraft.tags) ui.newEntryOpen = true; // an unfinished entry comes back already open
-    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts) }; reopenDraftEdits();
+    reopenEdits = { answers: Object.keys(questionDrafts), checkins: Object.keys(checkinDrafts), entry: one('entryedit') }; reopenDraftEdits();
   }
   let reopenEdits = null;
   function reopenDraftEdits() { // a half-finished edit of an answer or check-in already posted reopens in edit mode, once the data is here
     if (!reopenEdits || !ui.dataReady || !ui.me) return;
-    const { answers, checkins } = reopenEdits; reopenEdits = null;
+    const { answers, checkins, entry } = reopenEdits; reopenEdits = null;
     const a = answers.filter(d => { const m = answerOf(d, ui.me); return m && questionDrafts[d] !== m.text; }).sort().pop();
     if (a) ui.editingAnswer = a;
     const c = checkins.filter(w => { const m = checkinOf(w, ui.me), d = checkinDrafts[w]; return m && d && (d.mood !== (Number(m.mood) || 0) || d.text !== (m.text || '')); }).sort().pop();
     if (c) editingCheckin = c;
+    // and so does a half-finished edit of a diary entry, if it is still there and yours, on the page that has it
+    const e = entryEditToReopen(entry);
+    if (e) { ui.editingEntry = e.id; planner.drafts.entryedit = e.draft; ui.pages.diary = pageForItem(diarySorted(), e.id); } else if (entry.id) dropDraft('entryedit');
+  }
+  function entryEditToReopen(saved) {
+    const en = str(saved.id) && data.diary.find(x => x.id === saved.id); if (!en || en.author !== meName()) return null;
+    const draft = { text: str(saved.text), tags: str(saved.tags), photoIds: Array.isArray(saved.photoIds) ? saved.photoIds.filter(id => typeof id === 'string') : entryPhotoIds(en), pending: [] };
+    const same = draft.text === (en.text || '') && draft.tags === (en.tags || []).join(', ') && draft.photoIds.join() === entryPhotoIds(en).join();
+    return same ? null : { id: en.id, draft };
   }
 
   // ---------- chrome: player card, hero, sync ----------
@@ -1345,15 +1438,16 @@
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form', 'data-caption-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     const on = p => ui.page === p; // only the page on screen is rebuilt; the others are rebuilt when you go to them
-    renderChrome(); if (on('home')) renderCalendar(); renderSpecialDays(); if (on('home')) renderQuestion(); renderStatus(); if (on('home')) renderMemory();
-    if (on('todo')) renderTodo(); if (on('wishlist')) renderWishlist(); if (on('diary')) renderDiary(); if (on('album')) renderAlbum();
-    renderQuestionDialog(); renderAchievementsDialog(); renderMessage(); decorateStaticWindows(); renderBadges();
+    const parts = [renderChrome, on('home') && renderCalendar, renderSpecialDays, on('home') && renderQuestion, renderStatus, on('home') && renderMemory,
+      on('todo') && renderTodo, on('wishlist') && renderWishlist, on('diary') && renderDiary, on('album') && renderAlbum,
+      renderQuestionDialog, renderAchievementsDialog, renderMessage, decorateStaticWindows, renderBadges];
+    for (const part of parts) if (part) try { part(); } catch (err) { console.error(err); } // odd synced data that trips one part leaves the rest (and the photo pickers) working
+    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
     if (keep?.name) {
       const el = $(keep.sel)?.elements[keep.name];
       if (el && el !== a && el.focus) { el.focus({ preventScroll: true }); try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end); } catch {} }
     }
     refocus(spot);
-    root.querySelectorAll('input[type=file]').forEach(f => { f.onchange ||= filesPicked; });
   }
   const scheduleRender = () => { if (!frame) frame = requestAnimationFrame(() => { passive = true; try { render(); } finally { passive = false; } }); };
 
@@ -1381,17 +1475,17 @@
         await store.update('diary', entry.id, { text, date: editedDate, tags: parseTags(d.tags), photoIds: [...kept, ...added] });
         for (const id of current.filter(id => !kept.includes(id))) await store.remove('photos', id);
         ui.editingEntry = null;
-        planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] };
+        planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit');
         ui.pages.diary = 1;
         flash('Saved.');
-      } catch (err) { console.error(err); flash('Could not save edits. Please try again.'); }
+      } catch (err) { console.error(err); flash(failText(err, 'save edits', 'Your changes are kept; save again', 'Could not save edits. Please try again.')); }
       busy.entry--; render(); return;
     }
     if (name === 'ask') {
       const text = String(d.text || '').trim().slice(0, 200), tomorrow = shiftDay(qDay(), 1);
       if (!text) { form.elements.text.setCustomValidity('Write a question first.'); form.elements.text.reportValidity(); return; }
       if (!validDay(d.date || '') || d.date < tomorrow) { form.elements.date.setCustomValidity('Pick tomorrow or later.'); form.elements.date.reportValidity(); return; }
-      const on = Q.nextFreeDay(d.date, data.questions), partner = PEOPLE[partnerKey()];
+      const on = Q.nextFreeDay(d.date, myQuestions()), partner = PEOPLE[partnerKey()];
       run(store.set('questions', { id: newId(), date: on, text, by: meName(), createdAt: Date.now() }).then(() => render()));
       planner.drafts.ask = { text: '', date: '' }; dropDraft('ask');
       flash(on === d.date ? `Scheduled for ${niceDate(on)}. ${partner} won’t see it until then.` : `${niceDate(d.date)} already has a question, so yours is on ${niceDate(on)}.`);
@@ -1435,14 +1529,16 @@
     if (!validDay(date)) { form.elements.date.setCustomValidity('Please enter a valid date.'); form.elements.date.reportValidity(); return; }
     busy.diary++; render();
     try {
-      const id = newId();
-      const photoIds = await savePhotos(diaryDraft.pending, { entryId: id, date });
-      await store.set('diary', { id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() });
+      const id = newId(); // the photos and the entry are saved together, once all the photos are up
+      await savePhotos(diaryDraft.pending, { entryId: id, date }, { entry: photoIds => ({ id, author: meName(), text, date, tags: parseTags(diaryDraft.tags), photoIds, comments: [], createdAt: Date.now(), tzo: new Date().getTimezoneOffset() }) });
       diaryDraft.text = ''; diaryDraft.date = today; diaryDraft.tags = ''; diaryDraft.pending = []; dropDraft('diary');
       ui.pages.diary = 1;
       ui.newEntryOpen = false;
       flash('Posted.');
-    } catch (e) { console.error(e); flash('Could not post. Photos may be too large; try fewer.'); }
+    } catch (e) {
+      console.error(e);
+      flash(failText(e, 'post', 'Your entry is kept; post it again', 'Could not post. Photos may be too large; try fewer.'));
+    }
     busy.diary--; render();
   }
 
@@ -1453,7 +1549,7 @@
     if (el.closest('[data-album-form]') && el.name === 'albumName') ui.albumDraft = el.value;
     if (el.closest('[data-caption-form]')) ui.captionDraft = el.value; // a sync while editing the caption keeps what you typed
     const pf = el.closest('[data-planner-form]');
-    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (pf.dataset.plannerForm === 'ask') keepDraft('ask'); }
+    if (pf) { planner.drafts[pf.dataset.plannerForm][el.name] = el.type === 'checkbox' ? el.checked : el.value; if (['ask', 'entryedit'].includes(pf.dataset.plannerForm)) keepDraft(pf.dataset.plannerForm); }
     if (el.closest('[data-diary-form]') && ['text', 'date', 'tags'].includes(el.name)) { diaryDraft[el.name] = el.value; keepDraft('diary'); }
     if (el.closest('[data-diary-search]')) { diaryFilter.q = el.value; ui.pages.diary = 1; clearTimeout(ui.searchTimer); ui.searchTimer = setTimeout(render, 150); } // the box itself is kept (fill), only the results change
     const cf = el.closest('[data-comment-form]'); if (cf) { commentDrafts[cf.dataset.commentForm] = el.value; keepDraft('reply', cf.dataset.commentForm); }
@@ -1474,6 +1570,7 @@
     }
     if (el.matches('[data-import-date]')) { calendarImport[el.dataset.importDate] = el.value; calendarImport.preview = null; calendarImport.error = ''; render(); }
     if (el.matches('[data-export-kind]')) { planner.exportKind = el.value; ls.set('exportKind', el.value); }
+    if (el.matches('[data-export-imported]')) planner.exportImported = el.checked; // not saved: every visit starts without imported events
     if (el.matches('[data-task-id]')) run(store.update('tasks', el.dataset.taskId, { done: el.checked }));
     if (el.matches('[data-trip-status]')) run(store.update('trips', el.dataset.tripStatus, { status: el.value }));
     if (el.matches('[data-wish-id]')) run(store.update('wishes', el.dataset.wishId, { got: el.checked }));
@@ -1512,8 +1609,9 @@
       busy.hero++; render();
       try {
         const img = await CCStore.resizeImage(picked[0], 1400, 0.85);
-        const id = 'hero-' + newId(); ui.heroImages[id] = img;
+        const id = 'hero-' + newId(), old = data.meta.hero; ui.heroImages[id] = img;
         await store.putFull(id, img); await store.setMeta({ hero: id }); flash('Top picture updated.');
+        if (old) { delete ui.heroImages[old]; run(store.dropFull(old)); } // the old picture's file goes once this change is saved
       } catch (err) { console.error(err); flash('Could not upload this picture.'); }
       busy.hero--; render();
     }
@@ -1521,7 +1619,7 @@
       const files = picked.slice(0, 20);
       busy.album++; render();
       try { const list = []; for (const f of files) list.push(await makePhoto(f)); await savePhotos(list, { date: today, ...(data.albums.some(a => a.id === ui.album) ? { albumId: ui.album } : {}) }, { keepPartial: true }); ui.pages.album = 1; flash(`${list.length} photo${list.length === 1 ? '' : 's'} added.`); }
-      catch (err) { console.error(err); flash('Could not upload. Try a smaller photo.'); }
+      catch (err) { console.error(err); flash(failText(err, 'upload', 'Pick the photos again', 'Could not upload. Try a smaller photo.')); }
       busy.album--; render();
     }
   }
@@ -1595,7 +1693,7 @@
     if (ds.answerCancel) { delete questionDrafts[ds.answerCancel]; dropDraft('answer', ds.answerCancel); ui.editingAnswer = null; render(); return; }
     if (el.hasAttribute('data-enable-badge')) { Promise.resolve(Notification.requestPermission()).catch(() => {}).finally(() => { iconBadge = -1; render(); }); return; }
     if (ds.me) { ui.me = ds.me; ls.set('me', ds.me); loadDrafts(); render(); return; }
-    if (ds.modeToggle) { const m = currentMode(); m[ds.modeToggle] = !m[ds.modeToggle]; data.meta = { ...data.meta, mode: m }; run(store.setMeta({ mode: m })); render(); return; }
+    if (ds.modeToggle) { const m = currentMode(), k = ds.modeToggle; m[k] = !m[k]; data.meta = { ...data.meta, mode: m }; run(store.metaKey('mode', k, m[k])); render(); return; } // just this flag, merged into the shared mode
     if (el.hasAttribute('data-user-toggle')) { const u = $('[data-user]'); const open = !u.classList.contains('cc-open'); u.classList.toggle('cc-open', open); el.setAttribute('aria-expanded', String(open)); return; }
     if (ds.pickColor) { ui.colorKind = ui.colorKind === ds.pickColor ? null : ds.pickColor; render(); return; }
     if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.metaKey('kindColors', ui.colorKind, ds.setColor)); render(); return; }
@@ -1604,14 +1702,17 @@
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
-    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; render(); } return; }
-    if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); render(); return; }
+    if (ds.entryEdit) { const en = data.diary.find(x => x.id === ds.entryEdit); if (en) { ui.editingEntry = en.id; planner.drafts.entryedit = { text: en.text || '', tags: (en.tags || []).join(', '), photoIds: entryPhotoIds(en), pending: [] }; keepDraft('entryedit'); render(); } return; }
+    if (ds.entryPhotoRemove) { planner.drafts.entryedit.photoIds = planner.drafts.entryedit.photoIds.filter(id => id !== ds.entryPhotoRemove); keepDraft('entryedit'); render(); return; }
     if (ds.entryPendingRemove != null) { planner.drafts.entryedit.pending.splice(+ds.entryPendingRemove, 1); render(); return; }
-    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; render(); return; }
+    if (el.hasAttribute('data-entry-cancel')) { ui.editingEntry = null; planner.drafts.entryedit = { text: '', tags: '', photoIds: [], pending: [] }; dropDraft('entryedit'); render(); return; }
     if (ds.bgm) { const a = ds.bgm; a === 'toggle' ? CCBgm.toggle() : a === 'next' ? CCBgm.next(1) : a === 'prev' ? CCBgm.next(-1) : CCBgm.volume(a === 'vol-up' ? 0.1 : -0.1); return; }
-    if (el.hasAttribute('data-logout')) { store.signOut(); return; }
+    if (el.hasAttribute('data-logout')) { // refused while photos are uploading or changes are still saving
+      if (Object.values(busy).some(n => n > 0)) { flash('Still uploading. Log out once it has finished, so nothing is lost.'); return; }
+      Promise.resolve(store.signOut()).catch(err => flash(err.message)); return;
+    }
     if (el.hasAttribute('data-dismiss')) { ui.message = null; ui.undo = null; renderMessage(); return; }
-    if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve(u()).then(() => flash('Restored.')); return; }
+    if (el.hasAttribute('data-undo') && ui.undo) { const u = ui.undo; ui.undo = null; Promise.resolve().then(u).then(() => flash('Restored.'), err => { console.error(err); flash('Could not undo. Please try again.', u); }); return; }
     if (ds.confirm) { ui.confirm = ds.confirm; lightbox.id ? openPhoto(lightbox.id) : render(); return; }
     if (el.hasAttribute('data-confirm-cancel')) { ui.confirm = null; lightbox.id ? openPhoto(lightbox.id) : render(); return; }
     // calendar
@@ -1637,7 +1738,7 @@
     if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }
     if (el.hasAttribute('data-set-anniversary')) { planner.drafts.special = { title: '在一起', kind: 'anniversary', date: '', repeat: true }; openSpecial(true); $('[data-planner-form="special"] input[name=date]')?.focus(); return; }
     if (el.hasAttribute('data-tear')) { tear(); return; }
-    if (el.hasAttribute('data-hero-reset')) { run(store.setMeta({ hero: null })); return; }
+    if (el.hasAttribute('data-hero-reset')) { const old = data.meta.hero; run(store.setMeta({ hero: null }).then(() => old && store.dropFull(old))); return; }
     if (el.hasAttribute('data-caption-edit')) { ui.editCaption = true; ui.captionDraft = null; render(); $('[data-caption-form] input')?.focus(); return; }
     if (el.hasAttribute('data-caption-cancel')) { ui.editCaption = false; render(); return; }
     if (ds.dateFilter) { planner.filter = ds.dateFilter; ui.pages.special = 1; render(); return; }
@@ -1756,8 +1857,8 @@
   }
   function confirmImport() {
     const r = calendarImport.preview; if (!r?.events.length) return;
-    const keys = new Set(data.events.map(e => e.importKey));
-    const entries = r.events.filter(e => !keys.has(e.importKey)).map(e => ({ ...e, id: newId(), by: meName(), createdAt: Date.now() }));
+    const keys = new Set(data.events.map(e => e.importKey)), at = Date.now(); // one time for the whole import, so it makes one message
+    const entries = r.events.filter(e => !keys.has(e.importKey)).map(e => ({ ...e, id: newId(), by: meName(), createdAt: at }));
     run(store.batchSet('events', entries));
     if (entries.length) select(entries[0].date < calendarImport.from ? calendarImport.from : entries[0].date);
     calendarImport.preview = null; calendarImport.open = false;
@@ -1768,12 +1869,17 @@
   // ---------- calendar export (.ics for Apple / Google Calendar) ----------
   function exportIcs() {
     const category = KINDS.some(([kind]) => kind === planner.exportKind) ? planner.exportKind : 'plan';
-    const file = CoupleCalendarExport.build(category, data, currentDay());
-    if (!file) { flash(`No ${kindLabel(category).toLowerCase()} items to export yet.`); return; }
+    // Imported events are already in the calendar they came from; exporting them again doubles them there.
+    const includeImported = planner.exportImported, name = kindLabel(category).toLowerCase();
+    const file = CoupleCalendarExport.build(category, data, currentDay(), Date.now(), { includeImported });
+    if (!file) {
+      const onlyImported = !includeImported && CoupleCalendarExport.build(category, data, currentDay(), Date.now(), { includeImported: true });
+      flash(onlyImported ? `Only imported ${name} items here. Tick “Include imported events” to export them too.` : `No ${name} items to export yet.`); return;
+    }
     const url = URL.createObjectURL(new Blob([file.ics], { type: 'text/calendar;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = file.filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    flash(`Exported ${file.count} ${file.label.toLowerCase()} item${file.count === 1 ? '' : 's'}. Open the file to add them to Apple or Google Calendar.`);
+    flash(`Exported ${file.count} ${file.label.toLowerCase()} item${file.count === 1 ? '' : 's'}${file.skipped ? ` (${file.skipped} imported left out)` : ''}. Open the file to add them to Apple or Google Calendar.`);
   }
 
   // ---------- seed (first run only) ----------
@@ -1862,7 +1968,9 @@
 
   // ---------- boot ----------
   function showApp(show) { $('[data-login]').hidden = show; $('[data-app]').hidden = !show; }
-  const onChange = (col, items) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; scheduleRender(); };
+  const onChange = (col, items, only) => { data[col] = items || (col === 'meta' ? {} : []); if (col === 'meta') { ui.dataReady = true; reopenDraftEdits(); } if (col === 'photos') keepLightboxOnData(); achCache = null; if (only !== 'thumbs' || thumbsWaiting()) scheduleRender(); };
+  // arriving thumbnails are drawn only where one can show: the album page, an open inbox, or a ▧ still waiting on screen
+  const thumbsWaiting = () => ui.page === 'album' || $('[data-inbox]').open || !!root.querySelector('[data-panel]:not([hidden]) .cc-img-wait');
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown

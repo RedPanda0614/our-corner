@@ -153,7 +153,7 @@
   min-height: 45px;
   border-bottom: 2px solid hsl(181 25% 42% / .8);
   background-color: #89abc7;
-  background-image: linear-gradient(hsl(0 0% 100% / .05), hsl(207 31% 46% / .12)), url('assets/clover-sky.png');
+  background-image: linear-gradient(hsl(0 0% 100% / .05), hsl(207 31% 46% / .12)), url('assets/clover-sky.webp');
   background-size: auto, cover;
   background-position: center, center 18%;
   background-repeat: no-repeat;
@@ -187,7 +187,7 @@
   padding: 7px 10px;
   border-top: 2px solid hsl(181 25% 42% / .8);
   background-color: #89abc7;
-  background-image: linear-gradient(hsl(0 0% 100% / .05), hsl(207 31% 46% / .12)), url('assets/clover-sky.png');
+  background-image: linear-gradient(hsl(0 0% 100% / .05), hsl(207 31% 46% / .12)), url('assets/clover-sky.webp');
   background-size: auto, cover;
   background-position: center, center 78%;
   background-repeat: no-repeat;

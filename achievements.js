@@ -275,8 +275,8 @@
       }
       const keptAt = Object.prototype.hasOwnProperty.call(kept, def.id) ? num(kept[def.id]) : null;
       const earned = !!hit || keptAt !== null;
-      const at = hit ? hit.t : keptAt;
-      const target = hit && hit.target ? { ...hit.target } : null;
+      const at = hit && (keptAt === null || hit.t <= keptAt) ? hit.t : keptAt; // the earliest: when what earned it is deleted and a later item earns it, the date stays
+      const target = hit && hit.target && hit.t === at ? { ...hit.target } : null; // no link when the moment shown is gone
       const desc = def.cat === 'firsts' && !earned ? def.invite : def.desc;
       return {
         id: def.id, cat: def.cat, glyph: def.glyph, en: def.en, zh: def.zh, desc: { en: desc.en, zh: desc.zh },
