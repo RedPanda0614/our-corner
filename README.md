@@ -1,8 +1,10 @@
-# Our Little Corner
+# Bibo & Bobi: Save Point
 
 Retro shared calendar, diary, album, to-do list, wishlist and a daily question for the two of us.
 
 Website: https://redpanda0614.github.io/our-corner/
+
+Design and development agreement: [AGENTS.md](AGENTS.md).
 
 This repository contains only the website code and decorative assets. Personal records and uploaded photos are stored separately in a private repository. A fine-grained GitHub token with Contents read/write access to that data repository is required to open the app; do not put tokens or personal records in this repository.
 
