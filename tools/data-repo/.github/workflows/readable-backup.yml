@@ -3,7 +3,9 @@
 # The site saves its data compressed (data/*.json.gz). Once a day, and whenever you press
 # "Run workflow" on the Actions tab, this writes plain, indented copies to the
 # `readable-backup` branch, one commit per change, so the history there shows what changed.
-# The site only reads the main branch, so this never touches what the site uses.
+# Every backup from the last 14 days is kept; older ones are thinned to one per two weeks
+# (the last of each fortnight), kept for good. The site only reads the main branch, so this
+# never touches what the site uses.
 name: Readable backup
 
 on:
@@ -32,7 +34,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if git fetch -q --depth 1 origin "$BRANCH"; then git checkout -q -b "$BRANCH" FETCH_HEAD; else git checkout -q --orphan "$BRANCH"; fi
+          if git fetch -q origin "$BRANCH"; then git checkout -q -b "$BRANCH" FETCH_HEAD; echo "FETCHED=$(git rev-parse HEAD)" >> "$GITHUB_ENV"; else git checkout -q --orphan "$BRANCH"; fi
 
       - name: Write readable copies
         run: |
@@ -88,7 +90,8 @@ jobs:
           with open(os.path.join(sys.argv[1], 'README.md'), 'w', encoding='utf-8') as fh:
               fh.write('# Readable backup\n\n'
                        'Plain copies of the site data, written by the "Readable backup" workflow on the main branch.\n'
-                       'The site never reads this branch. Each commit is one backup, so the history shows what changed.\n\n'
+                       'The site never reads this branch. Each commit is one backup, so the history shows what changed.\n'
+                       'Every backup from the last 14 days is kept; older ones are thinned to one per two weeks.\n\n'
                        '- `readable/everything.json`: all of it together, the way the site shows it.\n'
                        '- `readable/main.json`, `imported.json` and one file per person: the same data, file by file.\n'
                        '- `readable/old-data.json`: the single data file from before the split, kept as it was.\n\n'
@@ -102,4 +105,39 @@ jobs:
           git add -A
           if git diff --cached --quiet; then echo 'Nothing changed since the last backup.'; exit 0; fi
           git commit -q -m "Readable backup $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
-          git push -q origin "$BRANCH"
+
+      - name: Thin out older backups
+        working-directory: backup
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, time
+
+          def git(*args, **kw):
+              return subprocess.run(['git', *args], check=True, capture_output=True, text=True, **kw).stdout
+
+          try: log = git('log', '--reverse', '--format=%H %ct')
+          except subprocess.CalledProcessError: print('No backups yet.'); raise SystemExit
+          backups = [(h, int(t)) for h, t in (line.split() for line in log.splitlines())]
+          DAY, now = 86400, time.time()
+          last_of_fortnight = {}  # older than 14 days: the last backup of each fortnight
+          for h, t in backups:
+              if now - t >= 14 * DAY: last_of_fortnight[t // (14 * DAY)] = h
+          keep = [(h, t) for h, t in backups if now - t < 14 * DAY or h in last_of_fortnight.values()]
+          if len(keep) == len(backups): print(f'{len(backups)} backups, none to thin out.'); raise SystemExit
+
+          parent = None  # the kept backups again, one after another, each with its own date, author and message
+          for h, _ in keep:
+              an, ae, ad, cn, ce, cd, msg = git('log', '-1', '--date=raw', '--format=%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%B', h).split('\0')
+              env = {**os.environ, 'GIT_AUTHOR_NAME': an, 'GIT_AUTHOR_EMAIL': ae, 'GIT_AUTHOR_DATE': ad,
+                     'GIT_COMMITTER_NAME': cn, 'GIT_COMMITTER_EMAIL': ce, 'GIT_COMMITTER_DATE': cd}
+              parent = git('commit-tree', git('rev-parse', h + '^{tree}').strip(), *(['-p', parent] if parent else []), input=msg, env=env).strip()
+          git('reset', '-q', '--hard', parent)
+          print(f'Kept {len(keep)} of {len(backups)} backups.')
+          PY
+
+      - name: Push
+        working-directory: backup
+        run: |
+          if [ "$(git rev-parse HEAD 2>/dev/null)" = "${FETCHED:-}" ]; then echo 'Nothing to push.'; exit 0; fi
+          if [ -z "${FETCHED:-}" ] || git merge-base --is-ancestor "$FETCHED" HEAD; then git push -q origin "$BRANCH"
+          else git push -q --force-with-lease="$BRANCH:$FETCHED" origin "$BRANCH"; fi  # older backups were thinned out

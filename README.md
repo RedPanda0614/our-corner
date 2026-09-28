@@ -16,6 +16,6 @@ Changes are queued locally and saved through the GitHub Contents API, each file 
 
 The old single `data.json` is left as it was when the first phone moved to the new files, and each file records which version of it it came from. While a phone still runs an older version of the app and saves to `data.json`, the updated app takes those changes in (on start and every 10 minutes). If a data file looks damaged or goes missing, the app stops saving and says so instead of overwriting it.
 
-Readable backups: copy `tools/data-repo/.github/workflows/readable-backup.yml` to `.github/workflows/` in the data repository. Once a day it writes plain, indented copies of the data to that repository's `readable-backup` branch (`readable/everything.json`, and one file per data file), so the branch history shows what changed. To put a file back, gzip the copy and upload it to `data/`.
+Readable backups: copy `tools/data-repo/.github/workflows/readable-backup.yml` to `.github/workflows/` in the data repository. Once a day it writes plain, indented copies of the data to that repository's `readable-backup` branch (`readable/everything.json`, and one file per data file), so the branch history shows what changed. Every backup from the last 14 days is kept; older ones are thinned to one per two weeks. To put a file back, gzip the copy and upload it to `data/`.
 
 Fonts and the calendar parser include their respective licenses in `assets/`. Decorative artwork is not granted a redistribution license by this repository.
