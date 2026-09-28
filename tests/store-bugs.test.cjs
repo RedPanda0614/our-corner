@@ -1,125 +1,9 @@
 // Store fixes, checked against a fake GitHub (never api.github.com): photo deletes, meta merges, thumbnails,
-// rate limits, first start, device storage, a repo without data.json, lagging reads.
+// rate limits, first start, device storage, a repo without data files, lagging reads.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const path = require('node:path');
-const source = fs.readFileSync(path.join(__dirname, '../store.js'), 'utf8');
-const clone = x => structuredClone(x);
-const RAW = 'application/vnd.github.raw';
-const response = (status, body = {}, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: k => headers[k.toLowerCase()] ?? null }, json: async () => clone(body), text: async () => JSON.stringify(body), arrayBuffer: async () => new ArrayBuffer(0) });
-const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64');
-const settle = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
-async function waitFor(check, what) { for (let i = 0; i < 400; i++) { if (check()) return; await new Promise(r => setTimeout(r, 5)); } assert.fail('timed out waiting for ' + what); }
-const IMG = 'data:image/jpeg;base64,YQ==';
+const { server, browser, settle, waitFor, clone, IMG, SHARED, FILE } = require('./fake-github.cjs');
 
-function server() {
-  return {
-    data: { version: 1, meta: { seeded: true }, collections: { events: [], dates: [], trips: [], tasks: [], wishes: [], diary: [], photos: [] } },
-    sha: 1, files: new Map(), fileSeq: 0, log: [], messages: [], offline: false, conflict: null, beforePut: null,
-    verify: { status: 200, body: {}, headers: {} }, dataReply: null, lagOnce: null,
-    deleteStatus: [], photoPut: {}, photoStatus: null, photoReply: null, putReply: null, photoDelay: 0, active: 0, maxActive: 0,
-    count(re) { return this.log.filter(l => re.test(l)).length; },
-    async fetch(url, options = {}) {
-      const file = decodeURIComponent(new URL(url).pathname).split('/contents/')[1];
-      const method = options.method || 'GET', raw = options.headers?.Accept === RAW;
-      this.log.push(`${method} ${file ?? '(repo)'}${raw ? ' raw' : ''}`);
-      if (this.offline) throw new TypeError('Failed to fetch');
-      if (file == null) return this.verify.status === 200 ? response(200, { private: true, permissions: { push: true } }) : response(this.verify.status, this.verify.body, this.verify.headers);
-      if (file === 'photos') return response(200, [...this.files].map(([p, f]) => ({ name: p.slice(7), path: p, sha: f.sha, type: 'file' })));
-      if (file.startsWith('photos/')) {
-        const cur = this.files.get(file), body = options.body ? JSON.parse(options.body) : {};
-        if (method === 'PUT') {
-          if (this.photoPut[file]) return response(...[].concat(this.photoPut[file]));
-          if (cur && body.sha !== cur.sha) return response(422);
-          const sha = 'file-' + (++this.fileSeq); this.files.set(file, { content: body.content, sha });
-          return response(201, { content: { sha } });
-        }
-        if (method === 'DELETE') {
-          const forced = this.deleteStatus.shift(); if (forced) return response(forced);
-          if (!cur) return response(404);
-          if (body.sha !== cur.sha) return response(409);
-          this.files.delete(file); return response(200);
-        }
-        this.active++; this.maxActive = Math.max(this.maxActive, this.active);
-        await new Promise(r => (this.gate ? this.gate.push(r) : setTimeout(r, this.photoDelay))); this.active--; // gate: held until the test lets it through
-        if (this.photoStatus) return response(this.photoStatus);
-        if (this.photoReply) return response(...this.photoReply);
-        if (!cur) return response(404);
-        if (raw) return { ...response(200), arrayBuffer: async () => Buffer.from(cur.content, 'base64') };
-        return response(200, { sha: cur.sha, content: cur.content });
-      }
-      if (method === 'PUT') {
-        await new Promise(resolve => setImmediate(resolve));
-        if (this.conflict) { this.conflict(this.data); this.conflict = null; this.sha++; }
-        if (this.beforePut) { this.beforePut(); this.beforePut = null; }
-        if (this.putReply) { const reply = this.putReply; this.putReply = null; return response(...reply); }
-        const body = JSON.parse(options.body); this.messages.push(body.message);
-        if (this.data == null ? !!body.sha : body.sha !== String(this.sha)) return response(409);
-        this.data = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')); this.sha++;
-        return response(200, { content: { sha: String(this.sha) } });
-      }
-      if (this.dataReply) return response(...this.dataReply);
-      if (this.lagOnce) { const lag = this.lagOnce; this.lagOnce = null; return response(200, lag); }
-      if (this.data == null) return response(404, { message: 'Not Found' });
-      const etag = '"' + this.sha + '"';
-      if (options.headers?.['If-None-Match'] === etag) return response(304);
-      if (raw) return response(200, this.data, { etag });
-      if (this.big) return response(200, { sha: String(this.sha), size: 2e6, content: '' }, { etag }); // over 1 MB: the details come without the content
-      return response(200, { sha: String(this.sha), content: b64(this.data) }, { etag });
-    }
-  };
-}
-
-// A page in a fake browser. `quota(key, value, disk)` returning true makes that IndexedDB write fail like a full disk.
-function browser(remote, { disk = new Map(), local = new Map(), quota = null, idb = true, config = { github: { owner: 'test', repo: 'private-data' } } } = {}) {
-  const timers = new Map(), intervals = [], listeners = {}, warnings = [], clock = { offset: 0 }; let timerId = 0;
-  const indexedDB = { open() { if (!idb) throw new Error('IndexedDB is not available here');
-    const request = { result: { transaction() {
-      const tx = { objectStore() { return {
-        get(key) { const req = {}; queueMicrotask(() => { req.result = clone(disk.get(key)); req.onsuccess?.(); }); return req; },
-        getAllKeys() { const req = {}; queueMicrotask(() => { req.result = [...disk.keys()]; req.onsuccess?.(); queueMicrotask(() => tx.oncomplete?.()); }); return req; },
-        put(value, key) { const snapshot = clone(value); queueMicrotask(() => { if (quota && quota(key, snapshot, disk)) { tx.error = new Error('QuotaExceededError'); tx.onabort?.(); return; } disk.set(key, snapshot); tx.oncomplete?.(); }); },
-        delete(key) { queueMicrotask(() => { disk.delete(key); tx.oncomplete?.(); }); }
-      }; } }; return tx;
-    } } }; queueMicrotask(() => request.onsuccess?.()); return request;
-  } };
-  const on = prefix => (type, fn) => { (listeners[prefix + type] ||= []).push(fn); };
-  const window = { addEventListener: on('') };
-  class FakeDate extends Date { static now() { return Date.now() + clock.offset; } }
-  class Blob { constructor(parts, o) { this.parts = parts; this.type = o?.type; } }
-  class FileReader { readAsDataURL(blob) { setImmediate(() => { this.result = `data:${blob.type};base64,` + Buffer.concat(blob.parts.map(p => Buffer.from(p))).toString('base64'); this.onload?.(); }); } }
-  const reloads = { n: 0 };
-  const context = vm.createContext({ window, indexedDB, location: { reload: () => { reloads.n++; } },
-    localStorage: { getItem: k => local.get(k), setItem: (k, v) => local.set(k, v), removeItem: k => local.delete(k), get length() { return local.size; }, key: i => [...local.keys()][i] ?? null },
-    document: { hidden: false, addEventListener: on('doc:') }, navigator: { onLine: true }, Date: FakeDate, Blob, FileReader,
-    fetch: (...args) => remote.fetch(...args), TextEncoder, TextDecoder, Uint8Array, structuredClone,
-    btoa: s => Buffer.from(s, 'binary').toString('base64'), atob: s => Buffer.from(s, 'base64').toString('binary'),
-    setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms, at: Date.now() + clock.offset + ms }); return id; }, clearTimeout: id => timers.delete(id),
-    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return ++timerId; }, clearInterval() {}, console: { ...console, warn: (...a) => warnings.push(a) }
-  });
-  vm.runInContext(source, context);
-  const store = window.CCStore.create(config);
-  const changes = {}, lists = {}, statuses = [], photoTimes = [], photoHints = []; let emits = 0; // emits: full updates (meta is sent with every one); photoTimes: when the photo list was sent
-  const page = { store, disk, local, changes, lists, statuses, timers, intervals, listeners, warnings, clock, photoTimes, photoHints, Blob, reloads, get emits() { return emits; },
-    connect: () => store.start((col, items, hint) => { if (col === 'meta') emits++; if (col === 'photos') { photoTimes.push(Date.now() + clock.offset); photoHints.push(hint); } changes[col] = clone(items); lists[col] = items; }, (state, error) => statuses.push({ state, error })),
-    async start(name = '斯婕') { await store.signIn('fake-test-credential', name); await page.connect(); },
-    async runTimers(ms) { const due = [...timers].filter(([, t]) => t.ms === ms); due.forEach(([id]) => timers.delete(id)); for (const [, t] of due) await t.fn(); return due.length; },
-    async flush() { assert.ok(await page.runTimers(700), 'save scheduled'); },
-    async advance(ms) { // move the clock on, running each timer that falls due on the way at its own time
-      const end = Date.now() + clock.offset + ms;
-      for (;;) {
-        const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-        if (!due) break;
-        clock.offset = Math.max(clock.offset, due[1].at - Date.now()); timers.delete(due[0]); await due[1].fn(); await settle();
-      }
-      clock.offset = end - Date.now();
-    },
-    fire: (type, ...args) => Promise.all((listeners[type] || []).map(fn => fn(...args)))
-  };
-  return page;
-}
 async function addPhotos(page, entryId, ids) {
   for (const id of ids) { await page.store.putFull(id, IMG); await page.store.set('photos', { id, entryId, thumb: IMG }); }
   await page.store.set('diary', { id: entryId, text: 'Picnic', photoIds: ids });
@@ -152,7 +36,7 @@ test('deleting a diary entry offline removes it right away and deletes the photo
   const reopened = browser(remote, { disk: page.disk, local: page.local }); await reopened.start(); await reopened.flush();
   assert.deepEqual(remote.data.collections.diary, []); assert.deepEqual(remote.data.collections.photos, []);
   assert.equal(remote.files.size, 0);
-  assert.deepEqual(reopened.disk.get('github-state:test/private-data:main').files, []);
+  assert.deepEqual(reopened.disk.get(SHARED).files, []);
 });
 
 test('a photo file delete that fails is retried later and never blocks the entry removal', async () => {
@@ -163,7 +47,7 @@ test('a photo file delete that fails is retried later and never blocks the entry
   const order = remote.log.length;
   await page.flush();
   assert.deepEqual(remote.data.collections.diary, []); // saved even though a file delete failed
-  assert.ok(remote.log.slice(order).findIndex(l => l === 'PUT data.json') < remote.log.slice(order).findIndex(l => l.startsWith('DELETE')), 'data saved before files deleted');
+  assert.ok(remote.log.slice(order).findIndex(l => l === 'PUT data/main.json.gz') < remote.log.slice(order).findIndex(l => l.startsWith('DELETE')), 'data saved before files deleted');
   assert.equal(remote.files.size, 4);
   assert.equal(page.statuses.at(-1).state, 'synced');
   assert.ok(await page.runTimers(20000), 'retry scheduled'); await settle();
@@ -352,7 +236,7 @@ test('a rate limit shows "GitHub is busy" with the minutes left and pauses polli
   assert.equal(page.statuses.at(-1).error.message, 'GitHub is busy, trying again in 1 min.');
   assert.equal(remote.log.length, sent);
   await page.advance(60000); // the wait is over at 150 s: sync resumes by itself
-  assert.equal(remote.log.at(-1), 'GET data.json'); assert.equal(page.statuses.at(-1).state, 'synced');
+  assert.equal(remote.log.at(-1), 'GET data'); assert.equal(page.statuses.at(-1).state, 'synced');
 });
 
 test('the wait uses x-ratelimit-reset when no requests are left, a minute otherwise, and any 429 counts', async () => {
@@ -458,33 +342,38 @@ test('when storage fills up, the oldest cached full photos make room first', asy
   assert.equal(page.warnings.length, 0);
 });
 
-// ---------- #21 repo without data.json ----------
-test('a data repo without data.json starts empty and the first save creates it', async () => {
+// ---------- #21 repo without data files ----------
+test('a data repo without data files starts empty and the first save creates the one it needs', async () => {
   const remote = server(); remote.data = null;
   const page = browser(remote); await page.start();
   assert.deepEqual(page.changes.tasks, []); assert.equal(page.statuses.at(-1).state, 'synced');
   assert.equal(await page.store.isSeeded(), false);
   await page.store.set('tasks', { id: 't1', title: 'first' }); await page.flush();
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['t1']);
+  assert.deepEqual([...remote.tree.keys()], ['data/main.json.gz']);
   assert.equal(page.store.pending(), false);
 });
 
-test('data.json disappearing after it was loaded is still reported as an error', async () => {
+test('a data file disappearing after it was loaded is reported as an error, and nothing is saved over it', async () => {
   const remote = server(), page = browser(remote); await page.start();
-  remote.data = null; await page.intervals[0].fn();
-  assert.equal(page.statuses.at(-1).state, 'error');
+  remote.drop('data/main.json.gz'); await page.intervals[0].fn(); // within 30 s of reading it, a listing may just lag: saves to it wait
+  await page.store.set('tasks', { id: 't0', title: 'waits' }); await page.flush(); assert.equal(remote.count(/^PUT/), 0);
+  page.clock.offset += 31000; await page.intervals[0].fn(); // still gone
+  assert.equal(page.statuses.at(-1).state, 'error'); assert.match(page.statuses.at(-1).error.message, /data\/main\.json\.gz is missing/);
   assert.ok(page.changes.meta.seeded);
+  await page.store.set('tasks', { id: 't1', title: 'kept on this device' }); await page.flush();
+  assert.equal(remote.count(/^PUT/), 0); assert.equal(page.statuses.at(-1).state, 'error'); assert.equal(page.store.pending(), true);
 });
 
 // ---------- #23 lagging read after our own save ----------
 test('a lagging copy served right after our own save does not hide the change', async () => {
   const remote = server(), page = browser(remote); await page.start();
-  const old = { sha: String(remote.sha), content: b64(remote.data) };
+  const old = remote.entries('data'); // the listing from before our save
   await page.store.set('tasks', { id: 'mine', title: 'x' }); await page.flush();
   remote.lagOnce = old; await page.intervals[0].fn();
   assert.ok(page.changes.tasks.some(t => t.id === 'mine'));
   // a real later change from the other phone still shows up
-  remote.data.collections.tasks.push({ id: 'theirs', title: 'y' }); remote.sha++;
+  remote.edit('main', d => d.collections.tasks.push({ id: 'theirs', title: 'y' }));
   await page.intervals[0].fn();
   assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs']);
   // long after the save the old content is accepted again (e.g. the other phone undid everything)
@@ -494,10 +383,10 @@ test('a lagging copy served right after our own save does not hide the change', 
 
 test('a save conflict still reloads whatever GitHub has, even the content from before our own save', async () => {
   const remote = server(), page = browser(remote); await page.start();
-  const before = clone(remote.data);
+  const before = remote.bytes('data/main.json.gz');
   await page.store.set('tasks', { id: 'one', title: 'x' }); await page.flush();
   // the other phone removes 'one' again: same content as before our save, so GitHub gives it the old sha
-  remote.beforePut = () => { remote.data = clone(before); remote.sha = 1; };
+  remote.beforePut = () => remote.write('data/main.json.gz', before);
   await page.store.set('tasks', { id: 'two', title: 'x' }); await page.flush();
   assert.deepEqual(remote.data.collections.tasks.map(t => t.id), ['two']);
   assert.equal(page.store.pending(), false);
@@ -520,7 +409,7 @@ test('changes waiting to be saved never alter the saved copy they are shown on t
   const page = browser(remote); await page.start(); remote.offline = true;
   await page.store.remove('tasks', 'a'); await page.store.update('tasks', 'b', { title: 'B2' }); await page.store.set('tasks', { id: 'c', title: 'C' });
   await page.store.addComment('e', { id: 'c1', text: 'yo' }); await page.store.setMeta({ heroCaption: 'X' });
-  const saved = page.disk.get('github-state:test/private-data:main');
+  const saved = page.disk.get(FILE('main'));
   assert.deepEqual(saved.base.collections.tasks, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }]); assert.deepEqual(saved.base.collections.diary[0].comments, []);
   assert.equal(saved.base.meta.heroCaption, undefined); assert.equal(saved.pending.length, 5);
   assert.deepEqual(page.changes.tasks.map(t => [t.id, t.title]), [['b', 'B2'], ['c', 'C']]); assert.equal(page.changes.diary[0].comments.length, 1);
@@ -537,7 +426,7 @@ test('a diary post with three photos uploads their files first, then saves the p
   assert.deepEqual(page.changes.diary.map(e => e.id), ['e1']); assert.ok(page.changes.photos.every(p => p.thumb.type === 'image/jpeg'));
   await page.flush();
   const log = remote.log.slice(from).filter(l => l.startsWith('PUT'));
-  assert.deepEqual(log, ['PUT photos/p1.jpg', 'PUT photos/p1-thumb.jpg', 'PUT photos/p2.jpg', 'PUT photos/p2-thumb.jpg', 'PUT photos/p3.jpg', 'PUT photos/p3-thumb.jpg', 'PUT data.json']);
+  assert.deepEqual(log, ['PUT photos/p1.jpg', 'PUT photos/p1-thumb.jpg', 'PUT photos/p2.jpg', 'PUT photos/p2-thumb.jpg', 'PUT photos/p3.jpg', 'PUT photos/p3-thumb.jpg', 'PUT data/main.json.gz']);
   assert.deepEqual(remote.data.collections.diary.map(e => [e.id, e.photoIds]), [['e1', ['p1', 'p2', 'p3']]]);
   assert.deepEqual(remote.data.collections.photos.map(p => [p.id, p.entryId, p.thumb, p.shas.full === remote.files.get(`photos/${p.id}.jpg`).sha, p.shas.thumb === remote.files.get(`photos/${p.id}-thumb.jpg`).sha]),
     [['p1', 'e1', '', true, true], ['p2', 'e1', '', true, true], ['p3', 'e1', '', true, true]]);
@@ -552,14 +441,14 @@ test('a post that fails part way saves nothing and takes back the files it uploa
   assert.equal(remote.count(/^PUT photos\/p3/), 0, 'stops at the failure');
   assert.equal(page.store.pending(), false, 'nothing to save'); assert.deepEqual(page.changes.diary, []); assert.deepEqual(page.changes.photos, []);
   await waitFor(() => remote.files.size === 0, 'uploaded files deleted'); await settle();
-  assert.equal(remote.count(/^PUT data\.json/), 0);
+  assert.equal(remote.count(/^PUT data\//), 0);
   assert.deepEqual(remote.log.filter(l => /^GET photos/.test(l)), ['GET photos', 'GET photos/p2-thumb.jpg'], 'uploaded files go by the shas from the upload; only the one that failed is looked up');
   assert.ok(![...page.disk.keys()].some(k => /^(thumb|full):p[123]$/.test(k)), 'nothing left on this device');
-  assert.deepEqual(page.disk.get('github-state:test/private-data:main').files, []);
+  assert.deepEqual(page.disk.get(SHARED).files, []);
   delete remote.photoPut['photos/p2-thumb.jpg'];
   await post(page, 'e2', ['p4', 'p5']); await page.flush();
   assert.deepEqual(remote.data.collections.diary.map(e => e.id), ['e2']); assert.deepEqual(remote.data.collections.photos.map(p => p.id), ['p4', 'p5']);
-  assert.equal(remote.files.size, 4); assert.equal(remote.count(/^PUT data\.json/), 1);
+  assert.equal(remote.files.size, 4); assert.equal(remote.count(/^PUT data\//), 1);
 });
 
 test('a post that fails because the phone is offline or GitHub is busy says so in the error', async () => {
@@ -628,13 +517,13 @@ test('a replaced or reset top picture has its old file deleted, only once the ch
   assert.ok(remote.files.has('photos/hero-1.jpg')); assert.equal(remote.count(/^DELETE/), 0); assert.equal(remote.data.meta.hero, 'hero-1');
   const from = remote.log.length; await page.runTimers(15000); await page.flush(); await settle(); // the retry
   assert.deepEqual([...remote.files.keys()], ['photos/hero-2.jpg']); assert.equal(remote.data.meta.hero, 'hero-2');
-  assert.deepEqual(remote.log.slice(from).filter(l => !l.startsWith('GET')), ['PUT data.json', 'DELETE photos/hero-1.jpg'], 'by the sha from the upload, after the save');
+  assert.deepEqual(remote.log.slice(from).filter(l => !l.startsWith('GET')), ['PUT data/main.json.gz', 'DELETE photos/hero-1.jpg'], 'by the sha from the upload, after the save');
   await page.store.setMeta({ hero: null }); await page.store.dropFull('hero-2'); await page.flush(); await settle(); // Reset
   assert.equal(remote.files.size, 0); assert.equal(remote.data.meta.hero, null);
   await post(page, 'e1', ['p1']); await page.store.putFull('hero-3', IMG); await page.store.setMeta({ hero: 'hero-3' }); await page.flush();
   await page.store.dropFull('p1'); await page.store.dropFull('hero-3'); await page.store.dropFull(null); await settle(); // never a photo's file or the picture in use
   assert.deepEqual([...remote.files.keys()].sort(), ['photos/hero-3.jpg', 'photos/p1-thumb.jpg', 'photos/p1.jpg']);
-  assert.deepEqual(page.disk.get('github-state:test/private-data:main').files, []);
+  assert.deepEqual(page.disk.get(SHARED).files, []);
 });
 
 test('in local mode a replaced top picture is dropped from the device', async () => {
@@ -656,7 +545,7 @@ test('logging out waits until every change is on GitHub, then clears the private
   await assert.rejects(page.store.signOut(), refused); // a change still waiting
   remote.deleteStatus = [500]; await page.store.remove('photos', 'p2'); await page.flush();
   assert.equal(page.store.pending(), false); assert.equal(remote.files.size, 2);
-  assert.equal(page.reloads.n, 0); assert.ok(page.local.has('olc:github')); assert.ok(disk.has('github-state:test/private-data:main'));
+  assert.equal(page.reloads.n, 0); assert.ok(page.local.has('olc:github')); assert.ok(disk.has(SHARED));
   await page.store.signOut(); // a photo file that could not be deleted yet does not hold it up: it is only a spare file left on GitHub
   assert.equal(remote.files.size, 2);
   assert.equal(page.reloads.n, 1);
@@ -666,22 +555,22 @@ test('logging out waits until every change is on GitHub, then clears the private
 });
 
 // ---------- the file we already have is not downloaded again ----------
-test('a relaunch and the first check after our own save do not download or redraw an unchanged data.json', async () => {
-  const remote = server(); remote.big = true; remote.data.collections.tasks = [{ id: 't0', title: 'x' }];
+test('a relaunch and the first check after our own save do not download or redraw unchanged data files', async () => {
+  const remote = server(); remote.data.collections.tasks = [{ id: 't0', title: 'x' }];
   const page = browser(remote); await page.start();
-  const raws = () => remote.count(/^GET data\.json raw$/);
-  assert.equal(raws(), 1, 'a new device downloads it once'); assert.equal(page.emits, 1);
+  const raws = () => remote.count(/^GET blob \w+ raw$/);
+  assert.equal(raws(), 4, 'a new device downloads each file once'); assert.equal(page.emits, 1);
   const again = browser(remote, { disk: page.disk, local: page.local }); await again.start(); // relaunch: this device has the same file
-  assert.equal(raws(), 1, 'not downloaded again'); assert.equal(again.emits, 1, 'shown once, from the copy on this device');
+  assert.equal(raws(), 4, 'not downloaded again'); assert.equal(again.emits, 1, 'shown once, from the copy on this device');
   assert.deepEqual(again.changes.tasks.map(t => t.id), ['t0']); assert.equal(again.statuses.at(-1).state, 'synced');
   await again.store.set('tasks', { id: 't1', title: 'y' }); await again.flush();
   const shown = again.emits; await again.intervals[0].fn(); // the first check after our own save finds what we saved
-  assert.equal(raws(), 1); assert.equal(again.emits, shown);
+  assert.equal(raws(), 4); assert.equal(again.emits, shown);
   const sent = remote.log.length; await again.intervals[0].fn(); // its ETag is kept, so the next check is a 304
-  assert.deepEqual(remote.log.slice(sent), ['GET data.json']); assert.equal(again.emits, shown);
-  remote.data.collections.tasks.push({ id: 'theirs', title: 'z' }); remote.sha++; // a real change from the other phone still comes in
+  assert.deepEqual(remote.log.slice(sent), ['GET data']); assert.equal(again.emits, shown);
+  remote.edit('main', d => d.collections.tasks.push({ id: 'theirs', title: 'z' })); // a real change from the other phone still comes in
   await again.intervals[0].fn();
-  assert.equal(raws(), 2); assert.deepEqual(again.changes.tasks.map(t => t.id), ['t0', 't1', 'theirs']);
+  assert.equal(raws(), 5); assert.deepEqual(again.changes.tasks.map(t => t.id), ['t0', 't1', 'theirs']);
 });
 
 test('removeMany also works in local mode', async () => {
@@ -698,7 +587,7 @@ test('a partner change found in a save conflict shows even when our retry then f
   await page.store.set('tasks', { id: 'mine', title: 'x' }); await page.flush();
   remote.conflict = data => data.collections.tasks.push({ id: 'theirs', title: 'y' });
   let puts = 0; const fetch = remote.fetch.bind(remote);
-  remote.fetch = async (url, o = {}) => { if (o.method === 'PUT' && /data\.json/.test(url) && ++puts === 2) throw new TypeError('Failed to fetch'); return fetch(url, o); };
+  remote.fetch = async (url, o = {}) => { if (o.method === 'PUT' && /contents\/data\//.test(url) && ++puts === 2) throw new TypeError('Failed to fetch'); return fetch(url, o); };
   await page.store.set('tasks', { id: 'second', title: 'z' }); await page.flush(); await settle(50); // 409, reload, then the retry fails
   assert.deepEqual(page.changes.tasks.map(t => t.id), ['mine', 'theirs', 'second']);
   await page.advance(16000); await settle(50); // the retry goes through

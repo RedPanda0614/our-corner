@@ -1974,7 +1974,7 @@
   let lastError = 0;
   const onStatus = (s, err) => {
     if (s === 'ratelimited') { ui.syncUntil = err.until; if (ui.sync !== s) flash(err.message); } // the store re-sends it each minute for the countdown
-    else if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + ' Will retry.'); }
+    else if (s === 'error' && err && Date.now() - lastError > 30000) { lastError = Date.now(); flash('Sync problem: ' + (err.message || err) + (err.code === 'oldbrowser' ? '' : ' Will retry.')); } // an old browser won't get better by retrying
     if (ui.sync !== s || s === 'ratelimited') { ui.sync = s; scheduleRender(); }
   };
   history.replaceState(null, '', '#' + ui.page);
