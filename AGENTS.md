@@ -23,7 +23,7 @@ This is a shared personal site for 斯婕 and 真真 (Bibo and Bobi). Preserve t
 - Put each subpage's primary add action in the same top-right toolbar position. Keep the diary New entry form folded by default, except when restoring an unfinished draft.
 - Paginate long subpage lists at 20 items with a visible page-number navigation. Keep the footer at the bottom on short pages.
 - Calendar entries have categories. Keep Apple Calendar `.ics` import and export by calendar category. Special days include birthdays, holidays, and anniversaries; countdowns need readable English.
-- Diary editing supports changing its photos, shows **Edited** afterward, and uses the last update time as the displayed date. Show timestamps to the minute. Ask for confirmation before deleting a comment.
+- Diary editing supports changing its photos, shows **Edited** afterward, and uses the last update time as the displayed date. Show timestamps to the minute. Ask for confirmation before deleting a comment. Diary comments can reply to a specific comment; keep replies visible below their parent and preserve them if that parent is deleted.
 - Album supports named albums, photo zoom, and browsing previous/next photos. Avoid regressing touch/swipe behavior.
 - Message read state is shared per person across devices so the same notification does not appear as new again after switching devices.
 
@@ -35,6 +35,7 @@ This is a shared personal site for 斯婕 and 真真 (Bibo and Bobi). Preserve t
 - Keep the dotted rabbit background tiled diagonally, with no visible seams; its pattern must not shift with the left sidebar's height. Keep the sunflower-cat artwork in the home game scene.
 - Keep the home title accent white and green, without a large blurred glow or wash behind it. Effects should be small and legible. Respect reduced-motion settings.
 - Wishlist notes use the existing varied blue stationery artwork. Keep each note compact, crop the complete note rather than an adjacent one, and keep all text and controls inside its usable area.
+- Status choices use one coherent family of pastel round faces in `status-faces.js`, with short visible labels and the four status groups for clarity. Similar faces should also differ by expression or a small recognizable mark. Keep each status emoji key stable because saved statuses store the emoji itself; distinguish similar moods by expression as well as color. Status history is private per-person metadata, shown together in a message-style dialog; clearing a current status must not erase past entries.
 
 ## Typography
 
