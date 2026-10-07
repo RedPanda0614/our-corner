@@ -162,6 +162,7 @@
   const diaryDraft = { text: '', date: today, tags: '', pending: [] };
   const diaryFilter = { q: '', tag: '' };
   const commentDrafts = {};
+  const commentTargets = {};
   const questionDrafts = {};
   const calendarImport = { open: false, file: null, name: '', from: today, to: shiftDay(today, 365), preview: null, error: '', busy: false };
 
@@ -751,8 +752,10 @@
         return diaryEditForm(e);
       }
       const tags = (e.tags || []).map(t => `<button type="button" class="cc-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
-      const comments = (e.comments || []).map(c => `<div class="cc-reply"><b>${esc(c.author)}:</b>${c.at ? `<small class="cc-reply-time">${esc(timestamp(c.at))}</small>` : ''} ${esc(c.text)}${c.author === meName() ? ` <button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</div>`).join('');
-      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="Reply as ${esc(meName())}…" value="${esc(commentDrafts[e.id] || '')}" aria-label="Write a reply"><button class="cc-button" type="submit">Reply</button></form></article>`;
+      const comments = window.CCCommentThreads.flatten(e.comments || []).map(({ comment: c, parent, depth }) => `<div class="cc-reply${depth ? ' cc-reply-child' : ''}" style="--reply-depth:${depth}"><div class="cc-reply-head"><b>${esc(c.author)}</b>${c.at ? `<time class="cc-reply-time">${esc(timestamp(c.at))}</time>` : ''}<span class="cc-reply-actions"><button type="button" class="cc-reply-link" data-comment-reply="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Reply to ${esc(c.author)}">Reply</button>${c.author === meName() ? `<button type="button" class="cc-x" data-comment-remove="${esc(c.id)}" data-entry="${esc(e.id)}" aria-label="Delete comment">×</button>` : ''}</span></div>${c.replyTo ? `<div class="cc-reply-to">↳ ${esc(parent?.author || c.replyToAuthor || 'comment')}</div>` : ''}<div class="cc-reply-body">${esc(c.text)}</div></div>`).join('');
+      const target = (e.comments || []).find(c => c.id === commentTargets[e.id]);
+      const replyContext = target ? `<div class="cc-reply-context">Replying to ${esc(target.author)}: ${esc(clip(target.text, 50))}<button type="button" class="cc-reply-cancel" data-comment-reply-cancel data-entry="${esc(e.id)}">Cancel</button></div>` : '';
+      return `<article class="cc-feed ${ui.highlight === e.id ? 'cc-highlight' : ''}" id="entry-${esc(e.id)}"><div class="cc-meta"><span class="cc-meta-who">${mini(key)}${esc(e.author || '')} · ${esc(entryTimestamp(e))}${e.updatedAt ? ' · Edited' : ''}</span>${mine ? `<span class="cc-plan-actions"><button type="button" class="cc-button" data-entry-edit="${esc(e.id)}">Edit</button>${confirmButton('entry:' + e.id, 'Delete', `data-entry-delete="${esc(e.id)}"`)}</span>` : ''}</div>${e.text ? `<p class="cc-feed-text">${esc(e.text)}</p>` : ''}${tags ? `<div class="cc-tag-row cc-entry-tags">${tags}</div>` : ''}${photoThumbs(entryPhotoIds(e))}${comments}${replyContext}<form class="cc-comment-form" data-comment-form="${esc(e.id)}"><input name="comment" maxlength="500" placeholder="${target ? `Reply to ${esc(target.author)}…` : `Reply as ${esc(meName())}…`}" value="${esc(commentDrafts[e.id] || '')}" aria-label="${target ? `Reply to ${esc(target.author)}` : 'Write a reply'}"><button class="cc-button" type="submit">Reply</button></form></article>`;
     }).join('') || `<p class="cc-empty-plan">${filtering ? 'No entries match.' : 'No entries yet. Write the first one above.'}</p>`;
     fill($('[data-panel="diary"]'), panelShell('diary', '✎ DIARY', '我们的日记', pageToolbar(`${data.diary.length} entries`, `<button type="button" class="cc-button" data-toggle-diary aria-expanded="${ui.newEntryOpen}" aria-controls="cc-diary-composer" ${busy.diary ? 'disabled' : ''}>${ui.newEntryOpen ? '− Close new entry' : '＋ New entry'}</button>`) + composer + search + `<div data-page-list="diary">${feed}</div>` + pageNav('diary', page)));
   }
@@ -935,7 +938,7 @@
       const n = (e.photoIds || []).length;
       add('diary', 'dy:' + e.id, e.author, e.createdAt, `posted in the diary · ${clip(e.text) || (n ? n + ' photo' + (n === 1 ? '' : 's') : '')}`, { type: 'entry', id: e.id });
       if (edited(e) && /text|tags|date/.test(e.updatedWhat || '')) add('diary', `dy-u:${e.id}:${e.updatedAt}`, e.updatedBy, e.updatedAt, `edited a diary entry · ${clip(e.text)}`, { type: 'entry', id: e.id });
-      for (const c of e.comments || []) add('diary', 'cm:' + c.id, c.author, c.at, `${e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id });
+      for (const c of e.comments || []) { const parent = (e.comments || []).find(x => x.id === c.replyTo); add('diary', 'cm:' + c.id, c.author, c.at, `${parent?.author === me ? 'replied to your comment' : e.author === me ? 'replied to you' : 'replied'}: ${clip(c.text)}`, { type: 'entry', id: e.id }); }
     }
     for (const g of photoUploads()) { // a batch that grows gets a new key (so it alerts again); older photos keep their first photo's key
       const first = g[0], n = g.length, album = data.albums.find(a => a.id === first.albumId);
@@ -1108,21 +1111,33 @@
   // so the two of us never overwrite each other. Shown in a slide-out tab on the right edge of every page.
   // every emoji in this UI goes through emojiHtml (pixel-art versions can plug in here); data keeps plain characters
   const emojiHtml = ch => (window.CCPixelEmoji ? CCPixelEmoji.html(ch, { decorative: true }) : `<span class="cc-emoji">${esc(ch)}</span>`);
+  const STATUS_GROUPS = [
+    { id: 'feeling', label: 'FEELING · 心情' },
+    { id: 'connection', label: 'CONNECTION · 想贴贴' },
+    { id: 'everyday', label: 'EVERYDAY · 在做什么' },
+    { id: 'offtime', label: 'OFF TIME · 休息玩耍' }
+  ];
   const STATUS_PRESETS = [
-    { emoji: '😴', en: 'Sleepy', zh: '犯困' },
-    { emoji: '💼', en: 'Busy', zh: '忙碌' },
-    { emoji: '🍜', en: 'Eating', zh: '干饭' },
-    { emoji: '🚗', en: 'On my way', zh: '在路上' },
-    { emoji: '🥰', en: 'Missing you', zh: '想你' },
-    { emoji: '🤒', en: 'Unwell', zh: '不舒服' },
-    { emoji: '📚', en: 'Studying', zh: '学习中' },
-    { emoji: '🏃', en: 'Working out', zh: '运动' },
-    { emoji: '🎮', en: 'Gaming', zh: '游戏' },
-    { emoji: '🛁', en: 'Relaxing', zh: '放松' },
-    { emoji: '🎧', en: 'Music on', zh: '听歌' },
-    { emoji: '😤', en: 'Grumpy', zh: '有点烦' },
-    { emoji: '✈️', en: 'Travelling', zh: '出行' },
-    { emoji: '🌙', en: 'Good night', zh: '晚安' }
+    { emoji: '🌟', en: 'Good mood', zh: '开心', group: 'feeling' },
+    { emoji: '😰', en: 'A bit stressed', zh: '压力有点大', group: 'feeling' },
+    { emoji: '😢', en: 'Sad', zh: '伤心', group: 'feeling' },
+    { emoji: '😤', en: 'Grumpy', zh: '有点烦', group: 'feeling' },
+    { emoji: '🤒', en: 'Unwell', zh: '不舒服', group: 'feeling' },
+    { emoji: '🫂', en: 'Hug needed', zh: '想要抱抱', group: 'connection' },
+    { emoji: '💬', en: 'Talk to me', zh: '想聊天', group: 'connection' },
+    { emoji: '🥰', en: 'Missing you', zh: '想你', group: 'connection' },
+    { emoji: '💼', en: 'Busy', zh: '忙碌', group: 'everyday' },
+    { emoji: '⌛', en: 'Focus mode', zh: '专注中', group: 'everyday' },
+    { emoji: '📚', en: 'Studying', zh: '学习中', group: 'everyday' },
+    { emoji: '🍜', en: 'Eating', zh: '干饭', group: 'everyday' },
+    { emoji: '✈️', en: 'Travelling', zh: '出行', group: 'everyday' },
+    { emoji: '🪫', en: 'Need a break', zh: '想歇会儿', group: 'offtime' },
+    { emoji: '😴', en: 'Sleepy', zh: '犯困', group: 'offtime' },
+    { emoji: '🏃', en: 'Working out', zh: '运动', group: 'offtime' },
+    { emoji: '🎮', en: 'Gaming', zh: '游戏', group: 'offtime' },
+    { emoji: '🛁', en: 'Relaxing', zh: '放松', group: 'offtime' },
+    { emoji: '🎧', en: 'Music on', zh: '听歌', group: 'offtime' },
+    { emoji: '🌙', en: 'Good night', zh: '晚安', group: 'offtime' }
   ];
   const STATUS_DAY = 86400000, STATUS_MAX = 40;
   const statusDraft = { emoji: '', text: '', dirty: false, owner: null }; // survives re-renders while typing
@@ -1145,6 +1160,7 @@
     const n = Math.floor((Date.now() - s.at) / STATUS_DAY);
     return `set ${n} day${n === 1 ? '' : 's'} ago`;
   }
+  const statusFaceHtml = emoji => window.CCStatusFaces?.html(emoji) || emojiHtml(emoji);
   const statusPreset = emoji => STATUS_PRESETS.find(p => p.emoji === emoji);
   const statusChars = t => (typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter().segment(t)].map(x => x.segment) : Array.from(t));
   const statusClip = (t, n = 12) => { const c = statusChars(String(t).replace(/\s+/g, ' ').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
@@ -1159,23 +1175,23 @@
   function statusBubble(key) { // the player card's speech bubble shows the status when there is one
     const s = statusOf(key);
     if (!s) return `<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span>`;
-    return `<span class="cc-baby-bubble cc-status-bubble${statusStale(s) ? ' cc-status-stale' : ''}">${emojiHtml(s.emoji)} ${esc(statusClip(s.text, 10))}</span>`;
+    return `<span class="cc-baby-bubble cc-status-bubble${statusStale(s) ? ' cc-status-stale' : ''}">${statusFaceHtml(s.emoji)} ${esc(statusClip(s.text, 10))}</span>`;
   }
   function statusCardHtml() {
     const key = partnerKey(), s = statusOf(key);
     const who = `<div class="cc-status-who">${mini(key)}<b>${esc(PEOPLE[key])}</b>${s ? `<small class="cc-plan-tag">${esc(statusWhen(s))}</small>` : ''}</div>`;
     if (!s) return `<div class="cc-status-card cc-status-none ${key}">${who}<p class="cc-status-text cc-small">No status yet.</p></div>`;
-    return `<div class="cc-status-card ${key}${statusStale(s) ? ' cc-status-stale' : ''}">${who}<div class="cc-status-now"><span class="cc-status-emoji">${emojiHtml(s.emoji)}</span><p class="cc-status-text">${esc(s.text)}</p></div></div>`;
+    return `<div class="cc-status-card ${key}${statusStale(s) ? ' cc-status-stale' : ''}">${who}<div class="cc-status-now"><span class="cc-status-emoji">${statusFaceHtml(s.emoji)}</span><p class="cc-status-text">${esc(s.text)}</p></div></div>`;
   }
   function statusMineHtml() {
     const s = statusOf(ui.me), d = statusDraft, pick = statusPreset(d.emoji);
     const current = s
-      ? `<div class="cc-status-mine${statusStale(s) ? ' cc-status-stale' : ''}"><span class="cc-status-emoji-sm">${emojiHtml(s.emoji)}</span><span class="cc-status-mine-text">${esc(s.text)}<small class="cc-plan-tag">${esc(statusWhen(s))}</small></span><button type="button" class="cc-button" data-status-clear>Clear</button></div>`
+      ? `<div class="cc-status-mine${statusStale(s) ? ' cc-status-stale' : ''}"><span class="cc-status-emoji-sm">${statusFaceHtml(s.emoji)}</span><span class="cc-status-mine-text">${esc(s.text)}<small class="cc-plan-tag">${esc(statusWhen(s))}</small></span><button type="button" class="cc-button" data-status-clear>Clear</button></div>`
       : '<p class="cc-small cc-status-mine-empty">Not set yet. Pick one below.</p>';
-    const presets = STATUS_PRESETS.map((p, i) => `<button type="button" class="cc-button cc-status-preset" data-status-preset="${i}" aria-pressed="${d.emoji === p.emoji}" aria-label="${esc(`${p.en} ${p.zh}`)}" title="${esc(`${p.en} · ${p.zh}`)}">${emojiHtml(p.emoji)}</button>`).join('');
-    return `<h3 class="cc-status-sub">Your status · <span lang="zh-CN">我的状态</span></h3>${current}
-      <div class="cc-status-presets" role="group" aria-label="Pick a status">${presets}</div>
-      <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${emojiHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Tap an emoji, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
+    const presets = STATUS_GROUPS.map(group => `<section class="cc-status-group" aria-label="${esc(group.label)}"><h4 class="cc-status-group-title">${esc(group.label)}</h4><div class="cc-status-presets" role="group" aria-label="${esc(group.label)}">${STATUS_PRESETS.map((p, i) => p.group === group.id ? `<button type="button" class="cc-button cc-status-preset" data-status-preset="${i}" aria-pressed="${d.emoji === p.emoji}" aria-label="${esc(`${p.en} ${p.zh}`)}" title="${esc(`${p.en} · ${p.zh}`)}"><span class="cc-status-preset-icon">${statusFaceHtml(p.emoji)}</span><span class="cc-status-preset-label">${esc(p.en)}</span></button>` : '').join('')}</div></section>`).join('');
+    return `<div class="cc-status-heading"><h3 class="cc-status-sub">Your status · <span lang="zh-CN">我的状态</span></h3><button type="button" class="cc-button cc-status-history-open" data-open-status-history>History · 历史状态</button></div>${current}
+      <div class="cc-status-groups">${presets}</div>
+      <form class="cc-status-form" data-status-form><label class="cc-field">${pick ? `${statusFaceHtml(pick.emoji)} ${esc(pick.en)} · ${esc(pick.zh)}` : 'Choose a face, then add a few words'}<input name="text" type="text" maxlength="${STATUS_MAX}" autocomplete="off" placeholder="${esc(pick ? pick.zh : '干饭')}" value="${esc(d.text)}"></label><div class="cc-form-footer"><button class="cc-button" type="submit">Save</button></div></form>`;
   }
   function renderStatus(soft = passive) {
     const box = $('[data-status-root]'); timeStatusFade(); if (!box) return;
@@ -1193,7 +1209,7 @@
     if (open && theirs) markStatusSeen(theirs.at); // looking at it counts as seeing it
     const unseen = statusUnseen();
     tab.setAttribute('aria-label', `${PEOPLE[key]}'s status${theirs ? `: ${theirs.emoji} ${theirs.text}` : ''}${unseen ? ' (new)' : ''}`);
-    tab.innerHTML = `${mini(key)}${theirs ? `<span class="cc-status-tab-emoji${statusStale(theirs) ? ' cc-status-stale' : ''}">${emojiHtml(theirs.emoji)}</span>` : ''}<span class="cc-status-chev" aria-hidden="true">${open ? '›' : '‹'}</span>${unseen ? '<i class="cc-status-dot" aria-hidden="true"></i>' : ''}`;
+    tab.innerHTML = `${mini(key)}${theirs ? `<span class="cc-status-tab-emoji${statusStale(theirs) ? ' cc-status-stale' : ''}">${statusFaceHtml(theirs.emoji)}</span>` : ''}<span class="cc-status-chev" aria-hidden="true">${open ? '›' : '‹'}</span>${unseen ? '<i class="cc-status-dot" aria-hidden="true"></i>' : ''}`;
     const html = `<div data-status-partner>${statusCardHtml()}</div>${statusMineHtml()}`;
     if (html === statusShown) return;
     const a = document.activeElement, inside = !!a && body.contains(a);
@@ -1219,10 +1235,34 @@
   }
   function setMyStatus(value) {
     if (!ui.me) return;
-    const key = statusKey(ui.me);
-    data.meta = { ...data.meta, [key]: value };
-    run(store.setMeta({ [key]: value }));
+    const key = statusKey(ui.me), historyKey = 'statusHistory:' + ui.me;
+    const patch = window.CCStatusHistory.patch(statusOf(ui.me), value);
+    data.meta = { ...data.meta, [key]: value, [historyKey]: { ...(data.meta[historyKey] || {}), ...patch } };
+    // Merge by record ID so a save from another device cannot erase older history.
+    run(store.mergeMeta(historyKey, patch).then(() => store.setMeta({ [key]: value })));
     render();
+  }
+  let statusHistoryFilter = 'all';
+  function renderStatusHistory() {
+    const dlg = $('[data-status-history]');
+    const people = Object.keys(PEOPLE);
+    const rows = people.flatMap(key => window.CCStatusHistory.entries(data.meta, key).map(status => ({ ...status, key })))
+      .filter(status => statusHistoryFilter === 'all' || status.key === statusHistoryFilter)
+      .sort((a, b) => b.at - a.at);
+    dlg.innerHTML = `<section class="cc-window"><div class="cc-bar"><span>♡ STATUS HISTORY · 历史状态</span><button type="button" class="cc-min" data-close-status-history aria-label="Close">×</button></div><div class="cc-body">
+      <div class="cc-filter-row">${[['all', 'All'], ...people.map(key => [key, PEOPLE[key]])].map(([key, label]) => `<button type="button" class="cc-button" data-status-history-filter="${esc(key)}" aria-pressed="${statusHistoryFilter === key}">${esc(label)}</button>`).join('')}</div>
+      <div class="cc-status-history-list">${rows.map(status => `<div class="cc-status-history-item">${statusFaceHtml(status.emoji)}<div><b>${esc(PEOPLE[status.key])}</b><span>${esc(status.text)}</span><small>${esc(timestamp(status.at))}</small></div></div>`).join('') || '<p class="cc-empty-plan">No status history yet. · 暂无历史状态</p>'}</div>
+    </div></section>`;
+  }
+  function openStatusHistory() {
+    statusHistoryFilter = 'all';
+    openStatus(false, false);
+    renderStatusHistory();
+    const dlg = $('[data-status-history]'); if (!dlg.open) dlg.showModal?.() ?? dlg.setAttribute('open', '');
+  }
+  function closeStatusHistory() {
+    const dlg = $('[data-status-history]'); if (dlg.open) dlg.close();
+    $('[data-status-toggle]')?.focus({ preventScroll: true });
   }
   function pickStatusPreset(i) {
     const p = STATUS_PRESETS[i]; if (!p) return;
@@ -1245,6 +1285,7 @@
       const el = e.target.closest('button'); if (!el || !box.contains(el)) return;
       if (el.hasAttribute('data-status-toggle')) openStatus(!ui.statusOpen);
       else if (el.hasAttribute('data-status-close')) openStatus(false);
+      else if (el.hasAttribute('data-open-status-history')) openStatusHistory();
       else if (el.dataset.statusPreset != null) pickStatusPreset(+el.dataset.statusPreset);
       else if (el.hasAttribute('data-status-clear')) { Object.assign(statusDraft, { emoji: '', text: '', dirty: false }); dropDraft('status'); setMyStatus(null); flash('Status cleared.'); }
     });
@@ -1645,7 +1686,11 @@
     else if (f.matches('[data-caption-form]')) { const c = f.elements.caption.value.trim().slice(0, 40); run(store.setMeta({ heroCaption: c || null })); data.meta = { ...data.meta, heroCaption: c || null }; ui.editCaption = false; render(); }
     else if (f.matches('[data-comment-form]')) {
       const id = f.dataset.commentForm, text = String(f.elements.comment.value || '').trim(); if (!text) return;
-      commentDrafts[id] = ''; dropDraft('reply', id); run(store.addComment(id, { id: newId(), author: meName(), text, at: Date.now() })); render();
+      const entry = data.diary.find(x => x.id === id), parent = (entry?.comments || []).find(c => c.id === commentTargets[id]);
+      if (commentTargets[id] && !parent) { delete commentTargets[id]; flash('That comment is no longer available.'); render(); return; }
+      const comment = { id: newId(), author: meName(), text, at: Date.now() };
+      if (parent) { comment.replyTo = parent.id; comment.replyToAuthor = parent.author; }
+      commentDrafts[id] = ''; delete commentTargets[id]; dropDraft('reply', id); run(store.addComment(id, comment)); render();
     }
     else if (f.matches('[data-login-form]')) {
       const err = $('[data-login-error]'); err.textContent = '';
@@ -1680,6 +1725,8 @@
     if (ds.go) { go(ds.go); if (ds.go === 'home') window.scrollTo({ top: 0 }); return; }
     if (ds.nav) { history[ds.nav](); return; }
     if (ds.min) { ui.collapsed.has(ds.min) ? ui.collapsed.delete(ds.min) : ui.collapsed.add(ds.min); ls.set('collapsed', [...ui.collapsed]); render(); return; }
+    if (el.hasAttribute('data-close-status-history')) { closeStatusHistory(); return; }
+    if (ds.statusHistoryFilter) { statusHistoryFilter = ds.statusHistoryFilter; keepFocus(renderStatusHistory); return; }
     if (ds.openInbox) { openInbox(ds.openInbox); return; }
     if (el.hasAttribute('data-close-inbox')) { closeInbox(); return; }
     if (ds.inboxFilter) { ui.inboxFilter = ds.inboxFilter; keepFocus(renderInbox); return; }
@@ -1759,6 +1806,16 @@
     if (ds.entryDelete) {
       const entry = data.diary.find(x => x.id === ds.entryDelete); ui.confirm = null; if (!entry) return;
       run((async () => { for (const pid of entryPhotoIds(entry)) await store.remove('photos', pid); await store.remove('diary', entry.id); })()); flash('Entry deleted.'); return;
+    }
+    if (ds.commentReply) {
+      const entry = data.diary.find(x => x.id === ds.entry);
+      if (!(entry?.comments || []).some(c => c.id === ds.commentReply)) return;
+      commentTargets[ds.entry] = ds.commentReply; render();
+      $(`[data-comment-form="${CSS.escape(ds.entry)}"] input[name="comment"]`)?.focus(); return;
+    }
+    if (el.hasAttribute('data-comment-reply-cancel')) {
+      delete commentTargets[ds.entry]; render();
+      $(`[data-comment-form="${CSS.escape(ds.entry)}"] input[name="comment"]`)?.focus(); return;
     }
     if (ds.commentRemove) { openCommentDelete(ds.entry, ds.commentRemove); return; }
     if (el.hasAttribute('data-comment-confirm-cancel')) { $('[data-comment-confirm-dialog]').close(); return; }
