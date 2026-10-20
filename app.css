@@ -859,3 +859,18 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-left > .cc-dock .cc-dock-frame { left: 6px; top: calc(50% - 85px * var(--dock-scale, 1)); }
 }
 @media (max-width: 380px) { #couple-corner .cc-left > .cc-dock { transform: none; } }
+
+/* ===== Daily question and weekly check-in: the two answer boxes in a row are the same height ===== */
+#couple-corner .cc-q-answers { align-items: stretch; }
+#couple-corner .cc-q-answers > .cc-q-answer, #couple-corner .cc-q-answers > .cc-q-cell { min-width: 0; }
+#couple-corner .cc-q-cell { display: flex; flex-direction: column; }
+#couple-corner .cc-q-cell > .cc-q-answer { flex: 1 1 auto; }
+
+/* ===== Status: faces sit on one line whatever the label length ===== */
+#couple-corner .cc-status-preset.cc-button { justify-content: flex-start; padding-top: 8px; }
+#couple-corner .cc-status-preset-icon { height: 40px; display: flex; align-items: center; justify-content: center; flex: 0 0 40px; }
+#couple-corner .cc-status-preset-label { min-height: 2.3em; display: flex; align-items: center; justify-content: center; text-align: center; }
+
+/* ===== Status: your card matches theirs ===== */
+#couple-corner .cc-status-who > .cc-plan-tag { margin-left: auto; }
+#couple-corner .cc-status-who .cc-status-clear { margin-left: 8px; min-height: 26px; padding: 2px 8px; font-size: 11px; }
