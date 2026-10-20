@@ -40,6 +40,11 @@
       `DTSTART;VALUE=DATE:${compactDay(start)}`,
       `DTEND;VALUE=DATE:${compactDay(nextDay(endInclusive || start))}`
     ];
+    const localHour = (day, time) => {
+      const [h, m] = time.split(':').map(Number), endDay = h === 23 ? nextDay(day) : day, endH = (h + 1) % 24;
+      const pad = n => String(n).padStart(2, '0');
+      return [`DTSTART:${compactDay(day)}T${pad(h)}${pad(m)}00`, `DTEND:${compactDay(endDay)}T${pad(endH)}${pad(m)}00`];
+    };
     const event = (id, title, fields, note, location) => {
       lines.push('BEGIN:VEVENT', `UID:${id}@our-little-corner`, `DTSTAMP:${stamp}`, `SUMMARY:${escapeText(title)}`, ...fields);
       if (note) lines.push(`DESCRIPTION:${escapeText(note)}`);
@@ -65,7 +70,9 @@
     }
     if (kind === 'task') for (const item of data.tasks || []) {
       if (!item.date) continue;
-      event('task-' + item.id, (item.done ? '✓ ' : '') + item.title, allDay(item.date), item.note);
+      // A little thing with a time is a one-hour slot in local time (floating, so it stays at that clock time).
+      const timed = typeof item.time === 'string' && /^\d{2}:\d{2}$/.test(item.time);
+      event('task-' + item.id, (item.done ? '✓ ' : '') + item.title, timed ? localHour(item.date, item.time) : allDay(item.date), item.note);
       count++;
     }
     if (['birthday', 'holiday', 'anniversary'].includes(kind)) for (const item of data.dates || []) {

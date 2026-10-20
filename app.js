@@ -155,6 +155,7 @@
       wish: { title: '', who: 'both', note: '' },
       special: { title: '', kind: 'anniversary', date: '', repeat: true },
       dayedit: { title: '', kind: 'anniversary', date: '', repeat: true },
+      todoedit: { title: '', date: '', time: '', start: '', end: '', status: 'dreaming', note: '' },
       entryedit: { text: '', tags: '', photoIds: [], pending: [] },
       ask: { text: '', date: '' }
     }
@@ -233,6 +234,7 @@
   // what is on each day, sorted out once per change of the data instead of once per day drawn (a year asks 365 times);
   // the store hands over new lists whenever something changes. One-day plans are looked up by date, longer ones checked
   let dayIndex = null;
+  const taskTime = t => typeof t.time === 'string' && /^\d{2}:\d{2}$/.test(t.time);
   function dayEvents(iso) {
     const src = [data.events, data.trips, data.tasks, data.dates];
     if (!dayIndex || src.some((s, i) => s !== dayIndex.src[i])) {
@@ -247,7 +249,7 @@
     const list = [
       ...events.map(i => data.events[i]).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
-      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: 'task', collection: 'tasks' })),
+      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: 'task', collection: 'tasks', ...(taskTime(e) ? { timeLabel: e.time, allDay: false, startMs: +new Date(`${e.date}T${e.time}`) } : {}) })),
       ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
     dayIndex.days.set(iso, list);
@@ -670,13 +672,19 @@
     const items = combined.filter(i => planner.todoFilter === 'all' || (planner.todoFilter === 'trips' && i.kind === 'trip') || (planner.todoFilter === 'activities' && i.kind === 'activity') || (planner.todoFilter === 'done' && i.done));
     const page = pageList('todo', items);
     const cards = page.items.map(i => {
-      const trip = i.kind === 'trip', date = trip ? i.start : i.date;
+      const trip = i.kind === 'trip', date = trip ? i.start : i.date, col = trip ? 'trips' : 'tasks';
+      if (planner.editingTodo && planner.editingTodo.col === col && planner.editingTodo.id === i.id) {
+        const f = formField('todoedit', 'title', trip ? 'Destination' : 'What should we do?', 'text', true) + (trip
+          ? formField('todoedit', 'start', 'Departure', 'date') + formField('todoedit', 'end', 'Return (optional)', 'date') + selectField('todoedit', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)]))
+          : formField('todoedit', 'date', 'Date', 'date') + formField('todoedit', 'time', 'Time (optional)', 'time')) + notesField('todoedit');
+        return `<article class="cc-plan-card cc-editing-card" id="item-${esc(i.id)}">${formShell('todoedit', trip ? 'Edit trip' : 'Edit little thing', f, 'Save', '<button type="button" class="cc-button" data-todoedit-cancel>Cancel</button>')}</article>`;
+      }
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
-      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px">${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(trip ? 'trips' : 'tasks', i.id)}</div></article>`;
+      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (!trip && i.time ? ' · ' + esc(i.time) : '') + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px"><button class="cc-button" type="button" data-edit-todo="${col}" data-id="${esc(i.id)}">${date ? 'Edit' : 'Set date'}</button>${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(col, i.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
     const isTrip = planner.drafts.todo.kind === 'trip';
-    const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date')) + notesField('todo');
+    const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date') + formField('todo', 'time', 'Time (optional)', 'time')) + notesField('todo');
     fill($('[data-panel="todo"]'), panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`));
   }
   function renderWishlist() {
@@ -924,6 +932,7 @@
     }
     for (const t of data.tasks) {
       add('todo', 'tk:' + t.id, t.by, t.createdAt, `added a little thing · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
+      if (edited(t) && /(^|,)date(,|$)/.test(t.updatedWhat || '') && t.date && !/done/.test(t.updatedWhat || '')) add('todo', `tk-d:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `scheduled ${clip(t.title)} for ${niceDate(t.date, { month: 'short', day: 'numeric' })}${t.time ? ' ' + t.time : ''}`, { type: 'date', date: t.date });
       if (edited(t) && /done/.test(t.updatedWhat || '')) add('todo', `tk-u:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `${t.done ? 'finished ✓' : 'reopened'} · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
     }
     for (const t of data.trips) {
@@ -1539,6 +1548,15 @@
     if (d.endDate && d.endDate < d.date) { form.elements.endDate.setCustomValidity('The end date must be on or after the start.'); form.elements.endDate.reportValidity(); return; }
     if (name === 'todo' && d.kind === 'trip' && d.end && (!d.start || d.end < d.start)) { form.elements.end.setCustomValidity('Pick a departure date first, then a return on or after it.'); form.elements.end.reportValidity(); return; }
     const base = { id: newId(), title, by: meName(), createdAt: Date.now() }, note = String(d.note || '').trim();
+    if (name === 'todoedit') {
+      const target = planner.editingTodo, trip = target && target.col === 'trips';
+      if (!target) return;
+      if (trip && d.end && (!d.start || d.end < d.start)) { form.elements.end.setCustomValidity('Pick a departure date first, then a return on or after it.'); form.elements.end.reportValidity(); return; }
+      if (!trip && d.time && !d.date) { form.elements.date.setCustomValidity('Pick a date for this time.'); form.elements.date.reportValidity(); return; }
+      const patch = trip ? { title, start: d.start || '', end: d.end || '', status: d.status, note } : { title, date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', note };
+      run(store.update(target.col, target.id, patch)); planner.editingTodo = null;
+      flash((trip ? patch.start : patch.date) ? 'Saved. It shows in the calendar.' : 'Saved.'); render(); return;
+    }
     if (name === 'dayedit') { run(store.update('dates', planner.editingDay, { title, kind: d.kind, date: d.date, repeat: d.repeat === 'on' })); planner.editingDay = null; flash('Saved.'); render(); return; }
     if (name === 'event') {
       const kind = KINDS.some(([key]) => key === d.kind) ? d.kind : 'plan';
@@ -1554,9 +1572,9 @@
     if (name === 'todo') {
       const save = d.kind === 'trip'
         ? store.set('trips', { ...base, status: d.status, start: d.start || '', end: d.end || '', note })
-        : store.set('tasks', { ...base, date: d.date || '', done: false, note });
+        : store.set('tasks', { ...base, date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', done: false, note });
       run(save.then(() => { ui.pages.todo = pageForItem(todoSorted(), base.id); render(); }));
-      planner.drafts.todo = { title: '', kind: 'activity', status: 'dreaming', date: '', start: '', end: '', note: '' }; planner.todoFilter = 'all'; planner.forms.todo = false;
+      planner.drafts.todo = { title: '', kind: 'activity', status: 'dreaming', date: '', time: '', start: '', end: '', note: '' }; planner.todoFilter = 'all'; planner.forms.todo = false;
       flash((d.date || d.start) ? 'Added. It also shows in the calendar.' : 'Added.');
     }
     if (name === 'wish') { run(store.set('wishes', { ...base, who: d.who, note, got: false, noteStyle: Math.floor(Math.random() * 8) }).then(() => { ui.pages.wishlist = pageForItem(wishesSorted(), base.id); render(); })); planner.drafts.wish = { title: '', who: 'both', note: '' }; planner.forms.wish = false; flash('Wish added.'); }
@@ -1746,6 +1764,16 @@
     if (ds.setColor && ui.colorKind) { const kc = { ...(data.meta.kindColors || {}), [ui.colorKind]: ds.setColor }; data.meta = { ...data.meta, kindColors: kc }; run(store.metaKey('kindColors', ui.colorKind, ds.setColor)); render(); return; }
     if (el.hasAttribute('data-avatar-reset')) { run(store.metaKey('avatars', ui.me, null)); return; }
     if (ds.editDay) { const it = data.dates.find(x => x.id === ds.editDay); if (it) { planner.editingDay = it.id; planner.drafts.dayedit = { title: it.title, kind: it.kind, date: it.date, repeat: !!it.repeat }; render(); } return; }
+    if (ds.editTodo) {
+      const col = ds.editTodo === 'trips' ? 'trips' : 'tasks', it = data[col].find(x => x.id === ds.id);
+      if (it) {
+        planner.editingTodo = { col, id: it.id };
+        planner.drafts.todoedit = { title: it.title || '', date: it.date || '', time: it.time || '', start: it.start || '', end: it.end || '', status: it.status || 'dreaming', note: it.note || '' };
+        render(); $(`[data-planner-form="todoedit"] input[name="${col === 'trips' ? 'start' : 'date'}"]`)?.focus();
+      }
+      return;
+    }
+    if (el.hasAttribute('data-todoedit-cancel')) { planner.editingTodo = null; render(); return; }
     if (el.hasAttribute('data-dayedit-cancel')) { planner.editingDay = null; render(); return; }
     if (ds.tag != null && el.classList.contains('cc-tag')) { diaryFilter.tag = diaryFilter.tag.toLowerCase() === ds.tag.toLowerCase() ? '' : ds.tag; ui.pages.diary = 1; if (ui.page !== 'diary') go('diary'); else render(); return; }
     if (el.hasAttribute('data-clear-filter')) { diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = 1; render(); return; }
