@@ -831,3 +831,31 @@ body { padding: 0; min-height: 100vh; }
   #couple-corner .cc-special-side .cc-upcoming-entry > .cc-upcoming-bottom { grid-column: 1 / -1; margin-top: 2px; }
   #couple-corner .cc-special-side { min-height: 146px; } /* the row of three tiles is a little taller, so the first day fits whole */
 }
+
+/* ===== Calendar colour legend: label on its own line, then two rows of three ===== */
+#couple-corner .cc-legend { display: grid; grid-template-columns: repeat(3, max-content); justify-content: start; gap: 2px 10px; }
+#couple-corner .cc-legend .cc-legend-label { grid-column: 1 / -1; }
+@media (max-width: 380px) { #couple-corner .cc-legend { grid-template-columns: repeat(2, max-content); } }
+
+/* ===== Export: one button; options open in a small box ===== */
+#couple-corner .cc-calendar-actions .cc-button { flex: 0 0 auto; }
+#couple-corner .cc-export-row.cc-import { margin-top: 10px; }
+#couple-corner .cc-export-row.cc-import .cc-inline-check { flex-basis: auto; flex: 1 1 100%; }
+
+/* ===== Phones: the iPod stays docked, and the three tiles of row two share one frame style and height ===== */
+@media (max-width: 820px) {
+  #couple-corner .cc-dock[data-fixed=true] .cc-ipod-body { touch-action: auto; cursor: default; }
+  #couple-corner .cc-dock[data-fixed=true] .cc-dock-hint { display: none; }
+  #couple-corner .cc-left > .cc-tearpad, #couple-corner .cc-left > .cc-dock {
+    border: 1px solid #7f8983; background: var(--cc-paper); box-shadow: inset 1px 1px #fff, 2px 2px 0 #bbc2b9;
+    padding: 12px 6px 6px; align-self: stretch;
+  }
+  #couple-corner[data-dark=true] .cc-left > .cc-tearpad, #couple-corner[data-dark=true] .cc-left > .cc-dock { border-color: #69776f; box-shadow: inset 1px 1px #abb7ab, 2px 2px 0 #35453c; }
+  #couple-corner .cc-left > .cc-special-side { align-self: stretch; }
+  #couple-corner .cc-left > .cc-tearpad .cc-tear-rings { top: 4px; }
+  #couple-corner .cc-left > .cc-tearpad .cc-tear-set { margin-top: auto; }
+  #couple-corner .cc-left > .cc-tearpad .cc-tear-sheet { margin-bottom: 8px; }
+  #couple-corner .cc-left > .cc-dock { height: auto; min-height: calc(160px * var(--dock-scale, 1) + 18px); max-width: none; display: flex; align-items: center; justify-content: center; }
+  #couple-corner .cc-left > .cc-dock .cc-dock-frame { left: 6px; top: calc(50% - 85px * var(--dock-scale, 1)); }
+}
+@media (max-width: 380px) { #couple-corner .cc-left > .cc-dock { transform: none; } }

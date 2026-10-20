@@ -339,10 +339,10 @@
       `<div class="cc-planner-toolbar"><h3>${esc(calendarTitle())}</h3><div class="cc-plan-actions"><button class="cc-button" type="button" data-shift="-1" aria-label="Previous">‹</button><button class="cc-button" type="button" data-planner-today>Today</button><button class="cc-button" type="button" data-shift="1" aria-label="Next">›</button></div></div>
       <div class="cc-filter-row cc-view-switch" role="group" aria-label="Calendar view">${views.map(([v, l]) => `<button type="button" class="cc-button" data-view="${v}" aria-pressed="${planner.view === v}">${l}</button>`).join('')}</div>
       <div class="cc-cal-wrap"><div class="cc-cal-main">${body}
-      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small">Colours (tap to change):</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(([c, name]) => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${name}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
+      <div class="cc-legend" role="group" aria-label="Category colours"><span class="cc-small cc-legend-label">Colours · tap one to change it</span>${KINDS.map(([k, l]) => `<button type="button" class="cc-legend-btn" data-pick-color="${k}" aria-expanded="${ui.colorKind === k}" title="Change colour"><i class="cc-dot k-${k}"></i>${l}</button>`).join('')}</div>${ui.colorKind ? `<div class="cc-swatches" role="group" aria-label="Colour for ${esc(ui.colorKind)}"><span class="cc-small">${esc(KINDS.find(x => x[0] === ui.colorKind)[1])} colour</span>${SWATCHES.map(([c, name]) => `<button type="button" class="cc-swatch" style="background:${c}" data-set-color="${c}" aria-pressed="${kindColor(ui.colorKind) === c}" aria-label="${name}"></button>`).join('')}<button type="button" class="cc-button" data-pick-color="${ui.colorKind}">Done</button></div>` : ''}
       </div><div class="cc-cal-side">${agendaHtml()}
-      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import Apple Calendar</button></div>
-      <div class="cc-export-row"><label class="cc-field">Export category<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button><label class="cc-inline-check"><input type="checkbox" data-export-imported ${planner.exportImported ? 'checked' : ''}><span>Include imported events</span></label></div>${form}${renderImport()}</div></div>`));
+      <div class="cc-calendar-actions"><button type="button" class="cc-button" data-show-form="event" aria-expanded="${planner.forms.event}">${planner.forms.event ? 'Close form' : '+ Add a plan'}</button><button type="button" class="cc-button" data-import-open aria-expanded="${calendarImport.open}">Import .ics</button><button type="button" class="cc-button" data-export-open aria-expanded="${!!planner.exportOpen}">Export .ics</button></div>
+      ${planner.exportOpen ? `<div class="cc-export-row cc-import"><label class="cc-field">Category to export<select data-export-kind aria-label="Calendar category to export">${KINDS.map(([kind, label]) => `<option value="${kind}" ${planner.exportKind === kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="cc-button" data-export-ics>Download .ics</button><label class="cc-inline-check"><input type="checkbox" data-export-imported ${planner.exportImported ? 'checked' : ''}><span>Include imported events</span></label><button type="button" class="cc-button" data-export-open>Close</button></div>` : ''}${form}${renderImport()}</div></div>`));
   }
 
   // ---------- special days + memory ----------
@@ -1827,6 +1827,7 @@
       run(store.remove(col, item.id)); flash('Removed.', () => store.set(col, item)); return;
     }
     // import
+    if (el.hasAttribute('data-export-open')) { planner.exportOpen = !planner.exportOpen; render(); return; }
     if (el.hasAttribute('data-export-ics')) { exportIcs(); return; }
     if (el.hasAttribute('data-import-open')) { calendarImport.open = !calendarImport.open; render(); return; }
     if (el.hasAttribute('data-import-close')) { calendarImport.open = false; render(); return; }
@@ -1989,23 +1990,26 @@
   (() => {
     const ipod = $('[data-ipod]'), dock = $('[data-dock]'), frame = $('[data-dock-frame]'); if (!ipod || !dock) return;
     const saved = ls.get('ipod', { docked: true, x: 0, y: 0 });
+    const phone = matchMedia('(max-width: 820px)'); // on phones the iPod stays in its dock: dragging fought with scrolling
+    const docked = () => saved.docked || phone.matches;
     const JACK = { x: 0.075, y: 0.02 };              // jack position on the iPod image (fraction of size)
     const plugTip = () => { const r = dock.querySelector('.cc-plug-tip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom }; };
     const jackOf = (x, y) => ({ x: x + ipod.offsetWidth * JACK.x, y: y + ipod.offsetHeight * JACK.y });
     const clamp = (x, y) => ({ x: Math.max(4, Math.min(innerWidth - ipod.offsetWidth - 4, x)), y: Math.max(40, Math.min(innerHeight - ipod.offsetHeight - 4, y)) });
     function place() {
-      dock.dataset.docked = String(saved.docked);
-      ipod.classList.toggle('cc-floating', !saved.docked);
+      const d = docked();
+      dock.dataset.docked = String(d); dock.dataset.fixed = String(phone.matches);
+      ipod.classList.toggle('cc-floating', !d);
       // a floating iPod lives outside the (possibly scaled) dock so position:fixed works
-      if (saved.docked && ipod.parentElement !== frame) frame.insertBefore(ipod, $('[data-dock-hint]'));
-      if (!saved.docked && ipod.parentElement !== root) root.appendChild(ipod);
-      if (saved.docked) { ipod.style.left = ''; ipod.style.top = ''; }
+      if (d && ipod.parentElement !== frame) frame.insertBefore(ipod, $('[data-dock-hint]'));
+      if (!d && ipod.parentElement !== root) root.appendChild(ipod);
+      if (d) { ipod.style.left = ''; ipod.style.top = ''; }
       else { const c = clamp(saved.x, saved.y); ipod.style.left = c.x + 'px'; ipod.style.top = c.y + 'px'; }
-      $('[data-dock-hint]').textContent = saved.docked ? 'drag me · 拖出来玩' : 'drop it back to charge · 放回来充电';
+      $('[data-dock-hint]').textContent = phone.matches ? '' : d ? 'drag me · 拖出来玩' : 'drop it back to charge · 放回来充电';
     }
     let drag = null;
     ipod.addEventListener('pointerdown', e => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || phone.matches) return;
       const r = ipod.getBoundingClientRect();
       drag = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false, id: e.pointerId };
     });
@@ -2039,8 +2043,12 @@
     }
     ipod.addEventListener('pointerup', end); ipod.addEventListener('pointercancel', end);
     ipod.addEventListener('click', e => { if (ui.justDragged) { e.stopPropagation(); e.preventDefault(); ui.justDragged = false; } }, true);
-    const fit = () => { const w = dock.clientWidth; dock.style.setProperty('--dock-scale', Math.min(1, w / 180).toFixed(3)); };
+    const fit = () => {
+      const cs = getComputedStyle(dock), w = dock.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      dock.style.setProperty('--dock-scale', Math.min(1, w / 180).toFixed(3));
+    };
     addEventListener('resize', () => { fit(); if (!saved.docked) place(); });
+    phone.addEventListener?.('change', () => { drag = null; place(); fit(); });
     fit(); new ResizeObserver(fit).observe(dock);
     place();
   })();
