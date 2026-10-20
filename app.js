@@ -99,6 +99,9 @@
   const SWATCHES = [['#e0506a', 'Red'], ['#f06a8f', 'Pink'], ['#d85fb0', 'Magenta'], ['#9a7ad8', 'Purple'], ['#6c6fd8', 'Indigo'], ['#4a9fd8', 'Blue'], ['#3fae9c', 'Teal'], ['#6fa35a', 'Green'], ['#a8c43c', 'Lime'], ['#e8b33c', 'Yellow'], ['#f08a4b', 'Orange'], ['#b0714a', 'Brown'], ['#8a8f98', 'Grey'], ['#3d4a5c', 'Slate']]; // [colour, name read out]
   const kindColor = k => safeColor((data.meta.kindColors || {})[k]) || DEFAULT_KIND_COLORS[k];
   const safeKind = k => (KINDS.some(([key]) => key === k) ? k : 'plan'); // kinds from synced data end up in class="k-…"
+  // A todo item uses the same categories as the calendar. Trips live in their own list; any other item is a task with a category.
+  const taskKind = t => (t && t.kind && t.kind !== 'trip' && KINDS.some(([key]) => key === t.kind) ? t.kind : 'task');
+  const TASK_KINDS = KINDS.filter(([k]) => k !== 'trip');
   let heroArt = null; // the top picture's link as last set
   function applyTheme() {
     const t = THEMES.find(x => x.id === themeFor(currentMode())) || THEMES[0];
@@ -151,11 +154,11 @@
     drafts: {
       event: { title: '', kind: 'plan', date: today, endDate: '', note: '', repeat: true },
       edit: { title: '', date: '', endDate: '', note: '' },
-      todo: { title: '', kind: 'activity', status: 'dreaming', date: '', start: '', end: '', note: '' },
+      todo: { title: '', kind: 'task', status: 'dreaming', date: '', time: '', start: '', end: '', note: '' },
       wish: { title: '', who: 'both', note: '' },
       special: { title: '', kind: 'anniversary', date: '', repeat: true },
       dayedit: { title: '', kind: 'anniversary', date: '', repeat: true },
-      todoedit: { title: '', date: '', time: '', start: '', end: '', status: 'dreaming', note: '' },
+      todoedit: { title: '', kind: 'task', date: '', time: '', start: '', end: '', status: 'dreaming', note: '' },
       entryedit: { text: '', tags: '', photoIds: [], pending: [] },
       ask: { text: '', date: '' }
     }
@@ -249,7 +252,7 @@
     const list = [
       ...events.map(i => data.events[i]).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'events' })),
       ...data.trips.filter(e => e.start && iso >= e.start && iso <= (e.end || e.start)).map(e => ({ ...e, kind: 'trip', collection: 'trips' })),
-      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: 'task', collection: 'tasks', ...(taskTime(e) ? { timeLabel: e.time, allDay: false, startMs: +new Date(`${e.date}T${e.time}`) } : {}) })),
+      ...(dayIndex.tasks.get(iso) || []).map(e => ({ ...e, kind: taskKind(e), collection: 'tasks', ...(taskTime(e) ? { timeLabel: e.time, allDay: false, startMs: +new Date(`${e.date}T${e.time}`) } : {}) })),
       ...data.dates.filter(e => e.repeat ? iso >= e.date && yearlyDay(e.date, +iso.slice(0, 4)) === iso : iso === e.date).map(e => ({ ...e, kind: safeKind(e.kind), collection: 'dates' }))
     ].sort((a, b) => (a.startMs || 0) - (b.startMs || 0));
     dayIndex.days.set(iso, list);
@@ -310,7 +313,7 @@
       const actions = e.collection === 'events'
         ? `<button class="cc-button" type="button" data-edit-event="${esc(e.id)}">Edit</button>${removeButton('events', e.id)}`
         : e.collection === 'dates' ? '<button class="cc-button" type="button" data-edit-days>Manage</button>'
-        : `<button class="cc-button" type="button" data-open-todo="${e.collection === 'trips' ? 'trips' : 'activities'}">Open todo</button>`;
+        : `<button class="cc-button" type="button" data-open-todo="${e.collection === 'trips' ? 'trip' : taskKind(e)}">Open todo</button>`;
       return `<div class="cc-plan-row"><div><div class="cc-plan-tag"><i class="cc-dot k-${e.kind}"></i>${esc(e.source || kindLabel(e.kind))}${e.by ? ' · ' + esc(e.by) : ''}</div><div>${e.done ? '✓ ' : ''}${esc(e.title)}</div>${e.timeLabel ? `<p>${esc(e.timeLabel)}</p>` : ''}${e.endDate && e.endDate !== e.date && !e.timeLabel ? `<p>${esc(niceDate(e.date))} → ${esc(niceDate(e.endDate))}</p>` : ''}${e.location ? `<p>${esc(e.location)}</p>` : ''}${e.note ? `<p>${esc(e.note)}</p>` : ''}</div><div class="cc-plan-actions">${actions}</div></div>`;
     }).join('') || '<p class="cc-empty-plan">Nothing planned.</p>';
     return `<div class="cc-agenda"><div class="cc-agenda-title">${niceDate(planner.selected, { weekday: 'long', month: 'long', day: 'numeric' })}${planner.selected === today ? ' · today' : ''}</div>${rows}</div>`;
@@ -656,7 +659,7 @@
 
   // ---------- todo + wishlist ----------
   function todoSorted() {
-    return [...data.trips.map(i => ({ ...i, kind: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity' }))]
+    return [...data.trips.map(i => ({ ...i, kind: 'trip', cat: 'trip', done: i.status === 'visited' })), ...data.tasks.map(i => ({ ...i, kind: 'activity', cat: taskKind(i) }))]
       .sort((a, b) => Number(!!a.done) - Number(!!b.done) || (a.createdAt || 0) - (b.createdAt || 0));
   }
   function wishesSorted() {
@@ -667,24 +670,26 @@
     return [...String(wish.id)].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 8;
   }
   function renderTodo() {
-    const filters = [['all', 'All'], ['trips', 'Trips'], ['activities', 'Little things'], ['done', 'Done']];
+    const legacy = { trips: 'trip', activities: 'task' }; if (legacy[planner.todoFilter]) planner.todoFilter = legacy[planner.todoFilter];
+    const filters = [['all', 'All'], ...KINDS, ['done', 'Done']];
     const combined = todoSorted();
-    const items = combined.filter(i => planner.todoFilter === 'all' || (planner.todoFilter === 'trips' && i.kind === 'trip') || (planner.todoFilter === 'activities' && i.kind === 'activity') || (planner.todoFilter === 'done' && i.done));
+    const items = combined.filter(i => planner.todoFilter === 'all' || (planner.todoFilter === 'done' ? i.done : i.cat === planner.todoFilter));
     const page = pageList('todo', items);
     const cards = page.items.map(i => {
       const trip = i.kind === 'trip', date = trip ? i.start : i.date, col = trip ? 'trips' : 'tasks';
       if (planner.editingTodo && planner.editingTodo.col === col && planner.editingTodo.id === i.id) {
         const f = formField('todoedit', 'title', trip ? 'Destination' : 'What should we do?', 'text', true) + (trip
           ? formField('todoedit', 'start', 'Departure', 'date') + formField('todoedit', 'end', 'Return (optional)', 'date') + selectField('todoedit', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)]))
-          : formField('todoedit', 'date', 'Date', 'date') + formField('todoedit', 'time', 'Time (optional)', 'time')) + notesField('todoedit');
-        return `<article class="cc-plan-card cc-editing-card" id="item-${esc(i.id)}">${formShell('todoedit', trip ? 'Edit trip' : 'Edit little thing', f, 'Save', '<button type="button" class="cc-button" data-todoedit-cancel>Cancel</button>')}</article>`;
+          : selectField('todoedit', 'kind', 'Category', TASK_KINDS) + formField('todoedit', 'date', 'Date', 'date') + formField('todoedit', 'time', 'Time (optional)', 'time')) + notesField('todoedit');
+        return `<article class="cc-plan-card cc-editing-card" id="item-${esc(i.id)}">${formShell('todoedit', trip ? 'Edit trip' : 'Edit todo', f, 'Save', '<button type="button" class="cc-button" data-todoedit-cancel>Cancel</button>')}</article>`;
       }
       const heading = trip ? `<h3>${esc(i.title)}</h3>` : `<label class="cc-task-title"><input type="checkbox" data-task-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.title)}</span></label>`;
       const status = trip ? `<label><span class="cc-small">Status </span><select class="cc-plan-status" data-trip-status="${esc(i.id)}">${['dreaming', 'planning', 'booked', 'visited'].map(v => `<option value="${v}" ${i.status === v ? 'selected' : ''}>${statusLabel(v)}</option>`).join('')}</select></label>` : '';
-      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag">${trip ? '✈ TRIP' : '✓ LITTLE THING'}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (!trip && i.time ? ' · ' + esc(i.time) : '') + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px"><button class="cc-button" type="button" data-edit-todo="${col}" data-id="${esc(i.id)}">${date ? 'Edit' : 'Set date'}</button>${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(col, i.id)}</div></article>`;
+      return `<article class="cc-plan-card ${i.done ? 'cc-done' : ''} ${ui.highlight === i.id ? 'cc-highlight' : ''}" id="item-${esc(i.id)}"><div class="cc-plan-tag"><i class="cc-dot k-${i.cat}"></i>${kindLabel(i.cat)}${i.by ? ' · ' + esc(i.by) : ''}</div>${heading}${i.note ? `<p>${esc(i.note)}</p>` : ''}<div class="cc-card-meta"><span>${date ? niceDate(date) + (!trip && i.time ? ' · ' + esc(i.time) : '') + (trip && i.end && i.end !== date ? ' → ' + niceDate(i.end) : '') : 'Date still open'}</span>${status}</div><div class="cc-plan-actions" style="margin-top:9px"><button class="cc-button" type="button" data-edit-todo="${col}" data-id="${esc(i.id)}">${date ? 'Edit' : 'Set date'}</button>${date ? `<button class="cc-button" type="button" data-open-date="${esc(date)}">See in calendar</button>` : ''}${removeButton(col, i.id)}</div></article>`;
     }).join('') || '<p class="cc-empty-plan">Nothing here yet.</p>';
+    if (planner.drafts.todo.kind === 'activity') planner.drafts.todo.kind = 'task';
     const isTrip = planner.drafts.todo.kind === 'trip';
-    const fields = selectField('todo', 'kind', 'Plan type', [['activity', 'Little thing'], ['trip', 'Trip']]) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date') + formField('todo', 'time', 'Time (optional)', 'time')) + notesField('todo');
+    const fields = selectField('todo', 'kind', 'Category', KINDS) + formField('todo', 'title', isTrip ? 'Destination' : 'What should we do?', 'text', true) + (isTrip ? formField('todo', 'start', 'Departure (optional)', 'date') + formField('todo', 'end', 'Return (optional)', 'date') + selectField('todo', 'status', 'Status', ['dreaming', 'planning', 'booked', 'visited'].map(s => [s, statusLabel(s)])) : formField('todo', 'date', 'Pick a date (optional)', 'date') + formField('todo', 'time', 'Time (optional)', 'time')) + notesField('todo');
     fill($('[data-panel="todo"]'), panelShell('todo', '✓ OUR TODO LIST', '旅行与待办', `${pageToolbar(`${combined.length} plans`, `<button type="button" class="cc-button" data-show-form="todo" aria-expanded="${planner.forms.todo}">${planner.forms.todo ? 'Close form' : '+ Add a plan'}</button>`)}<div class="cc-filter-row cc-page-filters">${filters.map(([v, l]) => `<button type="button" class="cc-button" data-todo-filter="${v}" aria-pressed="${planner.todoFilter === v}">${l}</button>`).join('')}</div>${planner.forms.todo ? formShell('todo', 'Add to todo', fields, '+ Add to todo', '<button type="button" class="cc-button" data-show-form="todo">Cancel</button>') : ''}<div class="cc-todo-grid" data-page-list="todo">${cards}</div>${pageNav('todo', page)}`));
   }
   function renderWishlist() {
@@ -931,7 +936,7 @@
       if (edited(d)) add('home', `dt-u:${d.id}:${d.updatedAt}`, d.updatedBy, d.updatedAt, `edited a special day · ${clip(d.title)}`, { type: 'date', date: repeatDate(d) });
     }
     for (const t of data.tasks) {
-      add('todo', 'tk:' + t.id, t.by, t.createdAt, `added a little thing · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
+      add('todo', 'tk:' + t.id, t.by, t.createdAt, `added ${({ task: 'a little thing', plan: 'a plan', birthday: 'a birthday to-do', holiday: 'a holiday to-do', anniversary: 'an anniversary to-do' })[taskKind(t)]} · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
       if (edited(t) && /(^|,)date(,|$)/.test(t.updatedWhat || '') && t.date && !/done/.test(t.updatedWhat || '')) add('todo', `tk-d:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `scheduled ${clip(t.title)} for ${niceDate(t.date, { month: 'short', day: 'numeric' })}${t.time ? ' ' + t.time : ''}`, { type: 'date', date: t.date });
       if (edited(t) && /done/.test(t.updatedWhat || '')) add('todo', `tk-u:${t.id}:${t.updatedAt}`, t.updatedBy, t.updatedAt, `${t.done ? 'finished ✓' : 'reopened'} · ${clip(t.title)}`, { type: 'item', tab: 'todo', id: t.id });
     }
@@ -1553,7 +1558,7 @@
       if (!target) return;
       if (trip && d.end && (!d.start || d.end < d.start)) { form.elements.end.setCustomValidity('Pick a departure date first, then a return on or after it.'); form.elements.end.reportValidity(); return; }
       if (!trip && d.time && !d.date) { form.elements.date.setCustomValidity('Pick a date for this time.'); form.elements.date.reportValidity(); return; }
-      const patch = trip ? { title, start: d.start || '', end: d.end || '', status: d.status, note } : { title, date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', note };
+      const patch = trip ? { title, start: d.start || '', end: d.end || '', status: d.status, note } : { title, kind: taskKind({ kind: d.kind }), date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', note };
       run(store.update(target.col, target.id, patch)); planner.editingTodo = null;
       flash((trip ? patch.start : patch.date) ? 'Saved. It shows in the calendar.' : 'Saved.'); render(); return;
     }
@@ -1572,9 +1577,9 @@
     if (name === 'todo') {
       const save = d.kind === 'trip'
         ? store.set('trips', { ...base, status: d.status, start: d.start || '', end: d.end || '', note })
-        : store.set('tasks', { ...base, date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', done: false, note });
+        : store.set('tasks', { ...base, kind: taskKind({ kind: d.kind }), date: d.date || '', time: d.date && /^\d{2}:\d{2}$/.test(d.time || '') ? d.time : '', done: false, note });
       run(save.then(() => { ui.pages.todo = pageForItem(todoSorted(), base.id); render(); }));
-      planner.drafts.todo = { title: '', kind: 'activity', status: 'dreaming', date: '', time: '', start: '', end: '', note: '' }; planner.todoFilter = 'all'; planner.forms.todo = false;
+      planner.drafts.todo = { title: '', kind: d.kind === 'trip' ? 'trip' : taskKind({ kind: d.kind }), status: 'dreaming', date: '', time: '', start: '', end: '', note: '' }; planner.todoFilter = 'all'; planner.forms.todo = false;
       flash((d.date || d.start) ? 'Added. It also shows in the calendar.' : 'Added.');
     }
     if (name === 'wish') { run(store.set('wishes', { ...base, who: d.who, note, got: false, noteStyle: Math.floor(Math.random() * 8) }).then(() => { ui.pages.wishlist = pageForItem(wishesSorted(), base.id); render(); })); planner.drafts.wish = { title: '', who: 'both', note: '' }; planner.forms.wish = false; flash('Wish added.'); }
@@ -1768,7 +1773,7 @@
       const col = ds.editTodo === 'trips' ? 'trips' : 'tasks', it = data[col].find(x => x.id === ds.id);
       if (it) {
         planner.editingTodo = { col, id: it.id };
-        planner.drafts.todoedit = { title: it.title || '', date: it.date || '', time: it.time || '', start: it.start || '', end: it.end || '', status: it.status || 'dreaming', note: it.note || '' };
+        planner.drafts.todoedit = { kind: taskKind(it), title: it.title || '', date: it.date || '', time: it.time || '', start: it.start || '', end: it.end || '', status: it.status || 'dreaming', note: it.note || '' };
         render(); $(`[data-planner-form="todoedit"] input[name="${col === 'trips' ? 'start' : 'date'}"]`)?.focus();
       }
       return;
@@ -1807,7 +1812,7 @@
     if (ds.editEvent) { const ev = data.events.find(x => x.id === ds.editEvent); if (ev) { planner.editing = ev.id; planner.drafts.edit = { title: ev.title, date: ev.date, endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : '', note: ev.note || '' }; render(); } return; }
     if (el.hasAttribute('data-edit-cancel')) { planner.editing = null; render(); return; }
     if (ds.openDate) { select(ds.openDate); openSpecial(false); if (planner.view === 'year') planner.view = 'month'; go('home'); $('[data-home-calendar]')?.scrollIntoView({ block: 'start' }); return; }
-    if (ds.openTodo) { planner.todoFilter = ds.openTodo; ui.pages.todo = 1; go('todo'); return; }
+    if (ds.openTodo) { planner.todoFilter = ({ trips: 'trip', activities: 'task' })[ds.openTodo] || ds.openTodo; ui.pages.todo = 1; go('todo'); return; }
     if (ds.todoFilter) { planner.todoFilter = ds.todoFilter; ui.pages.todo = 1; render(); return; }
     if (ds.showForm) { planner.forms[ds.showForm] = !planner.forms[ds.showForm]; render(); return; }
     if (el.hasAttribute('data-edit-days')) { openSpecial(!planner.specialOpen); return; }

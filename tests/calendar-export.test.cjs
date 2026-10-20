@@ -132,3 +132,18 @@ test('a little thing with a time exports as a one-hour slot at that local time',
   const parsed = new ICAL.Component(ICAL.parse(file.ics)).getAllSubcomponents('vevent');
   assert.equal(parsed.length, 3);
 });
+
+test('a todo item goes into the file of its own category', () => {
+  const tasks = [
+    { id: 'gift', title: 'Buy a gift', kind: 'birthday', date: '2026-11-01' },
+    { id: 'tickets', title: 'Book tickets', kind: 'plan', date: '2026-11-02' },
+    { id: 'plain', title: 'Laundry', date: '2026-11-03' },
+    { id: 'odd', title: 'Odd', kind: 'not-a-kind', date: '2026-11-04' }
+  ];
+  const file = kind => build(kind, { tasks }, '2026-10-20', Date.UTC(2026, 9, 20));
+  assert.ok(file('birthday').ics.includes('UID:task-gift@our-little-corner'));
+  assert.ok(!file('task').ics.includes('task-gift'));
+  assert.ok(file('plan').ics.includes('UID:task-tickets@our-little-corner'));
+  assert.equal(file('task').count, 2); // plain + unknown category
+  assert.equal(file('trip'), null);
+});

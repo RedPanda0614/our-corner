@@ -68,8 +68,11 @@
         [({ dreaming: 'Dreaming', planning: 'Planning', booked: 'Booked', visited: 'Visited' })[item.status], item.note].filter(Boolean).join(' · '));
       count++;
     }
-    if (kind === 'task') for (const item of data.tasks || []) {
+    // Todo items carry a calendar category too (no category = Little thing); each goes into its own category's file.
+    if (kind !== 'trip') for (const item of data.tasks || []) {
       if (!item.date) continue;
+      const itemKind = item.kind && item.kind !== 'trip' && Object.prototype.hasOwnProperty.call(labels, item.kind) ? item.kind : 'task';
+      if (itemKind !== kind) continue;
       // A little thing with a time is a one-hour slot in local time (floating, so it stays at that clock time).
       const timed = typeof item.time === 'string' && /^\d{2}:\d{2}$/.test(item.time);
       event('task-' + item.id, (item.done ? '✓ ' : '') + item.title, timed ? localHour(item.date, item.time) : allDay(item.date), item.note);
