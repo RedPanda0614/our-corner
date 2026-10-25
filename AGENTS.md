@@ -19,7 +19,7 @@ This is a shared personal site for 斯婕 and 真真 (Bibo and Bobi). Preserve t
 ## Structure and behavior
 
 - Keep one site experience for the two of them. The main tabs are Home, Diary, Todo, Wishlist, and Album. Do not reintroduce separate Trips and Together tabs or a crowded sidebar. Trips and things to do belong together on Todo.
-- Home includes the shared calendar, special-day reminders, and random memory. The current daily question and achievement features may remain without crowding those primary elements.
+- Home includes the shared calendar and special-day reminders. Random memory was removed at the user's request; do not bring it back unless asked. The current daily question and achievement features may remain without crowding those primary elements.
 - Put each subpage's primary add action in the same top-right toolbar position. Keep the diary New entry form folded by default, except when restoring an unfinished draft.
 - Paginate long subpage lists at 20 items with a visible page-number navigation. Keep the footer at the bottom on short pages.
 - Calendar entries have categories. Keep Apple Calendar `.ics` import and export by calendar category. Special days include birthdays, holidays, and anniversaries; countdowns need readable English.

@@ -373,15 +373,6 @@
     return !entry.updatedAt && entry.date && entry.date !== currentDayFor(at) ? `${niceDate(entry.date)} · posted ${posted}` : posted;
   };
   function diarySorted() { return [...data.diary].sort((a, b) => entryDisplayDate(b).localeCompare(entryDisplayDate(a)) || (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)); }
-  function renderMemory() {
-    const pool = data.diary.filter(e => (e.text || '').trim() || entryPhotoIds(e).length);
-    const body = $('[data-memory]');
-    if (!pool.length) { body.innerHTML = '<div class="cc-memory-label"><span>FROM THE DIARY</span></div><p class="cc-memory">No diary entries yet.</p><button class="cc-button" type="button" data-go="diary">Write the first one</button>'; return; }
-    const e = pool[((ui.memory % pool.length) + pool.length) % pool.length];
-    const photo = data.photos.find(p => p.id === entryPhotoIds(e)[0]), src = thumbOf(photo);
-    const text = (e.text || '').trim();
-    body.innerHTML = `<div class="cc-memory-label"><span>${esc(entryTimestamp(e))} · ${esc(e.author || '')}${e.updatedAt ? ' · Edited' : ''}</span><span aria-hidden="true">✧ ♡</span></div>${photo ? `<button type="button" class="cc-memory-photo" data-photo="${esc(photo.id)}" aria-label="Open photo">${src ? `<img src="${esc(src)}" alt="">` : '<span class="cc-img-wait" aria-hidden="true">▧</span>'}</button>` : ''}<p class="cc-memory">${esc(text.length > 140 ? text.slice(0, 140) + '…' : text)}</p><div class="cc-plan-actions"><button class="cc-button" type="button" data-shuffle ${pool.length < 2 ? 'disabled' : ''}>Shuffle</button><button class="cc-button" type="button" data-open-entry="${esc(e.id)}">Open diary</button></div>`;
-  }
 
   // ---------- daily question ----------
   const partnerKey = () => (ui.me === 'zhenzhen' ? 'sijie' : 'zhenzhen');
@@ -515,7 +506,7 @@
   }
   function myCheckinCell(week) {
     const mine = checkinOf(week, ui.me);
-    if (mine && editingCheckin !== week) return `<div class="cc-q-answer cc-ck-answer ${ui.me}"><div class="cc-q-row">${answerHead(ui.me)}<button type="button" class="cc-link" data-checkin-edit="${week}">Edit</button></div>${moodLine(mine, false)}${mine.text ? `<p class="cc-feed-text">${esc(mine.text)}</p>` : ''}</div>`;
+    if (mine && editingCheckin !== week) return `<div class="cc-q-answer cc-ck-answer ${ui.me}"><div class="cc-q-row">${answerHead(ui.me)}<button type="button" class="cc-link" data-checkin-edit="${week}">Edit</button></div>${moodLine(mine, true)}${mine.text ? `<p class="cc-feed-text">${esc(mine.text)}</p>` : ''}</div>`;
     const draft = checkinDrafts[week] || { mood: 0, text: '' };
     const moods = Q.MOODS.map(m => `<button type="button" class="cc-button cc-ck-mood" data-checkin-mood="${m.v}" aria-pressed="${draft.mood === m.v}" aria-label="${esc(m.en)} ${esc(m.zh)}" title="${esc(m.en)} ${esc(m.zh)}"><span class="cc-ck-glyph" aria-hidden="true">${moodHtml(m.glyph)}</span>${esc(m.en)}</button>`).join(''); // a bare label keeps the button's typewriter font
     return `<form class="cc-q-answer cc-q-form cc-ck-form ${ui.me}" data-checkin-form="${week}"><div class="cc-q-row">${answerHead(ui.me)}<span class="cc-small">How was your week?</span></div><div class="cc-ck-moods" role="group" aria-label="How was your week? Pick one">${moods}</div><textarea name="text" maxlength="600" rows="2" placeholder="A few words, if you like…" aria-label="A few words about your week (optional)">${esc(draft.text)}</textarea><div class="cc-form-footer"><button class="cc-button" type="submit">${mine ? 'Save' : 'Check in'}</button>${mine ? `<button type="button" class="cc-button" data-checkin-cancel="${week}">Cancel</button>` : ''}</div></form>`;
@@ -1191,16 +1182,16 @@
     if (!s) return `<span class="cc-baby-bubble" lang="zh-CN">${PLAYER_BUBBLES[key]}</span>`;
     return `<span class="cc-baby-bubble cc-status-bubble${statusStale(s) ? ' cc-status-stale' : ''}">${statusFaceHtml(s.emoji)} ${esc(statusClip(s.text, 10))}</span>`;
   }
-  function statusCardHtml() {
-    const key = partnerKey(), s = statusOf(key);
-    const who = `<div class="cc-status-who">${mini(key)}<b>${esc(PEOPLE[key])}</b>${s ? `<small class="cc-plan-tag">${esc(statusWhen(s))}</small>` : ''}</div>`;
+  function statusCardHtml(key = partnerKey(), extra = '') { // the same card for both people; extra = buttons on your own card
+    const s = statusOf(key);
+    const who = `<div class="cc-status-who">${mini(key)}<b>${esc(PEOPLE[key])}</b>${s ? `<small class="cc-plan-tag">${esc(statusWhen(s))}</small>` : ''}${s ? extra : ''}</div>`;
     if (!s) return `<div class="cc-status-card cc-status-none ${key}">${who}<p class="cc-status-text cc-small">No status yet.</p></div>`;
     return `<div class="cc-status-card ${key}${statusStale(s) ? ' cc-status-stale' : ''}">${who}<div class="cc-status-now"><span class="cc-status-emoji">${statusFaceHtml(s.emoji)}</span><p class="cc-status-text">${esc(s.text)}</p></div></div>`;
   }
   function statusMineHtml() {
     const s = statusOf(ui.me), d = statusDraft, pick = statusPreset(d.emoji);
     const current = s
-      ? `<div class="cc-status-mine${statusStale(s) ? ' cc-status-stale' : ''}"><span class="cc-status-emoji-sm">${statusFaceHtml(s.emoji)}</span><span class="cc-status-mine-text">${esc(s.text)}<small class="cc-plan-tag">${esc(statusWhen(s))}</small></span><button type="button" class="cc-button" data-status-clear>Clear</button></div>`
+      ? statusCardHtml(ui.me, '<button type="button" class="cc-button cc-status-clear" data-status-clear>Clear</button>')
       : '<p class="cc-small cc-status-mine-empty">Not set yet. Pick one below.</p>';
     const presets = STATUS_GROUPS.map(group => `<section class="cc-status-group" aria-label="${esc(group.label)}"><h4 class="cc-status-group-title">${esc(group.label)}</h4><div class="cc-status-presets" role="group" aria-label="${esc(group.label)}">${STATUS_PRESETS.map((p, i) => p.group === group.id ? `<button type="button" class="cc-button cc-status-preset" data-status-preset="${i}" aria-pressed="${d.emoji === p.emoji}" aria-label="${esc(`${p.en} ${p.zh}`)}" title="${esc(`${p.en} · ${p.zh}`)}"><span class="cc-status-preset-icon">${statusFaceHtml(p.emoji)}</span><span class="cc-status-preset-label">${esc(p.en)}</span></button>` : '').join('')}</div></section>`).join('');
     return `<div class="cc-status-heading"><h3 class="cc-status-sub">Your status · <span lang="zh-CN">我的状态</span></h3><button type="button" class="cc-button cc-status-history-open" data-open-status-history>History · 历史状态</button></div>${current}
@@ -1493,7 +1484,7 @@
     const formAttr = fa && ['data-planner-form', 'data-comment-form', 'data-diary-form', 'data-diary-search', 'data-album-form', 'data-question-form', 'data-checkin-form', 'data-caption-form'].find(n => fa.hasAttribute(n));
     const keep = formAttr ? { sel: `[${formAttr}="${CSS.escape(fa.getAttribute(formAttr))}"]`, name: a.name, start: a.selectionStart, end: a.selectionEnd } : null;
     const on = p => ui.page === p; // only the page on screen is rebuilt; the others are rebuilt when you go to them
-    const parts = [renderChrome, on('home') && renderCalendar, renderSpecialDays, on('home') && renderQuestion, renderStatus, on('home') && renderMemory,
+    const parts = [renderChrome, on('home') && renderCalendar, renderSpecialDays, on('home') && renderQuestion, renderStatus,
       on('todo') && renderTodo, on('wishlist') && renderWishlist, on('diary') && renderDiary, on('album') && renderAlbum,
       renderQuestionDialog, renderAchievementsDialog, renderMessage, decorateStaticWindows, renderBadges];
     for (const part of parts) if (part) try { part(); } catch (err) { console.error(err); } // odd synced data that trips one part leaves the rest (and the photo pickers) working
@@ -1834,7 +1825,6 @@
     if (el.hasAttribute('data-import-preview')) { previewImport(); return; }
     if (el.hasAttribute('data-import-confirm')) { confirmImport(); return; }
     // memory / diary / photos
-    if (el.hasAttribute('data-shuffle')) { const n = data.diary.length; ui.memory += 1 + Math.floor(Math.random() * Math.max(1, n - 1)); keepFocus(renderMemory); return; }
     if (ds.openEntry) { closePhoto(); diaryFilter.q = ''; diaryFilter.tag = ''; ui.pages.diary = pageForItem(diarySorted(), ds.openEntry); ui.highlight = ds.openEntry; go('diary'); document.getElementById('entry-' + ds.openEntry)?.scrollIntoView({ block: 'center' }); setTimeout(() => { ui.highlight = null; scheduleRender(); }, 2500); return; }
     if (ds.pendingRemove) { diaryDraft.pending.splice(+ds.pendingRemove, 1); render(); return; }
     if (ds.entryDelete) {
