@@ -2,6 +2,8 @@
 
 Retro shared calendar, diary, album, to-do list, wishlist and a daily question for the two of us.
 
+A wish can be added to Todo without losing the original note. Giving that plan a date puts it on the shared calendar. Once marked done, its card can start a linked diary entry or link new album photos; the saved memories lead back to the plan. The shop sign under the title shows the next special day and upcoming trip when available. Its Play/Pause button saves the motion choice on this device.
+
 Website: https://redpanda0614.github.io/our-corner/
 
 Design and development agreement: [AGENTS.md](AGENTS.md).

@@ -25,6 +25,7 @@ This is a shared personal site for 斯婕 and 真真 (Bibo and Bobi). Preserve t
 - Calendar entries have categories. Keep Apple Calendar `.ics` import and export by calendar category. Special days include birthdays, holidays, and anniversaries; countdowns need readable English.
 - Diary editing supports changing its photos, shows **Edited** afterward, and uses the last update time as the displayed date. Show timestamps to the minute. Ask for confirmation before deleting a comment. Diary comments can reply to a specific comment; keep replies visible below their parent and preserve them if that parent is deleted.
 - Album supports named albums, photo zoom, and browsing previous/next photos. Avoid regressing touch/swipe behavior.
+- A wish can create one linked Todo plan; dated plans use the existing calendar view. Completed plans can link a diary entry or new album photos by stable IDs. Keep old records readable when a linked record is removed.
 - Message read state is shared per person across devices so the same notification does not appear as new again after switching devices.
 
 ## Visual system
@@ -34,6 +35,7 @@ This is a shared personal site for 斯婕 and 真真 (Bibo and Bobi). Preserve t
 - Use the clover-sky art in the top name bar with one shooting-star icon. The footer uses the same art, cropped lower toward its greener area. Do not put 斯婕 & 真真 back into the top bar.
 - Keep the dotted rabbit background tiled diagonally, with no visible seams; its pattern must not shift with the left sidebar's height. Keep the sunflower-cat artwork in the home game scene.
 - Keep the home title accent white and green, without a large blurred glow or wash behind it. Effects should be small and legible. Respect reduced-motion settings.
+- The small storefront banner below the name bar may show the next special day and trip. Give its scrolling text an explicit Play/Pause button, and keep the user's motion choice on that device.
 - Wishlist notes use the existing varied blue stationery artwork. Keep each note compact, crop the complete note rather than an adjacent one, and keep all text and controls inside its usable area.
 - Status choices use one coherent family of pastel round faces in `status-faces.js`, with short visible labels and the four status groups for clarity. Similar faces should also differ by expression or a small recognizable mark. Keep each status emoji key stable because saved statuses store the emoji itself; distinguish similar moods by expression as well as color. Status history is private per-person metadata, shown together in a message-style dialog; clearing a current status must not erase past entries.
 

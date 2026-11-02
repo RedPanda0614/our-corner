@@ -225,6 +225,21 @@ body { padding: 0; min-height: 100vh; }
 #couple-corner .cc-wish-note .cc-inline-check { font-family: var(--note-font); }
 #couple-corner .cc-wish-note .cc-button { min-height: 24px; padding: 2px 5px; font: 11px/1.4 var(--note-font); background: rgb(255 255 255 / .78); border-color: #7a9ab0; color: #244659; }
 #couple-corner .cc-wish-note .cc-button:hover { background: #fff; }
+#couple-corner .cc-wish-note .cc-plan-tag { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+#couple-corner .cc-wish-note .cc-plan-tag span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#couple-corner .cc-wish-note .cc-card-meta { flex-shrink: 0; }
+#couple-corner .cc-wish-note .cc-wish-remove { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; border: 1px solid #9bb4c0; background: rgb(255 255 255 / .8); color: #244659; font: 14px/1 var(--note-font); cursor: pointer; }
+#couple-corner .cc-wish-note .cc-wish-progress { flex: 0 0 auto; max-width: 54px; overflow: hidden; white-space: nowrap; padding: 2px 3px; text-align: center; border-color: #8aa5b3; background: rgb(255 255 255 / .85); color: #244659; font: 10px/1.4 'Courier New', monospace; }
+#couple-corner .cc-journey-links button,
+#couple-corner .cc-journey-draft button {
+  border: 1px solid #9db7a5; background: #f6f9ea; color: #416447;
+  padding: 2px 6px; font: 11px/1.4 'Courier New', monospace;
+  cursor: pointer; text-align: left;
+}
+#couple-corner .cc-journey-links { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+#couple-corner .cc-journey-links button:hover,
+#couple-corner .cc-journey-draft button:hover { background: #f6d8ad; }
+#couple-corner .cc-journey-draft { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; padding: 6px 8px; border: 1px dashed #a4b992; background: #f4f8e8; color: #45644a; font: 12px/1.5 var(--cc-font-readable); }
 
 /* lightbox */
 #couple-corner .cc-lightbox { border: 2px solid var(--cc-line); background: var(--cc-paper); padding: 3px; width: min(92vw, 900px); max-height: 92vh; box-shadow: 5px 5px 0 hsl(calc(95deg + var(--g-dh)) calc(18% * var(--g-s)) calc(var(--lo) + 68.0% * var(--lk)) / 0.53); color: var(--cc-ink); }
