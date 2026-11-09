@@ -432,8 +432,11 @@
   const unsentWeeks = () => Object.keys(checkinDrafts).filter(w => (checkinDrafts[w].mood || checkinDrafts[w].text.trim()) && !checkinOf(w, ui.me));
   function questionArchive() {
     const day = qDay();
-    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on), ...unsentDays()];
-    return withCheckinWeeks([...new Set(days)].filter(d => validDay(d || '') && d < day && d !== heldDay).sort().reverse().map(id => ({ id })));
+    const days = [...data.answers.map(a => a.date), ...Q.schedule(data.questions).map(s => s.on), ...unsentDays()].filter(d => validDay(d || '') && d >= Q.BANK_SIZES[0].from);
+    // every day since the first question either of you saw, so a day neither of you answered is still there to answer late
+    const first = [...days, ...data.checkins.map(c => c.week).filter(w => validDay(w || '') && w >= Q.BANK_SIZES[0].from)].sort()[0];
+    if (first) for (let d = first; d < day; d = shiftDay(d, 1)) days.push(d);
+    return withCheckinWeeks([...new Set(days)].filter(d => d < day && d !== heldDay).sort().reverse().map(id => ({ id })));
   }
   function renderQuestionDialog() {
     const dlg = $('[data-question-dialog]');
